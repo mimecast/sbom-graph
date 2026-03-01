@@ -5,7 +5,7 @@ to prevent security vulnerabilities like XSS and injection attacks.
 """
 
 import re
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse, urlunparse
 
 # Allowed CSS dimension patterns (e.g., "800px", "100%", "50em", "auto")
 CSS_DIMENSION_PATTERN = re.compile(r"^(\d+)(px|%|em|rem|vh|vw|pt)?$|^auto$", re.IGNORECASE)
@@ -262,14 +262,31 @@ def is_safe_redirect_url(url: str | None) -> bool:
 
     url = str(url).strip()
 
-    # Must start with exactly one forward slash (relative path)
-    if not url.startswith("/") or url.startswith("//") or url.startswith("/\\"):
+    # Parse the URL to inspect components
+    parsed = urlparse(url)
+
+    # Disallow any explicit scheme or host to prevent external redirects
+    if parsed.scheme or parsed.netloc:
+        return False
+
+    path = parsed.path or ""
+
+    # Must start with exactly one forward slash (relative path from root)
+    if not path.startswith("/") or path.startswith("//") or path.startswith("/\\"):
+        return False
+
+    # Normalize backslashes in the original URL and reject if present
+    if "\\" in url:
+        return False
+
+    # Prevent directory traversal
+    segments = path.split("/")
+    if any(segment == ".." for segment in segments):
         return False
 
     # Reject URLs with embedded credentials or unusual characters
     dangerous_patterns = [
         "@",  # Embedded credentials
-        "\\",  # Backslash variations
         "\r",  # CRLF injection
         "\n",  # Newline injection
         "\t",  # Tab character
@@ -295,17 +312,20 @@ def get_safe_redirect_url(default_endpoint: str = "index") -> str:
         default_endpoint: Flask endpoint name to use as fallback
 
     Returns:
-        Safe URL for redirection (always returns url_for result for safety)
+        Safe URL for redirection.
     """
     from flask import request, url_for
 
-    next_url = request.args.get("next", "")
+    raw_next_url = request.args.get("next", "")
 
     # Only use the provided URL if it passes validation
-    if is_safe_redirect_url(next_url):
-        # Return url_for with the path to ensure proper URL construction
-        # We strip the leading slash to match against known routes
-        return next_url
+    if is_safe_redirect_url(raw_next_url):
+        parsed = urlparse(str(raw_next_url).strip())
+        # Rebuild a normalized internal URL without scheme/netloc/fragment
+        safe_path = parsed.path or "/"
+        safe_query = parsed.query
+        normalized = urlunparse(("", "", safe_path, "", safe_query, ""))
+        return normalized
 
     return url_for(default_endpoint)
 
