@@ -1,0 +1,2627 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.4",
+  "serialNumber": "urn:uuid:c4d0c895-2883-4da8-a977-7c585a54acd3",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2024-06-15T14:30:00Z",
+    "tools": [
+      {
+        "vendor": "Sonatype Inc.",
+        "name": "Nexus IQ Server",
+        "version": "1.169.0-01"
+      }
+    ],
+    "component": {
+      "group": "com.acme.apps",
+      "name": "customer-portal",
+      "version": "2.1.0",
+      "purl": "pkg:maven/com.acme.apps/customer-portal@2.1.0?type=war",
+      "type": "application",
+      "bom-ref": "11e74f9d-9d27-4741-98ed-c1b96a08041c"
+    },
+    "properties": [
+      {
+        "name": "Scan ID",
+        "value": "6dfd3c6f3170de9aa8eb0a87845ae3c9"
+      }
+    ]
+  },
+  "components": [
+    {
+      "group": "ch.qos.logback",
+      "name": "logback-classic",
+      "version": "1.4.14",
+      "purl": "pkg:maven/ch.qos.logback/logback-classic@1.4.14?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "db66703df53cb03b2f33"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "bcba67a2-b7a7-4a36-92d6-71fa7c58bca6",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-2.1-only"
+          }
+        }
+      ]
+    },
+    {
+      "group": "ch.qos.logback",
+      "name": "logback-classic",
+      "version": "1.4.5",
+      "purl": "pkg:maven/ch.qos.logback/logback-classic@1.4.5?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "fc9591422c2209126762"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "d97770a8-570c-4b7f-a58c-752f4da10135",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-2.1-only"
+          }
+        }
+      ]
+    },
+    {
+      "group": "com.acme.core",
+      "name": "acme-common",
+      "version": "1.2.0",
+      "purl": "pkg:maven/com.acme.core/acme-common@1.2.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "e9b796b819799a52c84e"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "a93a4956-7df2-43bb-ab7c-2f40c1237638"
+    },
+    {
+      "group": "com.acme.core",
+      "name": "acme-common",
+      "version": "2.0.0",
+      "purl": "pkg:maven/com.acme.core/acme-common@2.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "bc6a0d262d489954c96c"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "d595731e-4d93-4fc4-be51-6a7822f445c6"
+    },
+    {
+      "group": "com.acme.core",
+      "name": "acme-common",
+      "version": "2.1.0",
+      "purl": "pkg:maven/com.acme.core/acme-common@2.1.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "4805bdff59869576cef7"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "ee6a36a0-3d4e-4e1f-b526-1753a18e1aee"
+    },
+    {
+      "group": "com.acme.core",
+      "name": "acme-config",
+      "version": "1.2.0",
+      "purl": "pkg:maven/com.acme.core/acme-config@1.2.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "13b33ac3a08aa23140ae"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "fd55ffc2-9ad3-40b9-9687-58e21762f3f4"
+    },
+    {
+      "group": "com.acme.core",
+      "name": "acme-config",
+      "version": "2.0.0",
+      "purl": "pkg:maven/com.acme.core/acme-config@2.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "56e00c0d03f3e809c505"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "5fd31d70-d784-4841-af99-68aa8d91373d"
+    },
+    {
+      "group": "com.acme.core",
+      "name": "acme-logging",
+      "version": "1.1.0",
+      "purl": "pkg:maven/com.acme.core/acme-logging@1.1.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "af3cd5db24a84f2f8c57"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "3ec10b1f-b45a-46b0-bc9f-feba4ccb941d"
+    },
+    {
+      "group": "com.acme.core",
+      "name": "acme-logging",
+      "version": "1.2.0",
+      "purl": "pkg:maven/com.acme.core/acme-logging@1.2.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "79602bdf2c40ace8f1f7"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "56a6650d-b849-4dd7-80b3-14c9caee4a0c"
+    },
+    {
+      "group": "com.acme.core",
+      "name": "acme-logging",
+      "version": "2.0.0-SNAPSHOT",
+      "purl": "pkg:maven/com.acme.core/acme-logging@2.0.0-SNAPSHOT?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "8c82499dd9fda90ebb81"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "596f7802-f46f-465b-9a14-5f3d987a50ac"
+    },
+    {
+      "group": "com.acme.core",
+      "name": "acme-metrics",
+      "version": "1.1.0",
+      "purl": "pkg:maven/com.acme.core/acme-metrics@1.1.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "11885c1df8659f7f366c"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "14b8faac-33e1-4065-b061-350a61861d46"
+    },
+    {
+      "group": "com.acme.data",
+      "name": "acme-cache",
+      "version": "1.1.0",
+      "purl": "pkg:maven/com.acme.data/acme-cache@1.1.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "d0d4e9ac1318f26a8231"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "698c5c6d-32f0-460d-8a48-374694755944"
+    },
+    {
+      "group": "com.acme.data",
+      "name": "acme-connection-pool",
+      "version": "2.0.0",
+      "purl": "pkg:maven/com.acme.data/acme-connection-pool@2.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "d3cd343d5e9fcf4d10ad"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "74407455-385b-49ef-89cd-2ac439e80108"
+    },
+    {
+      "group": "com.acme.data",
+      "name": "acme-db-common",
+      "version": "2.0.0",
+      "purl": "pkg:maven/com.acme.data/acme-db-common@2.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "47948e5d5d61d94b2eef"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "a53f7734-4c75-4c4e-867a-4b9c4ef62d2e"
+    },
+    {
+      "group": "com.acme.data",
+      "name": "acme-models",
+      "version": "3.0.0",
+      "purl": "pkg:maven/com.acme.data/acme-models@3.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "f7a53f2ea8a6482f8ba3"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "c1c4f04a-1794-48a1-87d7-a38707cf36e2"
+    },
+    {
+      "group": "com.acme.data",
+      "name": "acme-models",
+      "version": "4.0.0",
+      "purl": "pkg:maven/com.acme.data/acme-models@4.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "319c122b013e35ca4fc4"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "55663f4e-51ff-48f6-aa1a-7af948b9de29"
+    },
+    {
+      "group": "com.acme.data",
+      "name": "acme-repository",
+      "version": "2.0.0",
+      "purl": "pkg:maven/com.acme.data/acme-repository@2.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "3d6161d79443a084b6e3"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "1aa72667-388b-4e77-a759-bbb534be2e54"
+    },
+    {
+      "group": "com.acme.domain",
+      "name": "acme-customer-model",
+      "version": "2.0.0",
+      "purl": "pkg:maven/com.acme.domain/acme-customer-model@2.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "3760f58355438faafaef"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "9523bcf3-008a-4479-87b9-c2e71b57ba3b"
+    },
+    {
+      "group": "com.acme.foundation",
+      "name": "acme-mysql-core",
+      "version": "1.0.0",
+      "purl": "pkg:maven/com.acme.foundation/acme-mysql-core@1.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "cb8c8a7d1c4d4cc04223"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "a3096e83-e410-427a-9bf7-76ae77ece3c3"
+    },
+    {
+      "group": "com.acme.foundation",
+      "name": "acme-nosql-core",
+      "version": "1.0.0",
+      "purl": "pkg:maven/com.acme.foundation/acme-nosql-core@1.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "27ff0c915f532bdddafa"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "8c3da1f1-aa8b-450d-ab56-1a0825f10018"
+    },
+    {
+      "group": "com.acme.foundation",
+      "name": "acme-serialization-core",
+      "version": "2.0.0",
+      "purl": "pkg:maven/com.acme.foundation/acme-serialization-core@2.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "73f106fa830095c3e1d5"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "5577c71c-1875-4db3-bb6e-6b2c59f7a6c3"
+    },
+    {
+      "group": "com.acme.foundation",
+      "name": "acme-validation-core",
+      "version": "1.1.0",
+      "purl": "pkg:maven/com.acme.foundation/acme-validation-core@1.1.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "1fcc9404cf604c651b6e"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "535aa1c4-e698-4185-9199-ceba32a9d66f"
+    },
+    {
+      "group": "com.acme.http",
+      "name": "acme-web-common",
+      "version": "2.0.0",
+      "purl": "pkg:maven/com.acme.http/acme-web-common@2.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "7e799f48060269f109dd"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "914e4ce8-3d58-4562-9cbf-58385db49873"
+    },
+    {
+      "group": "com.acme.messaging",
+      "name": "acme-events",
+      "version": "1.1.0",
+      "purl": "pkg:maven/com.acme.messaging/acme-events@1.1.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "79109882bc870d993beb"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "68d60f8a-d79c-46c9-be7b-b439a183cff1"
+    },
+    {
+      "group": "com.acme.messaging",
+      "name": "acme-events",
+      "version": "2.0.0",
+      "purl": "pkg:maven/com.acme.messaging/acme-events@2.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "64923256a51d721808d0"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "ab2582a1-5f87-4646-9919-b6c3a31e68e6"
+    },
+    {
+      "group": "com.acme.messaging",
+      "name": "acme-kafka",
+      "version": "2.0.0",
+      "purl": "pkg:maven/com.acme.messaging/acme-kafka@2.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "499c5262b040b0da928e"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "24c4cf28-83ba-4d6d-912a-262c3a6ebdef"
+    },
+    {
+      "group": "com.acme.messaging",
+      "name": "acme-schema-registry",
+      "version": "2.0.0",
+      "purl": "pkg:maven/com.acme.messaging/acme-schema-registry@2.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "a470850f57543a2694f1"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "315c40c2-f67b-43f4-a76e-ee9a0a0f12ee"
+    },
+    {
+      "group": "com.acme.messaging",
+      "name": "acme-serialization",
+      "version": "2.0.0",
+      "purl": "pkg:maven/com.acme.messaging/acme-serialization@2.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "c058d2bd4edbc54ce007"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "e9633bc1-835f-4a97-b96f-a1540d6834b3"
+    },
+    {
+      "group": "com.acme.security",
+      "name": "acme-auth",
+      "version": "3.0.0",
+      "purl": "pkg:maven/com.acme.security/acme-auth@3.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "59b04c4bae49546cc986"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "63eacc14-9e54-4da1-bcad-5694814b6d18"
+    },
+    {
+      "group": "com.acme.security",
+      "name": "acme-crypto",
+      "version": "1.2.0",
+      "purl": "pkg:maven/com.acme.security/acme-crypto@1.2.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "ebf345cf2f54491a9f60"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "e46f2591-fc15-42ad-924b-5c7cc82f5927"
+    },
+    {
+      "group": "com.acme.security",
+      "name": "acme-jwt",
+      "version": "1.1.0",
+      "purl": "pkg:maven/com.acme.security/acme-jwt@1.1.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "943ac396e5807297d575"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "657d6ea9-419d-4547-afdd-f3c2bd56a20c"
+    },
+    {
+      "group": "com.auth0",
+      "name": "java-jwt",
+      "version": "4.4.0",
+      "purl": "pkg:maven/com.auth0/java-jwt@4.4.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "4c5ca03422d0138a15ec"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "e662f7f4-2d7c-4be7-aec3-7e934dfdf2b9",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "group": "com.esotericsoftware",
+      "name": "kryo",
+      "version": "5.5.0",
+      "purl": "pkg:maven/com.esotericsoftware/kryo@5.5.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "be3e82904896b1cdb3d1"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "58b8b08f-a67b-4466-b862-c5ec41df6901",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ]
+    },
+    {
+      "group": "com.fasterxml.jackson.core",
+      "name": "jackson-annotations",
+      "version": "2.16.0",
+      "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-annotations@2.16.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "43ce1b19bcd1391020a8"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "0d5565b6-af51-420f-b9a9-8193c8e07f73",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "com.fasterxml.jackson.core",
+      "name": "jackson-annotations",
+      "version": "2.16.1",
+      "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-annotations@2.16.1?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "de511b4e02b9ee4608c1"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "21273f81-24f6-4b86-b411-e93428b65445",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "com.fasterxml.jackson.core",
+      "name": "jackson-core",
+      "version": "2.16.0",
+      "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-core@2.16.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "9ef8cb4e73f8bc1f1faf"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "bb7d8d9d-a366-4300-ad4d-7ce47c472abf",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "com.fasterxml.jackson.core",
+      "name": "jackson-core",
+      "version": "2.16.1",
+      "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-core@2.16.1?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "17c1b88480be433bf93b"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "27e418af-65cb-4f7c-b2a8-d2b8455d4729",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "com.fasterxml.jackson.core",
+      "name": "jackson-databind",
+      "version": "2.16.0",
+      "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.16.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "51b50babe3a42920654a"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "2b941a6c-6f6a-4010-9d14-db735bbf811f",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "com.fasterxml.jackson.core",
+      "name": "jackson-databind",
+      "version": "2.16.1",
+      "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.16.1?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "d0359ad211896aad8593"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "4fefa549-b9af-473c-8af6-16d830759a2d",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "com.google.code.gson",
+      "name": "gson",
+      "version": "2.10.1",
+      "purl": "pkg:maven/com.google.code.gson/gson@2.10.1?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "ecfb5ad690bdf434b960"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "6c4af93f-7518-4b05-9583-f11cdead3a7d",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "com.google.guava",
+      "name": "guava",
+      "version": "32.1.2-jre",
+      "purl": "pkg:maven/com.google.guava/guava@32.1.2-jre?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "5495ac1f94ac968eaf53"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "8a7819cd-1fd1-4c6a-aa25-271047e9e6bc",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "com.google.guava",
+      "name": "guava",
+      "version": "33.0.0-jre",
+      "purl": "pkg:maven/com.google.guava/guava@33.0.0-jre?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "c973d748ad33564c32aa"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "b6bfbd88-5e8a-47f0-b4dc-13e352e0fef8",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "com.zaxxer",
+      "name": "HikariCP",
+      "version": "5.1.0",
+      "purl": "pkg:maven/com.zaxxer/HikariCP@5.1.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "9fd144b0b7ce69c44e6e"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "98e76c69-1fd2-45aa-9b4a-b41db84806bf",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "io.jsonwebtoken",
+      "name": "jjwt-api",
+      "version": "0.12.3",
+      "purl": "pkg:maven/io.jsonwebtoken/jjwt-api@0.12.3?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "1917e505e026bd4b462b"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "919eef7c-eef4-4354-a4f9-cb27e89ad294",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "io.micrometer",
+      "name": "micrometer-core",
+      "version": "1.12.0",
+      "purl": "pkg:maven/io.micrometer/micrometer-core@1.12.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "a83fc609105e91a18577"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "98c4baa6-d536-42a0-b98c-a0d522e6a9ba",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "jakarta.validation",
+      "name": "jakarta.validation-api",
+      "version": "3.0.2",
+      "purl": "pkg:maven/jakarta.validation/jakarta.validation-api@3.0.2?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "c98ec2668c7a6eb2df21"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "6ba1632b-c501-42ba-9ab7-6bfe38d820cc",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "mysql",
+      "name": "mysql-connector-java",
+      "version": "8.0.33",
+      "purl": "pkg:maven/mysql/mysql-connector-java@8.0.33?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "b8b945fa26239783b4d8"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "af0afca4-81c2-49c4-a8ef-335e4d565e39",
+      "licenses": [
+        {
+          "license": {
+            "name": "GPL-2.0-only (with FOSS exception)"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.apache.commons",
+      "name": "commons-lang3",
+      "version": "3.13.0",
+      "purl": "pkg:maven/org.apache.commons/commons-lang3@3.13.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "08c8f1658ce2789a34f1"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "acaf2e2d-3838-48b1-be4e-2c9209e2a3d0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.apache.commons",
+      "name": "commons-lang3",
+      "version": "3.14.0",
+      "purl": "pkg:maven/org.apache.commons/commons-lang3@3.14.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "7fc2ab57915852ede05c"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "1508861c-aebf-480e-92d1-dba73d01e036",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.apache.kafka",
+      "name": "kafka-clients",
+      "version": "3.6.0",
+      "purl": "pkg:maven/org.apache.kafka/kafka-clients@3.6.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "9773fc8219e039875496"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "8b630a33-9378-4f9c-8af8-b1e81459a8b5",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.bouncycastle",
+      "name": "bcprov-jdk18on",
+      "version": "1.77",
+      "purl": "pkg:maven/org.bouncycastle/bcprov-jdk18on@1.77?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "9a9338d61533349e69c1"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "b2477973-ab63-47c5-85cb-28db387548ae",
+      "licenses": [
+        {
+          "license": {
+            "name": "Bouncy Castle Licence"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.hibernate.validator",
+      "name": "hibernate-validator",
+      "version": "8.0.1.Final",
+      "purl": "pkg:maven/org.hibernate.validator/hibernate-validator@8.0.1.Final?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "b902486ae8db06b1ce24"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "fbba163c-4a4c-48df-a996-d695b6ade5cc",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.mongodb",
+      "name": "mongodb-driver-sync",
+      "version": "4.9.0",
+      "purl": "pkg:maven/org.mongodb/mongodb-driver-sync@4.9.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "db702b561d881e797158"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "e0721563-0da9-43ff-b0d8-e01dd4de7806",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.postgresql",
+      "name": "postgresql",
+      "version": "42.7.0",
+      "purl": "pkg:maven/org.postgresql/postgresql@42.7.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "9a217861d8599789fb6e"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "43d227e8-b970-4862-9c8e-be48b1197929",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.slf4j",
+      "name": "slf4j-api",
+      "version": "2.0.0",
+      "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "4e867371641d47cd315f"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "cb9258ef-781c-4c19-869a-13dadd678277",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.slf4j",
+      "name": "slf4j-api",
+      "version": "2.0.11",
+      "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.11?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "75aa4a256928fe5aea0c"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "536f01c3-3c36-40f6-9651-8858b4c825db",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.slf4j",
+      "name": "slf4j-api",
+      "version": "2.0.7",
+      "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.7?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "26931e3de88751c7231c"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "4408ee51-2c0b-4d42-a193-2b1ca9731123",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.springframework",
+      "name": "spring-beans",
+      "version": "6.1.2",
+      "purl": "pkg:maven/org.springframework/spring-beans@6.1.2?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "595e0d7c993d7dfdc4fd"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "432a539b-c373-40af-b90d-e3fa6a38c6f2",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.springframework",
+      "name": "spring-context",
+      "version": "6.1.2",
+      "purl": "pkg:maven/org.springframework/spring-context@6.1.2?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "7faf757fb59fde498fc5"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "5810cabe-c40c-4b9b-bc6a-e6b6620eaab2",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.springframework",
+      "name": "spring-core",
+      "version": "6.1.2",
+      "purl": "pkg:maven/org.springframework/spring-core@6.1.2?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "a6ba105734b7211b4b5c"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "427d1500-bd5b-4e58-8cf0-ef5f99f93cf7",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.springframework",
+      "name": "spring-web",
+      "version": "6.1.2",
+      "purl": "pkg:maven/org.springframework/spring-web@6.1.2?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "dfa8761899869105b24f"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "0f85165f-dfa3-43c0-b6c7-53de4e19cf0c",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.springframework",
+      "name": "spring-webmvc",
+      "version": "6.1.2",
+      "purl": "pkg:maven/org.springframework/spring-webmvc@6.1.2?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "3c1410eece73012cda16"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "b3addef3-1b27-4f88-aed6-a58be23a7b4f",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.springframework.boot",
+      "name": "spring-boot",
+      "version": "3.2.1",
+      "purl": "pkg:maven/org.springframework.boot/spring-boot@3.2.1?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "5a79b2e3901779a380cb"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "439772ae-33f4-433c-809a-d7dad4c82e78",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.springframework.boot",
+      "name": "spring-boot-autoconfigure",
+      "version": "3.2.1",
+      "purl": "pkg:maven/org.springframework.boot/spring-boot-autoconfigure@3.2.1?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "de4429dc20d43559a0fb"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "58b018be-bff9-4d04-8323-722bc54d30be",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.springframework.boot",
+      "name": "spring-boot-starter-web",
+      "version": "3.2.1",
+      "purl": "pkg:maven/org.springframework.boot/spring-boot-starter-web@3.2.1?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "72f80a1921c9a12cd3e3"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "0aa2c3f7-dbaa-46db-a7a6-4963aec2f627",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.springframework.security",
+      "name": "spring-security-core",
+      "version": "6.2.0",
+      "purl": "pkg:maven/org.springframework.security/spring-security-core@6.2.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "c641c48857cb10c9d308"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "4b2633c3-0321-40a7-998c-73d0bf55b0aa",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "org.xerial.snappy",
+      "name": "snappy-java",
+      "version": "1.1.10.5",
+      "purl": "pkg:maven/org.xerial.snappy/snappy-java@1.1.10.5?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "aafef80ffa8721e102db"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "e22aa2ba-afb8-4b28-9c8a-75e06e699e11",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "redis.clients",
+      "name": "jedis",
+      "version": "5.1.0",
+      "purl": "pkg:maven/redis.clients/jedis@5.1.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "fafa6e547e13fc7856ca"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "880d45f0-8a23-402a-b290-736ab270cd56",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "group": "software.amazon.awssdk",
+      "name": "aws-core",
+      "version": "2.20.0",
+      "purl": "pkg:maven/software.amazon.awssdk/aws-core@2.20.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "f9dfefb7227785a42c74"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "6958f9ba-2e32-4fff-83aa-38c53849f72d",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "group": "software.amazon.awssdk",
+      "name": "dynamodb",
+      "version": "2.20.0",
+      "purl": "pkg:maven/software.amazon.awssdk/dynamodb@2.20.0?type=jar",
+      "modified": false,
+      "properties": [
+        {
+          "name": "Sonatype truncated SHA1",
+          "value": "bc6e9be656d57fcc4f91"
+        },
+        {
+          "name": "Match State",
+          "value": "exact"
+        },
+        {
+          "name": "Identification Source",
+          "value": "Sonatype"
+        }
+      ],
+      "type": "library",
+      "bom-ref": "2e973d82-5bdf-49c9-9c41-7d9f6f313c08",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    }
+  ],
+  "externalReferences": [
+    {
+      "type": "bom",
+      "url": "https://sca.acme-corp.internal/ui/links/application/customer_portal/report/6dfd3c6f3170de9aa8eb0a87845ae3c9",
+      "comment": "IQ Report"
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "bcba67a2-b7a7-4a36-92d6-71fa7c58bca6",
+      "dependsOn": [
+        "536f01c3-3c36-40f6-9651-8858b4c825db"
+      ]
+    },
+    {
+      "ref": "d97770a8-570c-4b7f-a58c-752f4da10135",
+      "dependsOn": [
+        "cb9258ef-781c-4c19-869a-13dadd678277"
+      ]
+    },
+    {
+      "ref": "11e74f9d-9d27-4741-98ed-c1b96a08041c",
+      "dependsOn": [
+        "914e4ce8-3d58-4562-9cbf-58385db49873",
+        "1aa72667-388b-4e77-a759-bbb534be2e54",
+        "55663f4e-51ff-48f6-aa1a-7af948b9de29",
+        "24c4cf28-83ba-4d6d-912a-262c3a6ebdef",
+        "698c5c6d-32f0-460d-8a48-374694755944",
+        "9523bcf3-008a-4479-87b9-c2e71b57ba3b"
+      ]
+    },
+    {
+      "ref": "a93a4956-7df2-43bb-ab7c-2f40c1237638",
+      "dependsOn": [
+        "8a7819cd-1fd1-4c6a-aa25-271047e9e6bc",
+        "acaf2e2d-3838-48b1-be4e-2c9209e2a3d0",
+        "3ec10b1f-b45a-46b0-bc9f-feba4ccb941d"
+      ]
+    },
+    {
+      "ref": "d595731e-4d93-4fc4-be51-6a7822f445c6",
+      "dependsOn": [
+        "b6bfbd88-5e8a-47f0-b4dc-13e352e0fef8",
+        "1508861c-aebf-480e-92d1-dba73d01e036",
+        "56a6650d-b849-4dd7-80b3-14c9caee4a0c"
+      ]
+    },
+    {
+      "ref": "ee6a36a0-3d4e-4e1f-b526-1753a18e1aee",
+      "dependsOn": [
+        "b6bfbd88-5e8a-47f0-b4dc-13e352e0fef8",
+        "1508861c-aebf-480e-92d1-dba73d01e036",
+        "56a6650d-b849-4dd7-80b3-14c9caee4a0c"
+      ]
+    },
+    {
+      "ref": "fd55ffc2-9ad3-40b9-9687-58e21762f3f4",
+      "dependsOn": [
+        "a93a4956-7df2-43bb-ab7c-2f40c1237638",
+        "2b941a6c-6f6a-4010-9d14-db735bbf811f"
+      ]
+    },
+    {
+      "ref": "5fd31d70-d784-4841-af99-68aa8d91373d",
+      "dependsOn": [
+        "d595731e-4d93-4fc4-be51-6a7822f445c6",
+        "4fefa549-b9af-473c-8af6-16d830759a2d"
+      ]
+    },
+    {
+      "ref": "3ec10b1f-b45a-46b0-bc9f-feba4ccb941d",
+      "dependsOn": [
+        "4408ee51-2c0b-4d42-a193-2b1ca9731123",
+        "d97770a8-570c-4b7f-a58c-752f4da10135"
+      ]
+    },
+    {
+      "ref": "56a6650d-b849-4dd7-80b3-14c9caee4a0c",
+      "dependsOn": [
+        "536f01c3-3c36-40f6-9651-8858b4c825db",
+        "bcba67a2-b7a7-4a36-92d6-71fa7c58bca6"
+      ]
+    },
+    {
+      "ref": "596f7802-f46f-465b-9a14-5f3d987a50ac",
+      "dependsOn": [
+        "536f01c3-3c36-40f6-9651-8858b4c825db",
+        "bcba67a2-b7a7-4a36-92d6-71fa7c58bca6"
+      ]
+    },
+    {
+      "ref": "14b8faac-33e1-4065-b061-350a61861d46",
+      "dependsOn": [
+        "98c4baa6-d536-42a0-b98c-a0d522e6a9ba",
+        "d595731e-4d93-4fc4-be51-6a7822f445c6",
+        "56a6650d-b849-4dd7-80b3-14c9caee4a0c"
+      ]
+    },
+    {
+      "ref": "698c5c6d-32f0-460d-8a48-374694755944",
+      "dependsOn": [
+        "880d45f0-8a23-402a-b290-736ab270cd56",
+        "5fd31d70-d784-4841-af99-68aa8d91373d",
+        "74407455-385b-49ef-89cd-2ac439e80108"
+      ]
+    },
+    {
+      "ref": "74407455-385b-49ef-89cd-2ac439e80108",
+      "dependsOn": [
+        "98e76c69-1fd2-45aa-9b4a-b41db84806bf",
+        "5fd31d70-d784-4841-af99-68aa8d91373d"
+      ]
+    },
+    {
+      "ref": "a53f7734-4c75-4c4e-867a-4b9c4ef62d2e",
+      "dependsOn": [
+        "43d227e8-b970-4862-9c8e-be48b1197929",
+        "98e76c69-1fd2-45aa-9b4a-b41db84806bf",
+        "fd55ffc2-9ad3-40b9-9687-58e21762f3f4",
+        "a3096e83-e410-427a-9bf7-76ae77ece3c3",
+        "8c3da1f1-aa8b-450d-ab56-1a0825f10018"
+      ]
+    },
+    {
+      "ref": "c1c4f04a-1794-48a1-87d7-a38707cf36e2",
+      "dependsOn": [
+        "2b941a6c-6f6a-4010-9d14-db735bbf811f",
+        "d595731e-4d93-4fc4-be51-6a7822f445c6"
+      ]
+    },
+    {
+      "ref": "55663f4e-51ff-48f6-aa1a-7af948b9de29",
+      "dependsOn": [
+        "4fefa549-b9af-473c-8af6-16d830759a2d",
+        "ee6a36a0-3d4e-4e1f-b526-1753a18e1aee"
+      ]
+    },
+    {
+      "ref": "1aa72667-388b-4e77-a759-bbb534be2e54",
+      "dependsOn": [
+        "a53f7734-4c75-4c4e-867a-4b9c4ef62d2e",
+        "c1c4f04a-1794-48a1-87d7-a38707cf36e2"
+      ]
+    },
+    {
+      "ref": "9523bcf3-008a-4479-87b9-c2e71b57ba3b",
+      "dependsOn": [
+        "535aa1c4-e698-4185-9199-ceba32a9d66f",
+        "55663f4e-51ff-48f6-aa1a-7af948b9de29"
+      ]
+    },
+    {
+      "ref": "a3096e83-e410-427a-9bf7-76ae77ece3c3",
+      "dependsOn": [
+        "af0afca4-81c2-49c4-a8ef-335e4d565e39"
+      ]
+    },
+    {
+      "ref": "8c3da1f1-aa8b-450d-ab56-1a0825f10018",
+      "dependsOn": [
+        "e0721563-0da9-43ff-b0d8-e01dd4de7806",
+        "2e973d82-5bdf-49c9-9c41-7d9f6f313c08"
+      ]
+    },
+    {
+      "ref": "5577c71c-1875-4db3-bb6e-6b2c59f7a6c3",
+      "dependsOn": [
+        "58b8b08f-a67b-4466-b862-c5ec41df6901",
+        "e22aa2ba-afb8-4b28-9c8a-75e06e699e11",
+        "6c4af93f-7518-4b05-9583-f11cdead3a7d"
+      ]
+    },
+    {
+      "ref": "535aa1c4-e698-4185-9199-ceba32a9d66f",
+      "dependsOn": [
+        "fbba163c-4a4c-48df-a996-d695b6ade5cc",
+        "6ba1632b-c501-42ba-9ab7-6bfe38d820cc"
+      ]
+    },
+    {
+      "ref": "914e4ce8-3d58-4562-9cbf-58385db49873",
+      "dependsOn": [
+        "0aa2c3f7-dbaa-46db-a7a6-4963aec2f627",
+        "63eacc14-9e54-4da1-bcad-5694814b6d18",
+        "14b8faac-33e1-4065-b061-350a61861d46"
+      ]
+    },
+    {
+      "ref": "68d60f8a-d79c-46c9-be7b-b439a183cff1",
+      "dependsOn": [
+        "c1c4f04a-1794-48a1-87d7-a38707cf36e2",
+        "d595731e-4d93-4fc4-be51-6a7822f445c6"
+      ]
+    },
+    {
+      "ref": "ab2582a1-5f87-4646-9919-b6c3a31e68e6",
+      "dependsOn": [
+        "55663f4e-51ff-48f6-aa1a-7af948b9de29",
+        "ee6a36a0-3d4e-4e1f-b526-1753a18e1aee"
+      ]
+    },
+    {
+      "ref": "24c4cf28-83ba-4d6d-912a-262c3a6ebdef",
+      "dependsOn": [
+        "8b630a33-9378-4f9c-8af8-b1e81459a8b5",
+        "5fd31d70-d784-4841-af99-68aa8d91373d",
+        "e9633bc1-835f-4a97-b96f-a1540d6834b3",
+        "315c40c2-f67b-43f4-a76e-ee9a0a0f12ee"
+      ]
+    },
+    {
+      "ref": "315c40c2-f67b-43f4-a76e-ee9a0a0f12ee",
+      "dependsOn": [
+        "ab2582a1-5f87-4646-9919-b6c3a31e68e6",
+        "698c5c6d-32f0-460d-8a48-374694755944",
+        "ee6a36a0-3d4e-4e1f-b526-1753a18e1aee"
+      ]
+    },
+    {
+      "ref": "e9633bc1-835f-4a97-b96f-a1540d6834b3",
+      "dependsOn": [
+        "5577c71c-1875-4db3-bb6e-6b2c59f7a6c3",
+        "68d60f8a-d79c-46c9-be7b-b439a183cff1",
+        "d595731e-4d93-4fc4-be51-6a7822f445c6"
+      ]
+    },
+    {
+      "ref": "63eacc14-9e54-4da1-bcad-5694814b6d18",
+      "dependsOn": [
+        "657d6ea9-419d-4547-afdd-f3c2bd56a20c",
+        "5fd31d70-d784-4841-af99-68aa8d91373d",
+        "4b2633c3-0321-40a7-998c-73d0bf55b0aa",
+        "596f7802-f46f-465b-9a14-5f3d987a50ac"
+      ]
+    },
+    {
+      "ref": "e46f2591-fc15-42ad-924b-5c7cc82f5927",
+      "dependsOn": [
+        "b2477973-ab63-47c5-85cb-28db387548ae",
+        "d595731e-4d93-4fc4-be51-6a7822f445c6"
+      ]
+    },
+    {
+      "ref": "657d6ea9-419d-4547-afdd-f3c2bd56a20c",
+      "dependsOn": [
+        "e662f7f4-2d7c-4be7-aec3-7e934dfdf2b9",
+        "919eef7c-eef4-4354-a4f9-cb27e89ad294",
+        "e46f2591-fc15-42ad-924b-5c7cc82f5927"
+      ]
+    },
+    {
+      "ref": "e662f7f4-2d7c-4be7-aec3-7e934dfdf2b9",
+      "dependsOn": [
+        "2b941a6c-6f6a-4010-9d14-db735bbf811f"
+      ]
+    },
+    {
+      "ref": "58b8b08f-a67b-4466-b862-c5ec41df6901",
+      "dependsOn": []
+    },
+    {
+      "ref": "0d5565b6-af51-420f-b9a9-8193c8e07f73",
+      "dependsOn": []
+    },
+    {
+      "ref": "21273f81-24f6-4b86-b411-e93428b65445",
+      "dependsOn": []
+    },
+    {
+      "ref": "bb7d8d9d-a366-4300-ad4d-7ce47c472abf",
+      "dependsOn": []
+    },
+    {
+      "ref": "27e418af-65cb-4f7c-b2a8-d2b8455d4729",
+      "dependsOn": []
+    },
+    {
+      "ref": "2b941a6c-6f6a-4010-9d14-db735bbf811f",
+      "dependsOn": [
+        "bb7d8d9d-a366-4300-ad4d-7ce47c472abf",
+        "0d5565b6-af51-420f-b9a9-8193c8e07f73"
+      ]
+    },
+    {
+      "ref": "4fefa549-b9af-473c-8af6-16d830759a2d",
+      "dependsOn": [
+        "27e418af-65cb-4f7c-b2a8-d2b8455d4729",
+        "21273f81-24f6-4b86-b411-e93428b65445"
+      ]
+    },
+    {
+      "ref": "6c4af93f-7518-4b05-9583-f11cdead3a7d",
+      "dependsOn": []
+    },
+    {
+      "ref": "8a7819cd-1fd1-4c6a-aa25-271047e9e6bc",
+      "dependsOn": []
+    },
+    {
+      "ref": "b6bfbd88-5e8a-47f0-b4dc-13e352e0fef8",
+      "dependsOn": []
+    },
+    {
+      "ref": "98e76c69-1fd2-45aa-9b4a-b41db84806bf",
+      "dependsOn": []
+    },
+    {
+      "ref": "919eef7c-eef4-4354-a4f9-cb27e89ad294",
+      "dependsOn": []
+    },
+    {
+      "ref": "98c4baa6-d536-42a0-b98c-a0d522e6a9ba",
+      "dependsOn": []
+    },
+    {
+      "ref": "6ba1632b-c501-42ba-9ab7-6bfe38d820cc",
+      "dependsOn": []
+    },
+    {
+      "ref": "af0afca4-81c2-49c4-a8ef-335e4d565e39",
+      "dependsOn": []
+    },
+    {
+      "ref": "acaf2e2d-3838-48b1-be4e-2c9209e2a3d0",
+      "dependsOn": []
+    },
+    {
+      "ref": "1508861c-aebf-480e-92d1-dba73d01e036",
+      "dependsOn": []
+    },
+    {
+      "ref": "8b630a33-9378-4f9c-8af8-b1e81459a8b5",
+      "dependsOn": []
+    },
+    {
+      "ref": "b2477973-ab63-47c5-85cb-28db387548ae",
+      "dependsOn": []
+    },
+    {
+      "ref": "fbba163c-4a4c-48df-a996-d695b6ade5cc",
+      "dependsOn": []
+    },
+    {
+      "ref": "e0721563-0da9-43ff-b0d8-e01dd4de7806",
+      "dependsOn": []
+    },
+    {
+      "ref": "43d227e8-b970-4862-9c8e-be48b1197929",
+      "dependsOn": []
+    },
+    {
+      "ref": "cb9258ef-781c-4c19-869a-13dadd678277",
+      "dependsOn": []
+    },
+    {
+      "ref": "536f01c3-3c36-40f6-9651-8858b4c825db",
+      "dependsOn": []
+    },
+    {
+      "ref": "4408ee51-2c0b-4d42-a193-2b1ca9731123",
+      "dependsOn": []
+    },
+    {
+      "ref": "432a539b-c373-40af-b90d-e3fa6a38c6f2",
+      "dependsOn": [
+        "427d1500-bd5b-4e58-8cf0-ef5f99f93cf7"
+      ]
+    },
+    {
+      "ref": "5810cabe-c40c-4b9b-bc6a-e6b6620eaab2",
+      "dependsOn": [
+        "432a539b-c373-40af-b90d-e3fa6a38c6f2",
+        "427d1500-bd5b-4e58-8cf0-ef5f99f93cf7"
+      ]
+    },
+    {
+      "ref": "427d1500-bd5b-4e58-8cf0-ef5f99f93cf7",
+      "dependsOn": []
+    },
+    {
+      "ref": "0f85165f-dfa3-43c0-b6c7-53de4e19cf0c",
+      "dependsOn": [
+        "427d1500-bd5b-4e58-8cf0-ef5f99f93cf7",
+        "432a539b-c373-40af-b90d-e3fa6a38c6f2"
+      ]
+    },
+    {
+      "ref": "b3addef3-1b27-4f88-aed6-a58be23a7b4f",
+      "dependsOn": [
+        "0f85165f-dfa3-43c0-b6c7-53de4e19cf0c",
+        "5810cabe-c40c-4b9b-bc6a-e6b6620eaab2"
+      ]
+    },
+    {
+      "ref": "439772ae-33f4-433c-809a-d7dad4c82e78",
+      "dependsOn": [
+        "427d1500-bd5b-4e58-8cf0-ef5f99f93cf7",
+        "5810cabe-c40c-4b9b-bc6a-e6b6620eaab2"
+      ]
+    },
+    {
+      "ref": "58b018be-bff9-4d04-8323-722bc54d30be",
+      "dependsOn": [
+        "439772ae-33f4-433c-809a-d7dad4c82e78"
+      ]
+    },
+    {
+      "ref": "0aa2c3f7-dbaa-46db-a7a6-4963aec2f627",
+      "dependsOn": [
+        "58b018be-bff9-4d04-8323-722bc54d30be",
+        "b3addef3-1b27-4f88-aed6-a58be23a7b4f"
+      ]
+    },
+    {
+      "ref": "4b2633c3-0321-40a7-998c-73d0bf55b0aa",
+      "dependsOn": []
+    },
+    {
+      "ref": "e22aa2ba-afb8-4b28-9c8a-75e06e699e11",
+      "dependsOn": []
+    },
+    {
+      "ref": "880d45f0-8a23-402a-b290-736ab270cd56",
+      "dependsOn": []
+    },
+    {
+      "ref": "6958f9ba-2e32-4fff-83aa-38c53849f72d",
+      "dependsOn": []
+    },
+    {
+      "ref": "2e973d82-5bdf-49c9-9c41-7d9f6f313c08",
+      "dependsOn": [
+        "6958f9ba-2e32-4fff-83aa-38c53849f72d"
+      ]
+    }
+  ],
+  "vulnerabilities": [
+    {
+      "id": "CVE-2023-34035",
+      "source": {
+        "name": "NVD",
+        "url": "http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-34035"
+      },
+      "ratings": [
+        {
+          "source": {
+            "name": "NVD"
+          },
+          "score": 7.5,
+          "severity": "high",
+          "method": "CVSSv3",
+          "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+        }
+      ],
+      "cwes": [
+        863
+      ],
+      "affects": [
+        {
+          "ref": "4b2633c3-0321-40a7-998c-73d0bf55b0aa"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2023-44487",
+      "source": {
+        "name": "NVD",
+        "url": "http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-44487"
+      },
+      "ratings": [
+        {
+          "source": {
+            "name": "NVD"
+          },
+          "score": 7.5,
+          "severity": "high",
+          "method": "CVSSv3",
+          "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+        }
+      ],
+      "cwes": [
+        400
+      ],
+      "affects": [
+        {
+          "ref": "0aa2c3f7-dbaa-46db-a7a6-4963aec2f627"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2022-45688",
+      "source": {
+        "name": "NVD",
+        "url": "http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2022-45688"
+      },
+      "ratings": [
+        {
+          "source": {
+            "name": "NVD"
+          },
+          "score": 5.3,
+          "severity": "medium",
+          "method": "CVSSv3",
+          "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+        }
+      ],
+      "cwes": [
+        787
+      ],
+      "affects": [
+        {
+          "ref": "2b941a6c-6f6a-4010-9d14-db735bbf811f"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2023-35116",
+      "source": {
+        "name": "NVD",
+        "url": "http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-35116"
+      },
+      "ratings": [
+        {
+          "source": {
+            "name": "NVD"
+          },
+          "score": 4.7,
+          "severity": "medium",
+          "method": "CVSSv3",
+          "vector": "CVSS:3.1/AV:L/AC:H/PR:N/UI:R/S:U/C:N/I:N/A:H"
+        }
+      ],
+      "cwes": [
+        770
+      ],
+      "affects": [
+        {
+          "ref": "4fefa549-b9af-473c-8af6-16d830759a2d"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2023-2976",
+      "source": {
+        "name": "NVD",
+        "url": "http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-2976"
+      },
+      "ratings": [
+        {
+          "source": {
+            "name": "NVD"
+          },
+          "score": 5.5,
+          "severity": "medium",
+          "method": "CVSSv3",
+          "vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N"
+        }
+      ],
+      "cwes": [
+        552
+      ],
+      "affects": [
+        {
+          "ref": "b6bfbd88-5e8a-47f0-b4dc-13e352e0fef8"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2023-5072",
+      "source": {
+        "name": "NVD",
+        "url": "http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-5072"
+      },
+      "ratings": [
+        {
+          "source": {
+            "name": "NVD"
+          },
+          "score": 7.5,
+          "severity": "high",
+          "method": "CVSSv3",
+          "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+        }
+      ],
+      "cwes": [
+        400
+      ],
+      "affects": [
+        {
+          "ref": "e22aa2ba-afb8-4b28-9c8a-75e06e699e11"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2023-20873",
+      "source": {
+        "name": "NVD",
+        "url": "http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-20873"
+      },
+      "ratings": [
+        {
+          "source": {
+            "name": "NVD"
+          },
+          "score": 9.8,
+          "severity": "critical",
+          "method": "CVSSv3",
+          "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+        }
+      ],
+      "cwes": [
+        284
+      ],
+      "affects": [
+        {
+          "ref": "439772ae-33f4-433c-809a-d7dad4c82e78"
+        }
+      ]
+    },
+    {
+      "id": "CVE-2023-46589",
+      "source": {
+        "name": "NVD",
+        "url": "http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2023-46589"
+      },
+      "ratings": [
+        {
+          "source": {
+            "name": "NVD"
+          },
+          "score": 8.2,
+          "severity": "high",
+          "method": "CVSSv3",
+          "vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N"
+        }
+      ],
+      "cwes": [
+        269
+      ],
+      "affects": [
+        {
+          "ref": "af0afca4-81c2-49c4-a8ef-335e4d565e39"
+        }
+      ]
+    },
+    {
+      "id": "sonatype-2023-4567",
+      "source": {
+        "name": "SONATYPE",
+        "url": "https://sca.acme-corp.internal/ui/links/vln/sonatype-2023-4567"
+      },
+      "ratings": [
+        {
+          "source": {
+            "name": "SONATYPE"
+          },
+          "score": 6.6,
+          "severity": "high",
+          "method": "other",
+          "vector": "CVSS:3.1/AV:N/AC:H/PR:H/UI:N/S:U/C:H/I:H/A:H"
+        }
+      ],
+      "cwes": [
+        502
+      ],
+      "affects": [
+        {
+          "ref": "bcba67a2-b7a7-4a36-92d6-71fa7c58bca6"
+        }
+      ]
+    },
+    {
+      "id": "sonatype-2023-7890",
+      "source": {
+        "name": "SONATYPE",
+        "url": "https://sca.acme-corp.internal/ui/links/vln/sonatype-2023-7890"
+      },
+      "ratings": [
+        {
+          "source": {
+            "name": "SONATYPE"
+          },
+          "score": 4.3,
+          "severity": "medium",
+          "method": "other",
+          "vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:L/I:N/A:N"
+        }
+      ],
+      "cwes": [
+        200
+      ],
+      "affects": [
+        {
+          "ref": "43d227e8-b970-4862-9c8e-be48b1197929"
+        }
+      ]
+    }
+  ]
+}

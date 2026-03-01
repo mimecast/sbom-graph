@@ -1,0 +1,210 @@
+/* report.css - Shared styles for report and data table templates */
+
+body {
+    margin: 20px;
+    padding: 0;
+}
+
+.controls {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+/* Toggle switch component */
+
+.toggle-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: white;
+    padding: 10px 15px;
+    border-radius: 5px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.toggle-label {
+    font-weight: bold;
+    color: #333;
+}
+
+.toggle-switch {
+    position: relative;
+    width: 50px;
+    height: 26px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: 0.3s;
+    border-radius: 26px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 20px;
+    width: 20px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s;
+    border-radius: 50%;
+}
+
+input:checked + .toggle-slider {
+    background-color: #366092;
+}
+
+input:checked + .toggle-slider:before {
+    transform: translateX(24px);
+}
+
+.toggle-status {
+    font-size: 14px;
+    color: #666;
+    min-width: 100px;
+}
+
+/* Stats bar */
+
+.stats {
+    background: #e8f4fc;
+    padding: 15px;
+    border-radius: 5px;
+    margin-bottom: 20px;
+}
+
+.stats span {
+    margin-right: 30px;
+    font-weight: bold;
+}
+
+.stats .tooltip {
+    cursor: help;
+    border-bottom: 1px dashed #666;
+}
+
+/* Data table */
+
+.table-container {
+    max-height: 70vh;
+    overflow-y: auto;
+    background: white;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    border-radius: 5px;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    background: white;
+}
+
+thead {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+th {
+    background-color: #366092;
+    color: white;
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 2px solid #254a73;
+}
+
+td {
+    padding: 10px 15px;
+    border-bottom: 1px solid #ddd;
+}
+
+tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+tbody tr:hover {
+    background-color: #e8f4fc;
+}
+
+/* Download links */
+
+.download-links {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.download-link {
+    display: inline-block;
+    padding: 10px 20px;
+    background-color: #366092;
+    color: white;
+    text-decoration: none;
+    border-radius: 5px;
+}
+
+.download-link:hover {
+    background-color: #254a73;
+}
+
+.download-link.secondary {
+    background-color: #5a5a5a;
+}
+
+.download-link.secondary:hover {
+    background-color: #404040;
+}
+
+.empty-message {
+    padding: 20px;
+    text-align: center;
+    color: #666;
+    background: white;
+}
+
+/* Shared vulnerability styles */
+
+.severity-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+.severity-badge.critical { background-color: #d32f2f; }
+.severity-badge.high { background-color: #f57c00; }
+.severity-badge.medium { background-color: #fbc02d; color: #333; }
+.severity-badge.low { background-color: #388e3c; }
+
+/* Back link */
+
+.back-link {
+    margin-bottom: 15px;
+}
+
+.back-link a {
+    color: #366092;
+    text-decoration: none;
+}
+
+.back-link a:hover {
+    text-decoration: underline;
+}

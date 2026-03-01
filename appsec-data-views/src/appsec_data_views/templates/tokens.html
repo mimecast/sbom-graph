@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Tokens - AppSec Data Views</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+    <style>
+        .container { max-width: 1000px; }
+        .btn { padding: 10px 20px; }
+        .tokens-table {
+            width: 100%; background: white; border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-collapse: collapse;
+        }
+        .tokens-table th { background-color: #366092; color: white; padding: 12px 15px; text-align: left; }
+        .tokens-table td { padding: 12px 15px; border-bottom: 1px solid #e0e0e0; }
+        .tokens-table tr:hover { background-color: #f8f9fa; }
+        .token-name { font-weight: 600; color: #333; }
+        .token-meta { font-size: 12px; color: #888; }
+        .status-badge { display: inline-block; padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 500; }
+        .status-active { background: #e8f5e9; color: #2e7d32; }
+        .status-expired { background: #ffebee; color: #c62828; }
+        .status-revoked { background: #fafafa; color: #757575; }
+        .row-revoked { opacity: 0.6; }
+        .actions-cell .btn { padding: 6px 12px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav-links">
+            <a href="/">&larr; Back to API</a>
+            <a href="/auth/logout">Logout</a>
+        </div>
+
+        <div class="header-actions">
+            <div>
+                <h1>API Tokens</h1>
+                <span class="user-info">Logged in as: {{ username }}</span>
+            </div>
+            <a href="/auth/tokens/create" class="btn">Create New Token</a>
+        </div>
+
+        {% if tokens %}
+        <table class="tokens-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Created</th>
+                    <th>Expires</th>
+                    <th>Last Used</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for token in tokens %}
+                <tr{% if token.is_revoked %} class="row-revoked"{% endif %}>
+                    <td>
+                        <div class="token-name">{{ token.token_name }}</div>
+                        {% if token.description %}
+                        <div class="token-meta">{{ token.description }}</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div>{{ token.created_at[:10] if token.created_at else 'N/A' }}</div>
+                        <div class="token-meta">{{ token.created_at[11:19] if token.created_at else '' }}</div>
+                    </td>
+                    <td>
+                        {% if token.expires_at %}
+                        <div>{{ token.expires_at[:10] }}</div>
+                        {% else %}
+                        <div class="token-meta">Never</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if token.last_used_at %}
+                        <div>{{ token.last_used_at[:10] }}</div>
+                        <div class="token-meta">{{ token.last_used_at[11:19] }}</div>
+                        {% else %}
+                        <div class="token-meta">Never</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if token.is_revoked %}
+                        <span class="status-badge status-revoked">Revoked</span>
+                        {% elif token.is_expired %}
+                        <span class="status-badge status-expired">Expired</span>
+                        {% else %}
+                        <span class="status-badge status-active">Active</span>
+                        {% endif %}
+                    </td>
+                    <td class="actions-cell">
+                        {% if not token.is_revoked %}
+                        <button class="btn btn-secondary" onclick="showToken({{ token.id }})">View</button>
+                        <form action="/auth/tokens/{{ token.id }}/revoke" method="POST" style="display:inline"
+                              onsubmit="return confirm('Are you sure you want to revoke this token? It will no longer be usable for API access.')">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-danger">Revoke</button>
+                        </form>
+                        {% endif %}
+                        <form action="/auth/tokens/{{ token.id }}/delete" method="POST" style="display:inline"
+                              onsubmit="return confirm('Are you sure you want to permanently delete this token? This cannot be undone.')">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-danger">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">
+            <h3>No API Tokens</h3>
+            <p>You haven't created any API tokens yet. Create one to access the API programmatically.</p>
+            <a href="/auth/tokens/create" class="btn">Create Your First Token</a>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Token Display Modal -->
+    <div id="tokenModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:1000;">
+        <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:white; padding:30px; border-radius:10px; max-width:600px; width:90%;">
+            <h3 style="margin-top:0;">API Token</h3>
+            <p style="color:#666; font-size:14px;">Copy this token and store it securely. You won't be able to see it again.</p>
+            <div id="tokenDisplay" style="background:#f5f5f5; padding:15px; border-radius:5px; font-family:monospace; word-break:break-all; margin:15px 0;"></div>
+            <div style="text-align:right;">
+                <button class="btn btn-secondary" onclick="copyToken()">Copy to Clipboard</button>
+                <button class="btn" onclick="closeModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function showToken(tokenId) {
+            fetch('/auth/tokens/' + tokenId)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.token) {
+                        document.getElementById('tokenDisplay').textContent = data.token;
+                        document.getElementById('tokenModal').style.display = 'block';
+                    } else {
+                        alert('Failed to retrieve token');
+                    }
+                })
+                .catch(err => alert('Error: ' + err));
+        }
+
+        function closeModal() {
+            document.getElementById('tokenModal').style.display = 'none';
+        }
+
+        function copyToken() {
+            const token = document.getElementById('tokenDisplay').textContent;
+            navigator.clipboard.writeText(token).then(() => {
+                alert('Token copied to clipboard');
+            }).catch(err => {
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = token;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                alert('Token copied to clipboard');
+            });
+        }
+
+        // Close modal on click outside
+        document.getElementById('tokenModal').addEventListener('click', function(e) {
+            if (e.target === this) closeModal();
+        });
+    </script>
+</body>
+</html>

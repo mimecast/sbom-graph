@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "release-listener.fullname" . }}
+  labels:
+    {{- include "release-listener.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "release-listener.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "release-listener.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "release-listener.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: SONATYPE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "release-listener.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretUsernameKey | default "sonatype-username" }}
+            - name: SONATYPE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "release-listener.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretPasswordKey | default "sonatype-password" }}
+            {{- if .Values.sonatype.host }}
+            - name: SONATYPE_HOST
+              value: {{ .Values.sonatype.host | quote }}
+            {{- end }}
+            - name: SONATYPE_CACERTS
+              value: {{ .Values.config.caCertsPath | quote }}
+            - name: FALKORDB_HOST
+              value: {{ .Values.falkordb.host | quote }}
+            - name: FALKORDB_PORT
+              value: {{ .Values.falkordb.port | quote }}
+            - name: FALKORDB_GRAPH_NAME
+              value: {{ .Values.falkordb.graphName | quote }}
+            {{- if or .Values.falkordb.password .Values.secrets.existingSecretFalkordbPasswordKey }}
+            - name: FALKORDB_PASSWORD
+              {{- if .Values.secrets.existingSecretFalkordbPasswordKey }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "release-listener.secretName" . }}
+                  key: {{ .Values.secrets.existingSecretFalkordbPasswordKey }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "release-listener.secretName" . }}
+                  key: falkordb-password
+              {{- end }}
+            {{- end }}
+            {{- if .Values.config.caCerts }}
+            - name: FALKORDB_CACERTS
+              value: {{ .Values.falkordb.caCertsPath | default .Values.config.caCertsPath | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.config.caCerts }}
+            - name: ca-certs
+              mountPath: /app/certs
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /app/data
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        {{- if .Values.config.caCerts }}
+        - name: ca-certs
+          configMap:
+            name: {{ include "release-listener.fullname" . }}-certs
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+        - name: data
+          emptyDir: {}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

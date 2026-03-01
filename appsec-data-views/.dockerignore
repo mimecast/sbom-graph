@@ -1,0 +1,56 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv
+ENV
+env
+.eggs
+*.egg-info
+*.egg
+dist
+build
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+.cursor
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov
+.tox
+
+# Documentation
+*.md
+!README.md
+
+# Data files
+data/
+*.json
+*.csv
+
+# Notebooks
+*.ipynb
+.ipynb_checkpoints
+
+# Helm charts (built separately)
+charts/
+
+# CI/CD
+Jenkinsfile
+.github
+
+# Local config
+.env
+*.local

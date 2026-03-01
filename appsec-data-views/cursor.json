@@ -1,0 +1,63 @@
+{
+    "privacyMode": true,
+    "sharedContext": [
+      "specification.md",
+      "contracts.md",
+      "openapi.yaml",
+      "README.md",
+      "docs/"
+    ],
+    "agents": [
+      {
+        "name": "CodeGenAlpha",
+        "model": "composer-1.5",
+        "scope": ["src/", "contracts.md"],
+        "description": "Generates code from the specification with a focus on maintainability and documentation."
+      },
+      {
+        "name": "CodeGenBeta",
+        "model": "claude-4.5-opus-high",
+        "scope": ["src/", "contracts.md"],
+        "description": "Generates code from the specification with a focus on performance and cognitive simplicity."
+      },
+      {
+        "name": "CodeGenGamma",
+        "model": "gpt-5.3-codex",
+        "scope": ["src/", "contracts.md"],
+        "description": "Generates code from the specification with a focus on security and architectural elegance."
+      },
+      {
+        "name": "Orchestrator",
+        "model": "gpt-5.3-codex",
+        "scope": ["*"],
+        "description": "Reviews, critiques, and aggregates the best aspects of all codegen agents into a single solution."
+      },
+      {
+        "name": "TestingAgent",
+        "model": "gpt-5.2",
+        "scope": ["tests/", "src/"],
+        "description": "Runs and writes tests, validates correctness, and ensures code coverage."
+      },
+      {
+        "name": "PerformanceAgent",
+        "model": "gpt-5.3-codex",
+        "scope": ["src/", "tests/"],
+        "description": "Benchmarks and profiles code, suggests optimizations for efficiency."
+      },
+      {
+        "name": "SecurityAgent",
+        "model": "claude-4.5-opus-high",
+        "scope": ["src/", "dependencies/", "contracts.md"],
+        "description": "Performs SAST and SCA scans, flags vulnerabilities, and enforces remediation."
+      }
+    ],
+    "workflow": [
+      "CodeGenAlpha, CodeGenBeta, CodeGenGamma (parallel)",
+      "SecurityAgent (SAST/SCA on all codegen outputs)",
+      "TestingAgent (unit/integration tests on all outputs)",
+      "PerformanceAgent (benchmark all outputs)",
+      "Orchestrator (review, critique, aggregate best solution)",
+      "SecurityAgent (final SAST/SCA on aggregated solution)",
+      "TestingAgent (final tests on aggregated solution)"
+    ]
+  }

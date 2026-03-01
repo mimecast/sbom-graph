@@ -1,0 +1,102 @@
+{
+    "privacyMode": true,
+    "sharedContext": [
+      "specification.md",
+      "contracts.md",
+      "openapi.yaml",
+      "README.md",
+      "docs/"
+    ],
+    "agents": [
+      {
+        "name": "CodeGenAlpha",
+        "subagent": "codegen-alpha",
+        "model": "composer-1.5",
+        "scope": ["src/", "contracts.md"]
+      },
+      {
+        "name": "CodeGenBeta",
+        "subagent": "codegen-beta",
+        "model": "claude-4.6-opus-high",
+        "scope": ["src/", "contracts.md"]
+      },
+      {
+        "name": "CodeGenGamma",
+        "subagent": "codegen-gamma",
+        "model": "gpt-5.3-codex",
+        "scope": ["src/", "contracts.md"]
+      },
+      {
+        "name": "Orchestrator",
+        "subagent": "orchestrator",
+        "model": "gpt-5.3-codex",
+        "scope": ["*"]
+      },
+      {
+        "name": "TestingAgent",
+        "subagent": "testing-agent",
+        "model": "gpt-5.2",
+        "scope": ["tests/", "src/"]
+      },
+      {
+        "name": "PerformanceAgent",
+        "subagent": "performance-agent",
+        "model": "gpt-5.3-codex",
+        "scope": ["src/", "tests/"]
+      },
+      {
+        "name": "SecurityAgent",
+        "subagent": "security-agent",
+        "model": "claude-4.6-opus-high",
+        "scope": ["src/", "dependencies/", "contracts.md"]
+      },
+      {
+        "name": "WorkflowCoordinator",
+        "subagent": "workflow-coordinator",
+        "model": "gpt-5.3-codex",
+        "scope": ["*"]
+      }
+    ],
+    "workflow": {
+      "coordinator": "workflow-coordinator",
+      "phases": [
+        {
+          "name": "Design",
+          "agents": ["codegen-alpha", "codegen-beta", "codegen-gamma"],
+          "parallel": true,
+          "description": "All CodeGen agents produce designs from the specification in parallel."
+        },
+        {
+          "name": "Threat Model",
+          "agents": ["security-agent"],
+          "gate": true,
+          "description": "SecurityAgent threat models each design using STRIPED. Blocks implementation if critical flaws found."
+        },
+        {
+          "name": "Implementation",
+          "agents": ["codegen-alpha", "codegen-beta", "codegen-gamma"],
+          "parallel": true,
+          "description": "CodeGen agents implement their approved designs."
+        },
+        {
+          "name": "Quality Gates",
+          "agents": ["security-agent", "testing-agent", "performance-agent"],
+          "parallel": true,
+          "gate": true,
+          "description": "SAST/SCA scans, test execution, and performance benchmarks on all implementations."
+        },
+        {
+          "name": "Aggregation",
+          "agents": ["orchestrator"],
+          "description": "Orchestrator critiques, compares, and merges the best aspects into a single solution."
+        },
+        {
+          "name": "Final Validation",
+          "agents": ["security-agent", "testing-agent", "performance-agent"],
+          "parallel": true,
+          "gate": true,
+          "description": "Re-run all quality gates on the merged solution. Iterate until all gates pass."
+        }
+      ]
+    }
+  }

@@ -1,0 +1,49 @@
+[project]
+name = "appsec_sbom_model"
+version = "0.1.1"
+description = "CycloneDX SBOM processing model"
+authors = [
+    {name = "Brett Crawley"}
+]
+readme = "README.md"
+requires-python = ">=3.14,<4"
+dependencies = [
+    "falkordb>=1.4.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0,<9.0.0",
+    "pytest-cov>=4.0.0,<5.0.0",
+]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.mypy]
+ignore_missing_imports = false
+
+[[tool.mypy.overrides]]
+module = "falkordb.*"
+ignore_missing_imports = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/appsec_sbom_model"]
+include = ["src/appsec_sbom_model/py.typed"]
+artifacts = ["src/appsec_sbom_model/py.typed"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [".coveragerc", "tests/**", "coverage-reports/**", "AGENTS.md", "renovate.json", "inventory.yaml", "Jenkinsfile", "sonar-project.properties"]
+

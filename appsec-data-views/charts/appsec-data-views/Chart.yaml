@@ -1,0 +1,14 @@
+apiVersion: v2
+name: appsec-data-views
+description: A Helm chart for AppSec Data Views - Flask application for FalkorDB graph data visualizations
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - appsec
+  - data-visualization
+  - falkordb
+  - graph
+  - flask
+maintainers:
+  - name: Brett Crawley

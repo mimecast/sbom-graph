@@ -1,0 +1,5 @@
+- add project group as an optional field for the visualizations and reports. 
+- add purl as an alternative to using project name with optional group name
+- write tests for new functionality
+- create a full project specification including architecture diagram using mermaid diagrams embedded in markdown
+- update @AGENTS.md and @README.md 
