@@ -17,6 +17,7 @@ users to change layouts without reloading the page.
 
 from typing import Any
 
+import json
 import networkx as nx
 from markupsafe import escape
 from pyvis.network import Network
@@ -316,7 +317,11 @@ def get_layout_switcher_html(
     options = []
     for layout_id, display_name in LAYOUT_DISPLAY_NAMES.items():
         selected = 'selected="selected"' if layout_id == current_layout else ""
-        options.append(f'<option value="{layout_id}" {selected}>{display_name}</option>')
+        safe_layout_id = escape(layout_id)
+        safe_display_name = escape(display_name)
+        options.append(
+            f'<option value="{safe_layout_id}" {selected}>{safe_display_name}</option>'
+        )
 
     options_html = "\n".join(options)
 
@@ -327,7 +332,14 @@ def get_layout_switcher_html(
     if max_depth:
         params.append(f"max_depth={max_depth}")
 
-    param_str = "&" + "&".join(params) if params else ""
+    # Prefix with '&' when concatenated to '?layout=' query
+    raw_param_str = "&" + "&".join(params) if params else ""
+
+    # Prepare safe JavaScript string literals
+    safe_endpoint_js = json.dumps(str(endpoint))
+    safe_project_js = json.dumps(str(project_name))
+    safe_version_js = json.dumps(str(version))
+    safe_param_js = json.dumps(raw_param_str)
 
     return f"""
     <div id="layout-switcher" style="
@@ -361,8 +373,8 @@ def get_layout_switcher_html(
     </div>
     <script>
         function switchLayout(layout) {{
-            var baseUrl = '/visualizations/{endpoint}/{project_name}/{version}';
-            var url = baseUrl + '?layout=' + layout + '{param_str}';
+            var baseUrl = '/visualizations/' + {safe_endpoint_js} + '/' + {safe_project_js} + '/' + {safe_version_js};
+            var url = baseUrl + '?layout=' + encodeURIComponent(layout) + {safe_param_js};
             window.location.href = url;
         }}
     </script>
