@@ -10,6 +10,7 @@ from typing import Any
 
 from ldap3 import ALL, SUBTREE, Connection, Server
 from ldap3.core.exceptions import LDAPException
+from ldap3.utils.conv import escape_filter_chars
 
 from appsec_data_views.config import LDAPConfig, get_config
 
@@ -169,7 +170,9 @@ class LDAPService:
         user_info: dict[str, Any] = {}
 
         try:
-            search_filter = self.config.search_filter.format(username=username)
+            # Escape user-controlled input before inserting into LDAP filter
+            safe_username = escape_filter_chars(username)
+            search_filter = self.config.search_filter.format(username=safe_username)
             conn.search(
                 search_base=self.config.base_dn,
                 search_filter=search_filter,
