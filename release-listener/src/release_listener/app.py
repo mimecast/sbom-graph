@@ -128,8 +128,11 @@ def create_app(config: Optional[dict] = None) -> Flask:
                 logger.info(f"Successfully processed release scan for {public_id}")
                 return jsonify({'status': 'processed', 'application': public_id}), 200
             else:
-                logger.error(f"Failed to process release scan for {public_id}: {result['error']}")
-                return jsonify({'status': 'error', 'error': result['error']}), 500
+                logger.error(f"Failed to process release scan for {public_id}")
+                return jsonify({
+                    'status': 'error',
+                    'error': 'An internal error occurred while processing the release scan.'
+                }), 500
 
         except (NotFound, RedisError) as e:
             logger.exception(f"Error processing webhook: {str(e)}")
@@ -249,7 +252,7 @@ def process_release_scan(
         return {'success': True}
     except (NotFound, RedisError) as e:
         logger.exception(f"Error processing release scan: {str(e)}")
-        return {'success': False, 'error': str(e)}
+        return {'success': False}
 
 
 # Create the default application instance
