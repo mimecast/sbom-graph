@@ -169,6 +169,10 @@ from appsec_sbom_model import (
 )
 ```
 
-## Owner
+## License
 
-**ENG - AppSec** — Application Security Engineering
+Open Source - MIT
+
+## Contributing
+
+Contact the Brett Crawley for contribution guidelines.

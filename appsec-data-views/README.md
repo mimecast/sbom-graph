@@ -968,4 +968,4 @@ Open Source - MIT
 
 ## Contributing
 
-Contact the AppSec team for contribution guidelines.
+Contact the Brett Crawley for contribution guidelines.

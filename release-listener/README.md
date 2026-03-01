@@ -216,4 +216,8 @@ release-listener/
 
 ## License
 
-Internal use only.
+Open Source - MIT
+
+## Contributing
+
+Contact the Brett Crawley for contribution guidelines.

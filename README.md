@@ -45,3 +45,12 @@ The Project is made up of 3 parts:
       - Dynamic download links that respect current filter state
       - Interactive API documentation with forms to test all endpoints
       - Frozen table headers: Headers stay visible while scrolling through data
+
+
+## License
+
+Open Source - MIT
+
+## Contributing
+
+Contact the Brett Crawley for contribution guidelines.
