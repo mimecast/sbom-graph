@@ -133,7 +133,10 @@ def create_app(config: Optional[dict] = None) -> Flask:
 
         except (NotFound, RedisError) as e:
             logger.exception(f"Error processing webhook: {str(e)}")
-            return jsonify({'status': 'error', 'error': str(e)}), 500
+            return jsonify({
+                'status': 'error',
+                'error': 'An internal error occurred while processing the request.'
+            }), 500
 
     return app
 
