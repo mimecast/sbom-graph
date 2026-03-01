@@ -1,7 +1,5 @@
 # sbom-graph
 
-# Comming Soon
-
 ## Tool Overview and Capabilities
 
 The tool processes dependency graphs generated from Software Bill of Materials (SBOM) files and features pre-configured reports and visualizations that deliver actionable insights. Its key capabilities include:
