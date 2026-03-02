@@ -28,24 +28,32 @@ spec:
         fsGroup: 65532
       initContainers:
         - name: wait-for-falkordb
-          image: busybox:1.36
+          image: "{{ .Values.sbomGraphApi.image.repository }}:{{ .Values.sbomGraphApi.image.tag }}"
+          imagePullPolicy: {{ .Values.sbomGraphApi.image.pullPolicy }}
           command:
-            - sh
+            - python
             - -c
             - |
-              echo "Waiting for FalkorDB to accept connections..."
-              until nc -z {{ include "sbom-graph.falkordb.fullname" . }} 6379; do
-                echo "  FalkorDB not ready, retrying in 2s..."
-                sleep 2
-              done
-              echo "FalkorDB is ready."
+              import socket, time, sys
+              host, port = sys.argv[1], int(sys.argv[2])
+              print(f"Waiting for {host}:{port}...")
+              while True:
+                  try:
+                      socket.create_connection((host, port), timeout=2).close()
+                      print(f"{host}:{port} is ready.")
+                      break
+                  except OSError:
+                      print("  Not ready, retrying in 2s...")
+                      time.sleep(2)
+            - {{ include "sbom-graph.falkordb.fullname" . }}
+            - "6379"
           resources:
             limits:
               cpu: 50m
-              memory: 32Mi
+              memory: 64Mi
             requests:
               cpu: 25m
-              memory: 16Mi
+              memory: 32Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

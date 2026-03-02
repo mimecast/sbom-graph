@@ -5,7 +5,7 @@
 SBOM Graph is a three-component system for ingesting CycloneDX SBOMs, storing dependency relationships in a graph database (FalkorDB), and providing interactive visualizations and reports. The system consists of:
 
 - **sonatype-lifecycle-release-listener**: Webhook receiver that fetches SBOMs from SonaType and writes to FalkorDB
-- **sbom-graph-api**: Web application for viewing reports and visualizations (read path)
+- **sbom-graph-api**: Web application for viewing reports and visualizations (read path) and authenticated CycloneDX SBOM ingestion (write path via `POST /ingest/cyclonedx`)
 - **FalkorDB**: Graph database storing dependency data (Redis protocol)
 - **sbom-graph-model**: Shared library for SBOM parsing and persistence
 
@@ -41,7 +41,8 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 |  | (Flask, port 8000) |-------->| (Redis protocol, 6379) |  |
 |  | - JWT/LDAP auth   |         | - Optional TLS         |  |
 |  | - Session mgmt    |         | - Optional password    |  |
-|  | - Read-only graph |         | - PVC persistence      |  |
+|  | - Read graph      |         | - PVC persistence      |  |
+|  | - Ingest SBOMs    |         |                        |  |
 |  +-------------------+         +-------------------------+  |
 |                                         ^                  |
 |  +-------------------+                  |                  |
@@ -96,9 +97,13 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | S5 | No NetworkPolicy restricting FalkorDB access | E | FalkorDB | **Medium** | **High** | **High** | **OPEN** | The umbrella chart does not include a Kubernetes NetworkPolicy. Any pod in the namespace (or cluster, depending on CNI defaults) can connect to the FalkorDB ClusterIP on port 6379. Combined with S2 (no password), this allows arbitrary graph manipulation. |
 | S6 | Self-signed TLS CA not distributed to clients | I | FalkorDB -> sonatype-lifecycle-release-listener, sbom-graph-api | **High** | **Medium** | **High** | **OPEN** | When TLS is auto-generated via the init container, the self-signed CA certificate is stored in an emptyDir volume on the FalkorDB pod. Neither the sonatype-lifecycle-release-listener nor sbom-graph-api deployments mount this volume or receive the CA cert. Clients cannot verify the FalkorDB server certificate, resulting in connection failures or requiring TLS verification to be disabled. |
 | S7 | SonaType credentials not provisioned by umbrella chart | I | sonatype-lifecycle-release-listener -> SonaType | **High** | **Medium** | **Medium** | **OPEN** | The umbrella chart does not set `SONATYPE_HOST`, `SONATYPE_USERNAME`, or `SONATYPE_PASSWORD` for the sonatype-lifecycle-release-listener. Webhook processing will fail at runtime when attempting to fetch SBOMs. This is a deployment correctness issue that may lead operators to pass credentials via insecure means (e.g., plain env vars in overrides). |
-| S8 | Init data job bypasses TLS and auth | T, E | init-data-job -> FalkorDB | **Medium** | **Medium** | **Medium** | **OPEN** | The `init-data-job.yaml` does not set `FALKORDB_CACERTS` or pass TLS parameters to `populate_acme_corp.py`. It uses `nc -z` (plain TCP) for the readiness check, which will fail against a TLS-only FalkorDB port. The job also does not receive the FalkorDB password if `falkordb.password` is set after the initial deployment. |
+| S8 | Init data job bypasses TLS and auth | T, E | init-data-job -> FalkorDB | **Medium** | **Medium** | **Medium** | **PARTIALLY MITIGATED** | The `init-data-job.yaml` does not set `FALKORDB_CACERTS` or pass TLS parameters to `populate_acme_corp.py`. The readiness check uses a Python TCP connect (reusing the application image, no BusyBox dependency), which will succeed on the TLS port but does not verify the certificate. The job also does not receive the FalkorDB password if `falkordb.password` is set after the initial deployment. |
 | S9 | No ingress defined in umbrella chart | I, D | sbom-graph-api, sonatype-lifecycle-release-listener | **Low** | **Medium** | **Low** | **ACCEPTED** | Services are ClusterIP-only. External access requires operators to configure ingress separately. This is by design (separation of concerns) but means there is no default TLS termination, rate limiting, or WAF protection documented in the chart. |
 | S10 | Demo data loaded in production | I | init-data-job -> FalkorDB | **Low** | **Low** | **Low** | **OPEN** | `initData.enabled` defaults to `true`. The demo data (Acme Corp) will be loaded into production deployments unless explicitly disabled, cluttering the graph with synthetic data. |
+| S11 | Graph poisoning via SBOM ingest API | S, T | sbom-graph-api -> FalkorDB | **Low** | **High** | **Medium** | **MITIGATED** | `POST /ingest/cyclonedx` accepts CycloneDX SBOMs and writes to FalkorDB. Mitigated by: JWT authentication (`@auth_required`), CycloneDX structural validation (`CycloneDXValidationError`), parameterized Cypher queries and label allowlists in `sbom-graph-model`, and `MAX_CONTENT_LENGTH` (50 MB) to prevent oversized payloads. Residual risk: an authenticated user can still inject misleading (but structurally valid) SBOM data. |
+| S12 | Denial of service via oversized SBOM upload | D | sbom-graph-api | **Medium** | **Medium** | **Medium** | **MITIGATED** | Large CycloneDX payloads could exhaust memory or CPU during parsing. Mitigated by Flask `MAX_CONTENT_LENGTH` (50 MB), Gunicorn worker timeouts, and Kubernetes resource limits. |
+| S13 | Information disclosure in SBOM processing errors | I | sbom-graph-api | **Low** | **Low** | **Low** | **MITIGATED** | SBOM processing errors could leak internal paths or database details. Mitigated by generic error messages for 500 responses (only `CycloneDXValidationError` details are returned to the client at 422). |
+| S14 | Mass assignment via extra JSON fields in ingest request | T | sbom-graph-api | **Low** | **Medium** | **Low** | **MITIGATED** | Attacker could include extra fields (e.g., `role`, `is_admin`) in the ingest JSON body. Mitigated by explicit field extraction: only `sbom`, `app_id`, `public_app_id`, and `project_url` are read from the request body. |
 
 ### Data Flow Threats
 
@@ -114,7 +119,7 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | # | Threat | STRIPED | Layer | Likelihood | Impact | Risk | Status | Detail |
 |---|--------|---------|-------|------------|--------|------|--------|--------|
 | I1 | Init container runs as root | E | FalkorDB pod | **Low** | **Medium** | **Low** | **ACCEPTED** | The TLS generation init container (`generate-tls`) runs as `runAsUser: 0` because `openssl` and `chmod` require root for key file permissions. It runs only once during pod startup and has `allowPrivilegeEscalation: false` and all capabilities dropped. The blast radius is limited to the emptyDir volume. |
-| I2 | Alpine and BusyBox images not pinned by digest | T | Init containers | **Medium** | **Medium** | **Medium** | **OPEN** | `alpine:3.20` and `busybox:1.36` are referenced by tag, not SHA digest. A compromised registry or tag mutation could inject malicious code into the init containers, which have access to the TLS volume and FalkorDB connectivity. |
+| I2 | Alpine init image not pinned by digest | T | Init containers | **Medium** | **Medium** | **Medium** | **OPEN** | `alpine:3.20` is referenced by tag, not SHA digest. A compromised registry or tag mutation could inject malicious code into the TLS init container, which has access to the TLS volume. The BusyBox dependency was removed; the init-data job now reuses the application image for the readiness check. |
 | I3 | FalkorDB image uses `latest` tag | T | FalkorDB | **Medium** | **High** | **Medium** | **OPEN** | `falkordb.image.tag: latest` in the umbrella chart values means deployments are non-reproducible and could pull a compromised or breaking version. |
 | I4 | No PodDisruptionBudget | D | All components | **Low** | **Medium** | **Low** | **OPEN** | The umbrella chart does not define PDBs. Node drains can take down all replicas simultaneously. |
 | I5 | Token database on emptyDir | I | sbom-graph-api | **Medium** | **Medium** | **Medium** | **OPEN** | The umbrella chart's sbom-graph-api deployment mounts only `/tmp` as emptyDir. `TOKEN_DB_PATH` defaults to `/data/tokens.db` but no `/data` volume is mounted. User accounts and API tokens will be lost on every pod restart. |
@@ -138,6 +143,10 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | CSRF protection (Flask-WTF) | sbom-graph-api | **Strong** -- all forms protected |
 | Security headers | sbom-graph-api | **Moderate** -- X-Frame-Options, nosniff, etc. |
 | Open redirect prevention | sbom-graph-api | **Strong** -- strict URL validation |
+| JWT auth on ingest endpoint | sbom-graph-api | **Strong** -- `@auth_required` on `POST /ingest/cyclonedx` |
+| Request body size limit | sbom-graph-api | **Moderate** -- `MAX_CONTENT_LENGTH` = 50 MB |
+| Explicit field extraction (ingest) | sbom-graph-api | **Strong** -- only `sbom`, `app_id`, `public_app_id`, `project_url` read |
+| Generic error messages (ingest) | sbom-graph-api | **Moderate** -- 500 responses hide internal details |
 | Insecure default rejection | sbom-graph-api | **Strong** -- fails fast on weak secrets |
 | TLS to SonaType API | sonatype-lifecycle-release-listener | **Strong** -- CA-verified HTTPS |
 | TLS to FalkorDB | sonatype-lifecycle-release-listener | **Moderate** -- ssl=True but CA path issues |
@@ -185,10 +194,10 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | # | Finding | Recommendation | Effort |
 |---|---------|----------------|--------|
 | S7 | SonaType creds not provisioned | Add SonaType configuration to the umbrella chart's `values.yaml` with `existingSecret` support, and document the required setup. | Low |
-| S8 | Init job bypasses TLS/auth | Pass `FALKORDB_CACERTS` and `FALKORDB_PASSWORD` to the init job. Replace `nc -z` with a Redis-protocol PING that works over TLS. | Low |
+| S8 | Init job bypasses TLS/auth | Pass `FALKORDB_CACERTS` and `FALKORDB_PASSWORD` to the init job. The readiness check now uses a Python TCP connect (BusyBox removed), but still needs CA cert for full TLS verification. | Low |
 | D2 | Graph data readable without auth | Set `AUTH_ENABLED=true` by default in the umbrella chart, or at minimum document that auth is disabled by default and the implications. | Low |
 | D4 | Credentials in Helm values | Document that production deployments should use `existingSecret` references rather than inline passwords. Add `.gitignore` patterns for custom values files. | Low |
-| I2 | Images not pinned by digest | Pin `alpine` and `busybox` init container images by SHA256 digest. | Low |
+| I2 | Alpine image not pinned by digest | Pin `alpine` init container image by SHA256 digest. BusyBox dependency has been removed. | Low |
 | I3 | FalkorDB `latest` tag | Pin FalkorDB to a specific version tag (e.g., `v4.2.1`). | Low |
 | S10 | Demo data in production | Change `initData.enabled` to default `false`, or gate it on a `global.demoMode` flag. | Low |
 
@@ -226,18 +235,18 @@ Before deploying to production, verify:
 
 | Component | Version | CVEs (2yr) | Maintenance | License | Risk |
 |-----------|---------|------------|-------------|---------|------|
-| FalkorDB | latest | 0 | Active | Server-Side PL | Low |
+| FalkorDB (server) | latest | 0 | Active | SSPLv1 (strong copyleft) | **High** -- SSPL requires that if FalkorDB is offered as part of a service to external users, the **entire service stack** must be open-sourced under SSPL. Internal use is exempt. This project's MIT licence does not conflict (FalkorDB is a separate service, not linked), but deployers must understand the constraint: internal deployment is unrestricted; external-facing service deployment requires a commercial FalkorDB licence. See README "Licensing" section. |
+| FalkorDB (Python client) | 1.x | 0 | Active | MIT | Low |
 | Flask | 3.x | 0 | Very active | BSD-3 | Low |
 | Gunicorn | 23.x | 0 | Active | MIT | Low |
 | Flask-JWT-Extended | 4.x | 0 | Active | MIT | Low |
 | Flask-WTF | 1.x | 0 | Active | BSD-3 | Low |
-| ldap3 | 2.x | 1 (low) | Active | LGPL-3 | Low |
+| ldap3 | 2.x | 1 (low) | Active | LGPL-3 (weak copyleft) | **Accepted** -- LGPL-3 is weak copyleft; safe for use as an unmodified import but requires licence notice and the ability for users to replace the library. Alternatives (`bonsai` MIT, `python-ldap` PSF) are C extensions requiring `libldap2` system libraries, which are incompatible with distroless containers without fragile `.so` copying. The pure-Python nature of ldap3 is essential for the distroless security posture. Accepted trade-off: LGPL-3 compliance obligations vs. container security and maintainability. Review with legal if organisation prohibits all copyleft. |
 | requests | 2.x | 0 | Very active | Apache-2 | Low |
 | cryptography | 44.x | 2 (patched) | Very active | Apache-2/BSD | Low |
 | Alpine (init) | 3.20 | Varies | Active | MIT | Low |
-| BusyBox (init) | 1.36 | Varies | Active | GPL-2 | Low |
 
-All primary dependencies are actively maintained with no unpatched critical vulnerabilities. The main supply chain risk is unpinned init container images (Alpine, BusyBox) and the FalkorDB `latest` tag.
+All primary dependencies are actively maintained with no unpatched critical vulnerabilities. The main supply chain risk is the unpinned Alpine init container image and the FalkorDB `latest` tag. BusyBox was removed as a dependency; the init-data job now reuses the application image.
 
 ## Risk Heat Map
 
@@ -247,10 +256,10 @@ All primary dependencies are actively maintained with no unpatched critical vuln
  High       |             | S7, S10        | S3, S5, S6   | S1, S2, S4     |
  Likelihood |             |                |              |                |
             +-------------+----------------+--------------+----------------+
- Medium     |             | D4, I2, I3, S8 | D2, I5       |                |
+ Medium     |             | D4,I2,I3,S8,S12| D2, I5       |                |
  Likelihood |             |                |              |                |
             +-------------+----------------+--------------+----------------+
- Low        | I4          | I1, D3, S9     |              |                |
+ Low        | I4, S13     | I1,D3,S9,S14   | S11          |                |
  Likelihood |             |                |              |                |
             +-------------+----------------+--------------+----------------+
 ```
