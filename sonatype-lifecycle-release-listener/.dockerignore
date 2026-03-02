@@ -1,0 +1,50 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv/
+ENV/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.cursor/
+
+# Test files
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Documentation
+# *.md
+# !README.md
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Helm
+helm/
+
+# Local data
+data/
+certs/
+
+# uv
+# uv.lock

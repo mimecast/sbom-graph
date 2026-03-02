@@ -1,0 +1,17 @@
+{{- if .Values.sbomGraphApi.tokenDb.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "sbom-graph.sbomGraphApi.fullname" . }}-data
+  labels:
+    {{- include "sbom-graph.sbomGraphApi.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.sbomGraphApi.tokenDb.persistence.size }}
+  {{- if .Values.sbomGraphApi.tokenDb.persistence.storageClass }}
+  storageClassName: {{ .Values.sbomGraphApi.tokenDb.persistence.storageClass | quote }}
+  {{- end }}
+{{- end }}

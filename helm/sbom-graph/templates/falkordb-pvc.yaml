@@ -1,0 +1,17 @@
+{{- if .Values.falkordb.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "sbom-graph.falkordb.fullname" . }}
+  labels:
+    {{- include "sbom-graph.falkordb.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.falkordb.persistence.size }}
+  {{- if .Values.falkordb.persistence.storageClass }}
+  storageClassName: {{ .Values.falkordb.persistence.storageClass | quote }}
+  {{- end }}
+{{- end }}

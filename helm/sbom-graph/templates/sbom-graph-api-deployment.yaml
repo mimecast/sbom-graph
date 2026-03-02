@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sbom-graph.sbomGraphApi.fullname" . }}
+  labels:
+    {{- include "sbom-graph.sbomGraphApi.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.sbomGraphApi.replicas }}
+  selector:
+    matchLabels:
+      {{- include "sbom-graph.sbomGraphApi.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sbom-graph.sbomGraphApi.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: sbom-graph-api
+          image: "{{ .Values.sbomGraphApi.image.repository }}:{{ .Values.sbomGraphApi.image.tag }}"
+          imagePullPolicy: {{ .Values.sbomGraphApi.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.sbomGraphApi.service.targetPort }}
+              protocol: TCP
+          env:
+            - name: FALKORDB_HOST
+              value: {{ include "sbom-graph.falkordb.fullname" . | quote }}
+            - name: FALKORDB_PORT
+              value: "6379"
+            - name: FALKORDB_GRAPH_NAME
+              value: {{ .Values.graphName | quote }}
+            - name: FALKORDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sbom-graph.falkordb.secretName" . }}
+                  key: password
+            - name: FLASK_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sbom-graph.sbomGraphApi.secretName" . }}
+                  key: flask-secret-key
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sbom-graph.sbomGraphApi.secretName" . }}
+                  key: jwt-secret-key
+            - name: TOKEN_DB_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sbom-graph.sbomGraphApi.secretName" . }}
+                  key: token-db-encryption-key
+            - name: TOKEN_DB_PATH
+              value: /data/tokens.db
+            - name: TLS_ENABLED
+              value: {{ .Values.falkordb.tls.enabled | quote }}
+            {{- if .Values.falkordb.tls.enabled }}
+            - name: FALKORDB_SSL
+              value: "true"
+            - name: FALKORDB_CA_FILE
+              value: /tls/ca.crt
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources:
+            {{- toYaml .Values.sbomGraphApi.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /data
+            {{- if .Values.falkordb.tls.enabled }}
+            - name: tls-ca
+              mountPath: /tls
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: data
+          {{- if .Values.sbomGraphApi.tokenDb.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "sbom-graph.sbomGraphApi.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.falkordb.tls.enabled }}
+        - name: tls-ca
+          secret:
+            secretName: {{ include "sbom-graph.tls.secretName" . }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}

@@ -1,0 +1,1950 @@
+{
+    "bomFormat": "CycloneDX",
+    "specVersion": "1.4",
+    "serialNumber": "urn:uuid:f48ae952-b16f-4e8a-9421-9ff0802d1a17",
+    "version": 1,
+    "metadata": {
+        "timestamp": "2025-12-01T10:30:00Z",
+        "tools": [
+            {
+                "vendor": "Sonatype Inc.",
+                "name": "Nexus IQ Server",
+                "version": "1.196.0-01"
+            }
+        ],
+        "component": {
+            "type": "application",
+            "bom-ref": "345a8a29-b5a0-4a74-bcef-a30ea84c224b",
+            "group": "com.acme.services",
+            "name": "notification-service",
+            "version": "2.1.0",
+            "purl": "pkg:maven/com.acme.services/notification-service@2.1.0?type=jar"
+        },
+        "properties": [
+            {
+                "name": "Scan ID",
+                "value": "4edbd7e0f9ceb6586840d424cd24b2a1"
+            }
+        ]
+    },
+    "components": [
+        {
+            "type": "library",
+            "bom-ref": "73001821-cd16-4a19-8e97-6170fc6fa227",
+            "group": "ch.qos.logback",
+            "name": "logback-classic",
+            "version": "1.4.14",
+            "purl": "pkg:maven/ch.qos.logback/logback-classic@1.4.14?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "LGPL-2.1-only"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "db66703df53cb03b2f33"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "logback-classic-1.4.14.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "63dac39b-3839-49c4-a80b-1b76332bcf9d",
+            "group": "com.acme.cloud",
+            "name": "acme-aws-common",
+            "version": "1.1.0",
+            "purl": "pkg:maven/com.acme.cloud/acme-aws-common@1.1.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "fc5090baecbd4e65cb73"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-aws-common-1.1.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "753877d5-df54-4b0a-a8cc-e98e85ed4dc1",
+            "group": "com.acme.core",
+            "name": "acme-common",
+            "version": "2.0.0",
+            "purl": "pkg:maven/com.acme.core/acme-common@2.0.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "bc6a0d262d489954c96c"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-common-2.0.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "44d32925-3999-4940-8f02-18612fc14037",
+            "group": "com.acme.core",
+            "name": "acme-common",
+            "version": "2.1.0",
+            "purl": "pkg:maven/com.acme.core/acme-common@2.1.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "4805bdff59869576cef7"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-common-2.1.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "c25dcc9a-cf30-47c0-8da4-9f460e27e53b",
+            "group": "com.acme.core",
+            "name": "acme-config",
+            "version": "2.0.0",
+            "purl": "pkg:maven/com.acme.core/acme-config@2.0.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "56e00c0d03f3e809c505"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-config-2.0.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "e74b1011-979b-4e80-9529-a65de8bbbdfe",
+            "group": "com.acme.core",
+            "name": "acme-logging",
+            "version": "1.2.0",
+            "purl": "pkg:maven/com.acme.core/acme-logging@1.2.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "79602bdf2c40ace8f1f7"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-logging-1.2.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "36f81b19-afc5-4e55-8fe9-9ea5056c6580",
+            "group": "com.acme.data",
+            "name": "acme-cache",
+            "version": "1.1.0",
+            "purl": "pkg:maven/com.acme.data/acme-cache@1.1.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "d0d4e9ac1318f26a8231"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-cache-1.1.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "0f411045-57eb-4ba2-ab36-98c5d33a5047",
+            "group": "com.acme.data",
+            "name": "acme-connection-pool",
+            "version": "2.0.0",
+            "purl": "pkg:maven/com.acme.data/acme-connection-pool@2.0.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "d3cd343d5e9fcf4d10ad"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-connection-pool-2.0.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "d3446d0a-ee91-49c9-953f-0e94fbf82761",
+            "group": "com.acme.data",
+            "name": "acme-models",
+            "version": "3.0.0",
+            "purl": "pkg:maven/com.acme.data/acme-models@3.0.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "f7a53f2ea8a6482f8ba3"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-models-3.0.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "5a444ef8-0160-4e15-8e09-8b154ca05e36",
+            "group": "com.acme.data",
+            "name": "acme-models",
+            "version": "4.0.0",
+            "purl": "pkg:maven/com.acme.data/acme-models@4.0.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "319c122b013e35ca4fc4"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-models-4.0.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "da2562fc-3930-4ebd-ac19-e7a2c126d2ff",
+            "group": "com.acme.foundation",
+            "name": "acme-collections",
+            "version": "1.1.0",
+            "purl": "pkg:maven/com.acme.foundation/acme-collections@1.1.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "562d5a2d6d03600c807f"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-collections-1.1.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "4868bdc7-125a-4863-85c1-bdfd62b25be8",
+            "group": "com.acme.foundation",
+            "name": "acme-http-core",
+            "version": "2.0.0",
+            "purl": "pkg:maven/com.acme.foundation/acme-http-core@2.0.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "fb80b95ecf25a54aa939"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-http-core-2.0.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "77931fdb-05e9-4c71-8cea-b50b61020edf",
+            "group": "com.acme.foundation",
+            "name": "acme-serialization-core",
+            "version": "2.0.0",
+            "purl": "pkg:maven/com.acme.foundation/acme-serialization-core@2.0.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "73f106fa830095c3e1d5"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-serialization-core-2.0.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "1569b584-6e0f-4c9f-8ca1-61b7fe19748b",
+            "group": "com.acme.foundation",
+            "name": "acme-validation-core",
+            "version": "1.1.0",
+            "purl": "pkg:maven/com.acme.foundation/acme-validation-core@1.1.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "1fcc9404cf604c651b6e"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-validation-core-1.1.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "9c3df3ec-0320-4b0a-9076-5af74da49814",
+            "group": "com.acme.http",
+            "name": "acme-rest-client",
+            "version": "2.1.0",
+            "purl": "pkg:maven/com.acme.http/acme-rest-client@2.1.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "94f50527beda556b17d3"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-rest-client-2.1.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "cdc5522a-688d-4bcb-83b3-103b8b394de5",
+            "group": "com.acme.messaging",
+            "name": "acme-events",
+            "version": "1.1.0",
+            "purl": "pkg:maven/com.acme.messaging/acme-events@1.1.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "79109882bc870d993beb"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-events-1.1.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "286a0ea3-a6ac-4edf-b795-2520b978084a",
+            "group": "com.acme.messaging",
+            "name": "acme-events",
+            "version": "2.0.0",
+            "purl": "pkg:maven/com.acme.messaging/acme-events@2.0.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "64923256a51d721808d0"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-events-2.0.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "19667b1b-ab28-45e6-9e0c-18ee9078e22b",
+            "group": "com.acme.messaging",
+            "name": "acme-kafka",
+            "version": "2.0.0",
+            "purl": "pkg:maven/com.acme.messaging/acme-kafka@2.0.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "499c5262b040b0da928e"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-kafka-2.0.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "a0f8af31-620e-4a1d-a59c-6860d222b868",
+            "group": "com.acme.messaging",
+            "name": "acme-schema-registry",
+            "version": "2.0.0",
+            "purl": "pkg:maven/com.acme.messaging/acme-schema-registry@2.0.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "a470850f57543a2694f1"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-schema-registry-2.0.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "96920852-26f7-4a9a-88d9-0c30dae8860a",
+            "group": "com.acme.messaging",
+            "name": "acme-serialization",
+            "version": "2.0.0",
+            "purl": "pkg:maven/com.acme.messaging/acme-serialization@2.0.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "c058d2bd4edbc54ce007"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-serialization-2.0.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "6b551cfc-0917-4da2-b755-502f186b8259",
+            "group": "com.acme.messaging",
+            "name": "acme-sqs",
+            "version": "1.1.0",
+            "purl": "pkg:maven/com.acme.messaging/acme-sqs@1.1.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "4fa3e881c71964118fe6"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "acme-sqs-1.1.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "5d366649-c01e-454f-bd9b-c371a5809168",
+            "group": "com.esotericsoftware",
+            "name": "kryo",
+            "version": "5.5.0",
+            "purl": "pkg:maven/com.esotericsoftware/kryo@5.5.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "BSD-3-Clause"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "be3e82904896b1cdb3d1"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "kryo-5.5.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "d7c3a434-d45e-4e5f-aab8-0a0f6f982e2c",
+            "group": "com.fasterxml.jackson.core",
+            "name": "jackson-annotations",
+            "version": "2.16.0",
+            "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-annotations@2.16.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "43ce1b19bcd1391020a8"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "jackson-annotations-2.16.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "73909afe-7242-4dfb-bae8-b050edffead5",
+            "group": "com.fasterxml.jackson.core",
+            "name": "jackson-annotations",
+            "version": "2.16.1",
+            "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-annotations@2.16.1?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "de511b4e02b9ee4608c1"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "jackson-annotations-2.16.1.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "b1f22e51-bedc-41be-bdad-cf7ea9552b5c",
+            "group": "com.fasterxml.jackson.core",
+            "name": "jackson-core",
+            "version": "2.16.0",
+            "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-core@2.16.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "9ef8cb4e73f8bc1f1faf"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "jackson-core-2.16.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "cbe8d444-809b-4c70-9106-997c463fde8a",
+            "group": "com.fasterxml.jackson.core",
+            "name": "jackson-core",
+            "version": "2.16.1",
+            "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-core@2.16.1?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "17c1b88480be433bf93b"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "jackson-core-2.16.1.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "85bc8c89-c331-4baf-8b10-de6a1dee0a9a",
+            "group": "com.fasterxml.jackson.core",
+            "name": "jackson-databind",
+            "version": "2.16.0",
+            "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.16.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "51b50babe3a42920654a"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "jackson-databind-2.16.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "71b1bc78-5b48-4bfe-b904-e1cea4bd3d41",
+            "group": "com.fasterxml.jackson.core",
+            "name": "jackson-databind",
+            "version": "2.16.1",
+            "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.16.1?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "d0359ad211896aad8593"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "jackson-databind-2.16.1.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "6bd68146-808d-437a-bcce-91debbfc67d8",
+            "group": "com.google.code.gson",
+            "name": "gson",
+            "version": "2.10.1",
+            "purl": "pkg:maven/com.google.code.gson/gson@2.10.1?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "ecfb5ad690bdf434b960"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "gson-2.10.1.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "87477974-1d98-45a2-a80e-4cc50c418a0d",
+            "group": "com.google.guava",
+            "name": "guava",
+            "version": "33.0.0-jre",
+            "purl": "pkg:maven/com.google.guava/guava@33.0.0-jre?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "c973d748ad33564c32aa"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "guava-33.0.0-jre.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "28f8e0f1-8ee5-4cea-a240-a5f075cee2db",
+            "group": "com.squareup.okhttp3",
+            "name": "okhttp",
+            "version": "4.12.0",
+            "purl": "pkg:maven/com.squareup.okhttp3/okhttp@4.12.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "b8f4d225fa08e21bdabb"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "okhttp-4.12.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "c9154a61-d4b2-4673-87f3-dc060fcef315",
+            "group": "com.zaxxer",
+            "name": "HikariCP",
+            "version": "5.1.0",
+            "purl": "pkg:maven/com.zaxxer/HikariCP@5.1.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "9fd144b0b7ce69c44e6e"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "HikariCP-5.1.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "22b7a970-777e-438d-b918-2cbf75156b5f",
+            "group": "commons-codec",
+            "name": "commons-codec",
+            "version": "1.16.0",
+            "purl": "pkg:maven/commons-codec/commons-codec@1.16.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "f425d98bdf051abd74c4"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "commons-codec-1.16.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "951b7b59-5d6c-406c-8407-6697d45ce556",
+            "group": "jakarta.validation",
+            "name": "jakarta.validation-api",
+            "version": "3.0.2",
+            "purl": "pkg:maven/jakarta.validation/jakarta.validation-api@3.0.2?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "c98ec2668c7a6eb2df21"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "jakarta.validation-api-3.0.2.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "7752e10e-ca6b-474c-b149-a866f947126b",
+            "group": "org.apache.commons",
+            "name": "commons-collections4",
+            "version": "4.4",
+            "purl": "pkg:maven/org.apache.commons/commons-collections4@4.4?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "b9320a5c71ca1e5222bb"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "commons-collections4-4.4.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "35832cb9-babf-4768-9bee-632d44fd9b64",
+            "group": "org.apache.commons",
+            "name": "commons-lang3",
+            "version": "3.14.0",
+            "purl": "pkg:maven/org.apache.commons/commons-lang3@3.14.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "7fc2ab57915852ede05c"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "commons-lang3-3.14.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "746c77e0-a69d-490f-8fc0-33cab20eee19",
+            "group": "org.apache.commons",
+            "name": "commons-text",
+            "version": "1.11.0",
+            "purl": "pkg:maven/org.apache.commons/commons-text@1.11.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "35276b13d0b44c323678"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "commons-text-1.11.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "ca84c9ca-4431-4105-94f1-13b1416a2b93",
+            "group": "org.apache.httpcomponents.client5",
+            "name": "httpclient5",
+            "version": "5.3.0",
+            "purl": "pkg:maven/org.apache.httpcomponents.client5/httpclient5@5.3.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "240bf9ae5614eb6a86e3"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "httpclient5-5.3.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "c35fd5df-1037-42c7-a7e6-dce6e93e116f",
+            "group": "org.apache.kafka",
+            "name": "kafka-clients",
+            "version": "3.6.0",
+            "purl": "pkg:maven/org.apache.kafka/kafka-clients@3.6.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "9773fc8219e039875496"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "kafka-clients-3.6.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "f4da817f-67a8-49e1-8cfb-6b861bf59283",
+            "group": "org.hibernate.validator",
+            "name": "hibernate-validator",
+            "version": "8.0.1.Final",
+            "purl": "pkg:maven/org.hibernate.validator/hibernate-validator@8.0.1.Final?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "b902486ae8db06b1ce24"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "hibernate-validator-8.0.1.Final.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "77081288-a754-43d5-95bc-b2f9363cb692",
+            "group": "org.slf4j",
+            "name": "slf4j-api",
+            "version": "2.0.11",
+            "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.11?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "MIT"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "75aa4a256928fe5aea0c"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "slf4j-api-2.0.11.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "455e480a-7096-436b-aa6b-30eadb6fe051",
+            "group": "org.xerial.snappy",
+            "name": "snappy-java",
+            "version": "1.1.10.5",
+            "purl": "pkg:maven/org.xerial.snappy/snappy-java@1.1.10.5?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "aafef80ffa8721e102db"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "snappy-java-1.1.10.5.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "da214475-4626-4ef8-a2fd-3942e6276009",
+            "group": "redis.clients",
+            "name": "jedis",
+            "version": "5.1.0",
+            "purl": "pkg:maven/redis.clients/jedis@5.1.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "MIT"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "fafa6e547e13fc7856ca"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "jedis-5.1.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "703734d1-5726-46cd-ba96-58910281812d",
+            "group": "software.amazon.awssdk",
+            "name": "aws-core",
+            "version": "2.25.0",
+            "purl": "pkg:maven/software.amazon.awssdk/aws-core@2.25.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "ffcf544c45f9c06295af"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "aws-core-2.25.0.jar"
+                }
+            ]
+        },
+        {
+            "type": "library",
+            "bom-ref": "d1dbea43-b591-42a4-8fbe-f8dab6708c7a",
+            "group": "software.amazon.awssdk",
+            "name": "sqs",
+            "version": "2.25.0",
+            "purl": "pkg:maven/software.amazon.awssdk/sqs@2.25.0?type=jar",
+            "licenses": [
+                {
+                    "license": {
+                        "id": "Apache-2.0"
+                    }
+                }
+            ],
+            "modified": false,
+            "properties": [
+                {
+                    "name": "sonatype:truncated_sha1",
+                    "value": "7adeac431e78e02a2a9c"
+                },
+                {
+                    "name": "sonatype:match_state",
+                    "value": "exact"
+                },
+                {
+                    "name": "sonatype:identification_sources",
+                    "value": "Sonatype"
+                },
+                {
+                    "name": "sonatype:match_filenames",
+                    "value": "sqs-2.25.0.jar"
+                }
+            ]
+        }
+    ],
+    "externalReferences": [
+        {
+            "type": "bom",
+            "url": "https://lifecycle.acme-corp.internal/ui/links/application/notification-service/report/4edbd7e0f9ceb6586840d424cd24b2a1",
+            "comment": "IQ Report"
+        }
+    ],
+    "dependencies": [
+        {
+            "ref": "73001821-cd16-4a19-8e97-6170fc6fa227",
+            "dependsOn": [
+                "77081288-a754-43d5-95bc-b2f9363cb692"
+            ]
+        },
+        {
+            "ref": "63dac39b-3839-49c4-a80b-1b76332bcf9d",
+            "dependsOn": [
+                "703734d1-5726-46cd-ba96-58910281812d",
+                "c25dcc9a-cf30-47c0-8da4-9f460e27e53b"
+            ]
+        },
+        {
+            "ref": "753877d5-df54-4b0a-a8cc-e98e85ed4dc1",
+            "dependsOn": [
+                "da2562fc-3930-4ebd-ac19-e7a2c126d2ff",
+                "87477974-1d98-45a2-a80e-4cc50c418a0d",
+                "35832cb9-babf-4768-9bee-632d44fd9b64",
+                "e74b1011-979b-4e80-9529-a65de8bbbdfe"
+            ]
+        },
+        {
+            "ref": "44d32925-3999-4940-8f02-18612fc14037",
+            "dependsOn": [
+                "da2562fc-3930-4ebd-ac19-e7a2c126d2ff",
+                "87477974-1d98-45a2-a80e-4cc50c418a0d",
+                "35832cb9-babf-4768-9bee-632d44fd9b64",
+                "e74b1011-979b-4e80-9529-a65de8bbbdfe"
+            ]
+        },
+        {
+            "ref": "c25dcc9a-cf30-47c0-8da4-9f460e27e53b",
+            "dependsOn": [
+                "1569b584-6e0f-4c9f-8ca1-61b7fe19748b",
+                "753877d5-df54-4b0a-a8cc-e98e85ed4dc1",
+                "71b1bc78-5b48-4bfe-b904-e1cea4bd3d41"
+            ]
+        },
+        {
+            "ref": "e74b1011-979b-4e80-9529-a65de8bbbdfe",
+            "dependsOn": [
+                "77081288-a754-43d5-95bc-b2f9363cb692",
+                "73001821-cd16-4a19-8e97-6170fc6fa227"
+            ]
+        },
+        {
+            "ref": "36f81b19-afc5-4e55-8fe9-9ea5056c6580",
+            "dependsOn": [
+                "da214475-4626-4ef8-a2fd-3942e6276009",
+                "c25dcc9a-cf30-47c0-8da4-9f460e27e53b",
+                "0f411045-57eb-4ba2-ab36-98c5d33a5047"
+            ]
+        },
+        {
+            "ref": "0f411045-57eb-4ba2-ab36-98c5d33a5047",
+            "dependsOn": [
+                "c9154a61-d4b2-4673-87f3-dc060fcef315",
+                "c25dcc9a-cf30-47c0-8da4-9f460e27e53b"
+            ]
+        },
+        {
+            "ref": "d3446d0a-ee91-49c9-953f-0e94fbf82761",
+            "dependsOn": [
+                "85bc8c89-c331-4baf-8b10-de6a1dee0a9a",
+                "753877d5-df54-4b0a-a8cc-e98e85ed4dc1"
+            ]
+        },
+        {
+            "ref": "5a444ef8-0160-4e15-8e09-8b154ca05e36",
+            "dependsOn": [
+                "71b1bc78-5b48-4bfe-b904-e1cea4bd3d41",
+                "44d32925-3999-4940-8f02-18612fc14037"
+            ]
+        },
+        {
+            "ref": "da2562fc-3930-4ebd-ac19-e7a2c126d2ff",
+            "dependsOn": [
+                "7752e10e-ca6b-474c-b149-a866f947126b",
+                "746c77e0-a69d-490f-8fc0-33cab20eee19",
+                "22b7a970-777e-438d-b918-2cbf75156b5f"
+            ]
+        },
+        {
+            "ref": "4868bdc7-125a-4863-85c1-bdfd62b25be8",
+            "dependsOn": [
+                "ca84c9ca-4431-4105-94f1-13b1416a2b93",
+                "28f8e0f1-8ee5-4cea-a240-a5f075cee2db"
+            ]
+        },
+        {
+            "ref": "77931fdb-05e9-4c71-8cea-b50b61020edf",
+            "dependsOn": [
+                "5d366649-c01e-454f-bd9b-c371a5809168",
+                "455e480a-7096-436b-aa6b-30eadb6fe051",
+                "6bd68146-808d-437a-bcce-91debbfc67d8"
+            ]
+        },
+        {
+            "ref": "1569b584-6e0f-4c9f-8ca1-61b7fe19748b",
+            "dependsOn": [
+                "f4da817f-67a8-49e1-8cfb-6b861bf59283",
+                "951b7b59-5d6c-406c-8407-6697d45ce556"
+            ]
+        },
+        {
+            "ref": "9c3df3ec-0320-4b0a-9076-5af74da49814",
+            "dependsOn": [
+                "4868bdc7-125a-4863-85c1-bdfd62b25be8",
+                "71b1bc78-5b48-4bfe-b904-e1cea4bd3d41",
+                "c25dcc9a-cf30-47c0-8da4-9f460e27e53b"
+            ]
+        },
+        {
+            "ref": "cdc5522a-688d-4bcb-83b3-103b8b394de5",
+            "dependsOn": [
+                "d3446d0a-ee91-49c9-953f-0e94fbf82761",
+                "753877d5-df54-4b0a-a8cc-e98e85ed4dc1"
+            ]
+        },
+        {
+            "ref": "286a0ea3-a6ac-4edf-b795-2520b978084a",
+            "dependsOn": [
+                "5a444ef8-0160-4e15-8e09-8b154ca05e36",
+                "44d32925-3999-4940-8f02-18612fc14037"
+            ]
+        },
+        {
+            "ref": "19667b1b-ab28-45e6-9e0c-18ee9078e22b",
+            "dependsOn": [
+                "c35fd5df-1037-42c7-a7e6-dce6e93e116f",
+                "c25dcc9a-cf30-47c0-8da4-9f460e27e53b",
+                "96920852-26f7-4a9a-88d9-0c30dae8860a",
+                "a0f8af31-620e-4a1d-a59c-6860d222b868"
+            ]
+        },
+        {
+            "ref": "a0f8af31-620e-4a1d-a59c-6860d222b868",
+            "dependsOn": [
+                "286a0ea3-a6ac-4edf-b795-2520b978084a",
+                "36f81b19-afc5-4e55-8fe9-9ea5056c6580",
+                "44d32925-3999-4940-8f02-18612fc14037"
+            ]
+        },
+        {
+            "ref": "96920852-26f7-4a9a-88d9-0c30dae8860a",
+            "dependsOn": [
+                "77931fdb-05e9-4c71-8cea-b50b61020edf",
+                "cdc5522a-688d-4bcb-83b3-103b8b394de5",
+                "753877d5-df54-4b0a-a8cc-e98e85ed4dc1"
+            ]
+        },
+        {
+            "ref": "6b551cfc-0917-4da2-b755-502f186b8259",
+            "dependsOn": [
+                "63dac39b-3839-49c4-a80b-1b76332bcf9d",
+                "d1dbea43-b591-42a4-8fbe-f8dab6708c7a",
+                "286a0ea3-a6ac-4edf-b795-2520b978084a"
+            ]
+        },
+        {
+            "ref": "345a8a29-b5a0-4a74-bcef-a30ea84c224b",
+            "dependsOn": [
+                "19667b1b-ab28-45e6-9e0c-18ee9078e22b",
+                "9c3df3ec-0320-4b0a-9076-5af74da49814",
+                "c25dcc9a-cf30-47c0-8da4-9f460e27e53b",
+                "6b551cfc-0917-4da2-b755-502f186b8259"
+            ]
+        },
+        {
+            "ref": "5d366649-c01e-454f-bd9b-c371a5809168",
+            "dependsOn": []
+        },
+        {
+            "ref": "d7c3a434-d45e-4e5f-aab8-0a0f6f982e2c",
+            "dependsOn": []
+        },
+        {
+            "ref": "73909afe-7242-4dfb-bae8-b050edffead5",
+            "dependsOn": []
+        },
+        {
+            "ref": "b1f22e51-bedc-41be-bdad-cf7ea9552b5c",
+            "dependsOn": []
+        },
+        {
+            "ref": "cbe8d444-809b-4c70-9106-997c463fde8a",
+            "dependsOn": []
+        },
+        {
+            "ref": "85bc8c89-c331-4baf-8b10-de6a1dee0a9a",
+            "dependsOn": [
+                "b1f22e51-bedc-41be-bdad-cf7ea9552b5c",
+                "d7c3a434-d45e-4e5f-aab8-0a0f6f982e2c"
+            ]
+        },
+        {
+            "ref": "71b1bc78-5b48-4bfe-b904-e1cea4bd3d41",
+            "dependsOn": [
+                "cbe8d444-809b-4c70-9106-997c463fde8a",
+                "73909afe-7242-4dfb-bae8-b050edffead5"
+            ]
+        },
+        {
+            "ref": "6bd68146-808d-437a-bcce-91debbfc67d8",
+            "dependsOn": []
+        },
+        {
+            "ref": "87477974-1d98-45a2-a80e-4cc50c418a0d",
+            "dependsOn": []
+        },
+        {
+            "ref": "28f8e0f1-8ee5-4cea-a240-a5f075cee2db",
+            "dependsOn": []
+        },
+        {
+            "ref": "c9154a61-d4b2-4673-87f3-dc060fcef315",
+            "dependsOn": []
+        },
+        {
+            "ref": "22b7a970-777e-438d-b918-2cbf75156b5f",
+            "dependsOn": []
+        },
+        {
+            "ref": "951b7b59-5d6c-406c-8407-6697d45ce556",
+            "dependsOn": []
+        },
+        {
+            "ref": "7752e10e-ca6b-474c-b149-a866f947126b",
+            "dependsOn": []
+        },
+        {
+            "ref": "35832cb9-babf-4768-9bee-632d44fd9b64",
+            "dependsOn": []
+        },
+        {
+            "ref": "746c77e0-a69d-490f-8fc0-33cab20eee19",
+            "dependsOn": []
+        },
+        {
+            "ref": "ca84c9ca-4431-4105-94f1-13b1416a2b93",
+            "dependsOn": []
+        },
+        {
+            "ref": "c35fd5df-1037-42c7-a7e6-dce6e93e116f",
+            "dependsOn": []
+        },
+        {
+            "ref": "f4da817f-67a8-49e1-8cfb-6b861bf59283",
+            "dependsOn": []
+        },
+        {
+            "ref": "77081288-a754-43d5-95bc-b2f9363cb692",
+            "dependsOn": []
+        },
+        {
+            "ref": "455e480a-7096-436b-aa6b-30eadb6fe051",
+            "dependsOn": []
+        },
+        {
+            "ref": "da214475-4626-4ef8-a2fd-3942e6276009",
+            "dependsOn": []
+        },
+        {
+            "ref": "703734d1-5726-46cd-ba96-58910281812d",
+            "dependsOn": []
+        },
+        {
+            "ref": "d1dbea43-b591-42a4-8fbe-f8dab6708c7a",
+            "dependsOn": [
+                "703734d1-5726-46cd-ba96-58910281812d"
+            ]
+        }
+    ],
+    "vulnerabilities": [
+        {
+            "id": "CVE-2024-29025",
+            "source": {
+                "name": "NVD",
+                "url": "https://www.cve.org/CVERecord?id=CVE-2024-29025"
+            },
+            "ratings": [
+                {
+                    "source": {
+                        "name": "NVD"
+                    },
+                    "score": 7.5,
+                    "severity": "high",
+                    "method": "CVSSv3",
+                    "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+                }
+            ],
+            "cwes": [
+                770
+            ],
+            "affects": [
+                {
+                    "ref": "c35fd5df-1037-42c7-a7e6-dce6e93e116f"
+                }
+            ]
+        },
+        {
+            "id": "CVE-2024-25710",
+            "source": {
+                "name": "NVD",
+                "url": "https://www.cve.org/CVERecord?id=CVE-2024-25710"
+            },
+            "ratings": [
+                {
+                    "source": {
+                        "name": "NVD"
+                    },
+                    "score": 8.1,
+                    "severity": "high",
+                    "method": "CVSSv3",
+                    "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:N"
+                }
+            ],
+            "cwes": [
+                502
+            ],
+            "affects": [
+                {
+                    "ref": "71b1bc78-5b48-4bfe-b904-e1cea4bd3d41"
+                }
+            ]
+        },
+        {
+            "id": "CVE-2024-22233",
+            "source": {
+                "name": "NVD",
+                "url": "https://www.cve.org/CVERecord?id=CVE-2024-22233"
+            },
+            "ratings": [
+                {
+                    "source": {
+                        "name": "NVD"
+                    },
+                    "score": 5.3,
+                    "severity": "medium",
+                    "method": "CVSSv3",
+                    "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+                }
+            ],
+            "cwes": [
+                200
+            ],
+            "affects": [
+                {
+                    "ref": "746c77e0-a69d-490f-8fc0-33cab20eee19"
+                }
+            ]
+        },
+        {
+            "id": "CVE-2024-31573",
+            "source": {
+                "name": "NVD",
+                "url": "https://www.cve.org/CVERecord?id=CVE-2024-31573"
+            },
+            "ratings": [
+                {
+                    "source": {
+                        "name": "NVD"
+                    },
+                    "score": 6.5,
+                    "severity": "medium",
+                    "method": "CVSSv3",
+                    "vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H"
+                }
+            ],
+            "cwes": [
+                400
+            ],
+            "affects": [
+                {
+                    "ref": "28f8e0f1-8ee5-4cea-a240-a5f075cee2db"
+                }
+            ]
+        }
+    ]
+}

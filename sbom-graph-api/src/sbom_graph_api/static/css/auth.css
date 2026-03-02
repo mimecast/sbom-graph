@@ -1,0 +1,136 @@
+/* auth.css - Shared styles for authentication and admin templates */
+
+body {
+    margin: 0;
+    padding: 20px;
+}
+
+.container {
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.nav-links {
+    margin-bottom: 20px;
+}
+
+.nav-links a {
+    color: #366092;
+    text-decoration: none;
+    margin-right: 20px;
+}
+
+.nav-links a:hover {
+    text-decoration: underline;
+}
+
+.header-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.user-info {
+    color: #666;
+    font-size: 14px;
+}
+
+.card {
+    background: white;
+    padding: 30px;
+    border-radius: 5px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    color: #333;
+    font-weight: 500;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 12px 15px;
+    border: 2px solid #e0e0e0;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: border-color 0.3s;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: #366092;
+}
+
+.form-group .help-text {
+    font-size: 12px;
+    color: #888;
+    margin-top: 5px;
+}
+
+.success-card {
+    background: #e8f5e9;
+    border: 2px solid #4caf50;
+    padding: 25px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+}
+
+.success-card h2,
+.success-card h3 {
+    color: #2e7d32;
+    margin-top: 0;
+}
+
+.password-display {
+    background: #f5f5f5;
+    padding: 15px;
+    border-radius: 5px;
+    font-family: monospace;
+    font-size: 18px;
+    text-align: center;
+    border: 2px dashed #ccc;
+    margin: 15px 0;
+}
+
+.password-requirements {
+    font-size: 12px;
+    color: #888;
+    margin-top: 5px;
+}
+
+.actions-cell {
+    white-space: nowrap;
+}
+
+.actions-cell form {
+    display: inline;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    background: white;
+    border-radius: 5px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.empty-state h3 {
+    color: #666;
+    margin-bottom: 10px;
+}
+
+.empty-state p {
+    color: #888;
+    margin-bottom: 20px;
+}

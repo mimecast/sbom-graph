@@ -1,0 +1,59 @@
+sbom-graph has been deployed successfully.
+
+Components:
+  - FalkorDB:          {{ include "sbom-graph.falkordb.fullname" . }} (port 6379)
+  - SBOM Graph API: {{ include "sbom-graph.sbomGraphApi.fullname" . }} (port {{ .Values.sbomGraphApi.service.port }})
+  - Release Listener:  {{ include "sbom-graph.releaseListener.fullname" . }} (port {{ .Values.releaseListener.service.port }})
+
+{{- if .Values.falkordb.tls.enabled }}
+
+TLS: Enabled
+{{- if include "sbom-graph.tls.isProvided" . }}
+  Certificates: User-provided (stored in Secret {{ include "sbom-graph.tls.secretName" . }})
+{{- else }}
+  Certificates: Auto-generated self-signed (stored in Secret {{ include "sbom-graph.tls.secretName" . }})
+{{- end }}
+{{- end }}
+
+{{- if .Values.initData.enabled }}
+
+Init Data: The acme-corp demo graph will be loaded into FalkorDB after deployment.
+{{- end }}
+
+─── Retrieving auto-generated secrets ───
+
+FalkorDB password:
+
+  kubectl get secret {{ include "sbom-graph.falkordb.secretName" . }} \
+    -n {{ .Release.Namespace }} \
+    -o jsonpath='{.data.password}' | base64 -d; echo
+
+Webhook HMAC secret (configure in your SonaType webhook):
+
+  kubectl get secret {{ include "sbom-graph.webhookSecret.secretName" . }} \
+    -n {{ .Release.Namespace }} \
+    -o jsonpath='{.data.webhook-secret}' | base64 -d; echo
+
+  SonaType must send header:  X-Webhook-Signature: sha256=<HMAC-SHA256 hex digest of body>
+
+SBOM Graph API application secrets:
+
+  kubectl get secret {{ include "sbom-graph.sbomGraphApi.secretName" . }} \
+    -n {{ .Release.Namespace }} \
+    -o jsonpath='{.data.flask-secret-key}' | base64 -d; echo
+
+  kubectl get secret {{ include "sbom-graph.sbomGraphApi.secretName" . }} \
+    -n {{ .Release.Namespace }} \
+    -o jsonpath='{.data.jwt-secret-key}' | base64 -d; echo
+
+  kubectl get secret {{ include "sbom-graph.sbomGraphApi.secretName" . }} \
+    -n {{ .Release.Namespace }} \
+    -o jsonpath='{.data.token-db-encryption-key}' | base64 -d; echo
+
+─── Access ───
+
+Access the SBOM Graph API UI:
+
+  kubectl port-forward svc/{{ include "sbom-graph.sbomGraphApi.fullname" . }} 8080:{{ .Values.sbomGraphApi.service.port }}
+
+Then open http://localhost:8080 in your browser.

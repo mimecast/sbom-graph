@@ -1,0 +1,76 @@
+global:
+  internalPrefixes: "group:com.acme,name:acme-"
+
+falkordb:
+  image:
+    repository: falkordb/falkordb
+    tag: latest
+  password: ""
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+  tls:
+    enabled: true
+    # When empty and tls.enabled=true, Helm generates self-signed certs.
+    key: ""
+    cert: ""
+    caCert: ""
+  resources:
+    limits:
+      cpu: "1"
+      memory: 2Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+
+sbomGraphApi:
+  image:
+    repository: sbom-graph-api
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    port: 80
+    targetPort: 8000
+  # Leave empty to auto-generate (persisted across upgrades via lookup).
+  secrets:
+    flaskSecretKey: ""
+    jwtSecretKey: ""
+    tokenDbEncryptionKey: ""
+  tokenDb:
+    persistence:
+      enabled: true
+      size: 1Gi
+      storageClass: ""
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+releaseListener:
+  image:
+    repository: sonatype-lifecycle-release-listener
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  # Leave empty to auto-generate. Retrieve after install -- see NOTES.
+  webhookSecret: ""
+  service:
+    port: 80
+    targetPort: 8000
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+initData:
+  enabled: true
+
+graphName: "acme-corp"

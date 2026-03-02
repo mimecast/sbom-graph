@@ -1,0 +1,56 @@
+# Gitleaks configuration for AppSec Data Views
+# https://github.com/gitleaks/gitleaks
+
+title = "AppSec Data Views Gitleaks Configuration"
+
+# Use the default gitleaks rules
+[extend]
+useDefault = true
+
+# Paths to exclude from scanning
+[allowlist]
+paths = [
+    # Test fixtures contain intentional mock secrets for testing
+    "tests/conftest.py",
+    "tests/test_routes_auth.py"
+]
+regexes = [
+  'FFS_',
+  'sha3_',
+  'DT_',
+  'tse_',
+  'tst_',
+  'b_',
+  'ER_',
+  'ES_',
+  'FL_',
+  'CA_',
+  'ED_',
+  'EZ_',
+  'tst_',
+  'tse_',
+  'sha2_',
+  'zzz1_',
+  'z_',
+  'f_',
+  'c_',
+  'e_',
+  'h_',
+  'd_',
+  'g_',
+  's_',
+  'u_'
+]
+
+
+# Additional rules can be added here if needed
+# [[rules]]
+# id = "custom-rule"
+# description = "Custom rule description"
+# regex = '''pattern'''
+# tags = ["custom"]
+
+# Allowlist specific patterns that are false positives
+# [[allowlist.regexes]]
+# description = "Example false positive"
+# regex = '''example-pattern'''

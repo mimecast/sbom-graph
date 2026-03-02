@@ -1,0 +1,23 @@
+{
+    "timestamp":"2020-04-22T18:30:04.673+0000",
+    "initiator":"admin",
+    "id":"d5cc2e91d6454545841da5599d3c7156",
+    "applicationEvaluation":{
+        "application":{
+            "id":"0f256982c80b4e13abef4917b93ac343",
+            "publicId":"My-Application-ID",
+            "name":"My-Application",
+            "organizationId":"f25acda2a413ab2c62b44917b93ac232"
+        },
+        "policyEvaluationId":"d5cc2e91d6454545841da5599d3c7156",
+        "stage":"release",
+        "ownerId":"0f256982c80b4e13abef4917b93ac343",
+        "evaluationDate":"2020-04-22T18:30:04.404+0000",
+        "affectedComponentCount":10,
+        "criticalComponentCount":2,
+        "severeComponentCount":5,
+        "moderateComponentCount":3,
+        "outcome":"fail",
+        "reportId":"36f37cf776dd408bacd063450ab04f71"
+    }
+}

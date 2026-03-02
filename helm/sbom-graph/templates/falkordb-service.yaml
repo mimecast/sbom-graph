@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sbom-graph.falkordb.fullname" . }}
+  labels:
+    {{- include "sbom-graph.falkordb.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6379
+      targetPort: redis
+      protocol: TCP
+      name: redis
+  selector:
+    {{- include "sbom-graph.falkordb.selectorLabels" . | nindent 4 }}

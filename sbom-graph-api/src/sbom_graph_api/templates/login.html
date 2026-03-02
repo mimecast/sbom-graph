@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Login - AppSec Data Views</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh; display: flex; align-items: center; justify-content: center;
+        }
+        .login-container {
+            background: white; padding: 40px; border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3); width: 100%; max-width: 400px;
+        }
+        .logo { text-align: center; margin-bottom: 30px; }
+        .logo h1 { color: #366092; margin: 0; font-size: 24px; border-bottom: none; }
+        .logo p { color: #666; margin: 5px 0 0 0; font-size: 14px; }
+        .form-group input { font-size: 16px; }
+        .submit-btn {
+            width: 100%; padding: 14px; background: #366092; color: white;
+            border: none; border-radius: 6px; font-size: 16px; font-weight: 600;
+            cursor: pointer; transition: background 0.3s;
+        }
+        .submit-btn:hover { background: #254a73; }
+        .submit-btn:disabled { background: #ccc; cursor: not-allowed; }
+        .auth-method { text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; }
+        .auth-method span { color: #888; font-size: 13px; }
+        .auth-method .method-badge {
+            display: inline-block; padding: 4px 10px; background: #e8f4fc;
+            color: #366092; border-radius: 4px; font-size: 12px; font-weight: 500; margin-left: 5px;
+        }
+        .info-message {
+            background: #e3f2fd; color: #1565c0; padding: 12px 15px;
+            border-radius: 6px; margin-bottom: 20px; font-size: 14px;
+        }
+        .first-user-note {
+            text-align: center; margin-top: 15px; padding: 10px;
+            background: #fff3e0; color: #e65100; border-radius: 6px; font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="logo">
+            <h1>AppSec Data Views</h1>
+            <p>Graph Data Visualization Service</p>
+        </div>
+
+        {% if info %}
+        <div class="info-message">
+            {{ info }}
+        </div>
+        {% endif %}
+
+        {% if error %}
+        <div class="error-message">
+            {{ error }}
+        </div>
+        {% endif %}
+
+        <form method="POST" action="{{ url_for('auth.login', next=next_url) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group">
+                <label for="username">{% if is_first_user %}Choose Username{% else %}Username{% endif %}</label>
+                <input type="text" id="username" name="username" required autofocus
+                       placeholder="{% if is_first_user %}Choose a username{% else %}Enter your username{% endif %}">
+            </div>
+
+            <div class="form-group">
+                <label for="password">{% if is_first_user %}Choose Password{% else %}Password{% endif %}</label>
+                <input type="password" id="password" name="password" required
+                       placeholder="{% if is_first_user %}Choose a password{% else %}Enter your password{% endif %}"
+                       {% if is_first_user %}minlength="8"{% endif %}>
+            </div>
+
+            <button type="submit" class="submit-btn">{% if is_first_user %}Create Admin Account{% else %}Sign In{% endif %}</button>
+        </form>
+
+        {% if is_first_user %}
+        <div class="first-user-note">
+            This will be the administrator account. Choose a strong password.
+        </div>
+        {% endif %}
+
+        <div class="auth-method">
+            <span>Authentication:</span>
+            {% if ldap_enabled %}
+            <span class="method-badge">LDAP</span>
+            {% else %}
+            <span class="method-badge">Local</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        // Focus username field on load
+        document.getElementById('username').focus();
+
+        // Disable button on submit to prevent double submission
+        document.querySelector('form').addEventListener('submit', function() {
+            document.querySelector('.submit-btn').disabled = true;
+            document.querySelector('.submit-btn').textContent = 'Signing in...';
+        });
+    </script>
+</body>
+</html>

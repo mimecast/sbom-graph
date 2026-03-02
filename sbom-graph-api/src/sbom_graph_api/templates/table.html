@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/report.css') }}">
+</head>
+<body>
+    <h1>{{ title }}</h1>
+
+    <div class="controls">
+        <div class="toggle-container">
+            <span class="toggle-label">Filter:</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="internalOnlyToggle" {{ 'checked' if internal_only else '' }}>
+                <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-status" id="toggleStatus">{{ 'Internal Only' if internal_only else 'All projects' }}</span>
+        </div>
+
+        {% if extra_toggles %}
+        {% for toggle in extra_toggles %}
+        <div class="toggle-container">
+            <span class="toggle-label">{{ toggle.label }}:</span>
+            <label class="toggle-switch">
+                <input type="checkbox" class="extra-toggle" data-url="{{ toggle.url }}" {{ 'checked' if toggle.checked else '' }}>
+                <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-status">{{ 'Yes' if toggle.checked else 'No' }}</span>
+        </div>
+        {% endfor %}
+        {% endif %}
+
+        <div class="download-links">
+            {% if excel_url %}
+            <a href="{{ excel_url }}" class="download-link" id="excelLink">Download as Excel</a>
+            {% endif %}
+            {% if json_url %}
+            <a href="{{ json_url }}" class="download-link" id="jsonLink">Download as JSON</a>
+            {% endif %}
+            {% if schema_url %}
+            <a href="{{ schema_url }}" class="download-link secondary">View JSON Schema</a>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if stats %}
+    <div class="stats">
+        {% for key, value in stats.items() %}
+        <span>{{ key }}: {{ value }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% if data %}
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    {% for header in headers %}
+                    <th>{{ header }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in data %}
+                <tr>
+                    {% for value in row %}
+                    <td>{{ value }}</td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-message">No data found</div>
+    {% endif %}
+
+    <script>
+        document.getElementById('internalOnlyToggle').addEventListener('change', function() {
+            const isChecked = this.checked;
+            const currentUrl = new URL(window.location.href);
+
+            if (isChecked) {
+                currentUrl.searchParams.set('internal_only', 'true');
+            } else {
+                currentUrl.searchParams.delete('internal_only');
+            }
+
+            // Reload page with new parameter
+            window.location.href = currentUrl.toString();
+        });
+
+        // Handle extra toggles
+        document.querySelectorAll('.extra-toggle').forEach(function(toggle) {
+            toggle.addEventListener('change', function() {
+                // Navigate to the URL specified in data-url attribute
+                window.location.href = this.dataset.url;
+            });
+        });
+    </script>
+</body>
+</html>
