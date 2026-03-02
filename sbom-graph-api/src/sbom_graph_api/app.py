@@ -13,7 +13,7 @@ from flask_jwt_extended import JWTManager
 from flask_wtf.csrf import CSRFError, CSRFProtect
 
 from sbom_graph_api.config import get_config
-from sbom_graph_api.routes import auth, exports, reports, schemas, visualizations
+from sbom_graph_api.routes import auth, exports, ingest, reports, schemas, visualizations
 
 logger = logging.getLogger(__name__)
 
@@ -105,15 +105,20 @@ def create_app() -> Flask:
             return jsonify({"error": "Authorization required", "code": "missing_token"}), 401
         return redirect(url_for("auth.login"))
 
+    # Enforce a maximum request body size (50 MB) to mitigate oversized payloads
+    app.config.setdefault("MAX_CONTENT_LENGTH", 50 * 1024 * 1024)
+
     # Register blueprints
     app.register_blueprint(auth.bp)
     app.register_blueprint(visualizations.bp)
     app.register_blueprint(exports.bp)
     app.register_blueprint(reports.bp)
     app.register_blueprint(schemas.bp)
+    app.register_blueprint(ingest.bp)
 
-    # Exempt JWT-only endpoint from CSRF (no browser form)
+    # Exempt JWT-only endpoints from CSRF (no browser form)
     csrf.exempt(app.view_functions["auth.refresh"])
+    csrf.exempt(app.view_functions["ingest.upload_cyclonedx"])
 
     # Health check endpoint (no auth, no CSRF)
     @csrf.exempt

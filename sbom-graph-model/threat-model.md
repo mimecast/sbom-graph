@@ -125,14 +125,25 @@ The `falkordb` Python client is a thin wrapper over the Redis protocol. Its atta
 | 5 | Password in exception traces | Ensure FalkorDB constructor exceptions are caught and re-raised without connection details. |
 | 12 | Multiple ratings ValueError | Consider logging and selecting the highest-severity rating instead of raising, to improve resilience. |
 
+## API Exposure via sbom-graph-api
+
+The `sbom-graph-model` library is now directly exposed to external input through `POST /ingest/cyclonedx` in `sbom-graph-api`. This means:
+
+- **CycloneDX JSON from untrusted clients** is passed to `CycloneDXProcessor.process_cyclone_dx_json()` after JWT authentication.
+- The structural validation in `_validate_cyclonedx_structure()` is now a security-critical control (not just a correctness check).
+- The label allowlist and parameterized queries in `Persistence` are the primary defense against Cypher injection from SBOM field values.
+
+Relevant system-level threats: S11, S12, S13, S14 in [`threat-model.md`](../threat-model.md).
+
 ## Residual Risk
 
 | Risk | Severity | Justification |
 |------|----------|---------------|
 | Arbitrary Cypher via `run_query` | Medium | By design. Consumers are internal services under our control. Access to the library implies access to FalkorDB credentials anyway. |
-| Large SBOM resource consumption | Medium | No built-in limits. Gunicorn timeouts and Kubernetes resource limits in consuming services provide backstops. |
+| Large SBOM resource consumption | Medium | No built-in limits. Gunicorn timeouts and Kubernetes resource limits in consuming services provide backstops. `sbom-graph-api` enforces a 50 MB `MAX_CONTENT_LENGTH`. |
 | FalkorDB client library vulnerability | Low | Actively maintained, no known CVEs. Thin Redis protocol wrapper with minimal attack surface. |
 | CycloneDX spec evolution | Low | Future CycloneDX versions may introduce new field types or structures not handled by current validation. |
+| Structurally valid but misleading SBOM data via ingest API | Medium | An authenticated user can submit a valid CycloneDX document containing fabricated dependency or vulnerability data. Mitigated by requiring JWT authentication. Audit logging of ingestion events is recommended. |
 
 ## Revision History
 

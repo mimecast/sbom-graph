@@ -18,11 +18,11 @@ Strategic Potential and Future Enhancements
 
 The tool also has potential for further enhancements by enriching the graph with additional data points. For example, by incorporating metrics such as the security and quality ratings of libraries, we can enable advanced dependency threat modeling. This will allows you to proactively identify and mitigate risks by replacing less secure libraries with more robust alternatives.
 
-The Project is made up of 3 parts:
+The project is made up of 3 parts:
 
-1. A Python library for processing CycloneDX files and storing them in a GraphDB
-2. A Release Listener for SCA Scans that retrieves the CycloneDX file and processes it
-3. A Flask application for visualizing graph data structures from FalkorDB, providing insights into dependency relationships, SNAPSHOT dependencies, and self-dependency detection.
+1. **sbom-graph-model** -- A Python library for processing CycloneDX files and storing them in a GraphDB
+2. **sonatype-lifecycle-release-listener** -- A release listener for SCA scans that retrieves the CycloneDX file and processes it
+3. **sbom-graph-api** -- A Flask application for visualizing graph data, ingesting CycloneDX SBOMs via authenticated API, and providing insights into dependency relationships, SNAPSHOT dependencies, and self-dependency detection
 
 For detailed architecture documentation, see [SPECIFICATION.md](SPECIFICATION.md).
 
@@ -109,7 +109,34 @@ Run `./build-images.sh --help` for the full list of options.
 
 ## License
 
-Open Source - MIT
+This project is open source under the **MIT** licence.
+
+### Infrastructure Dependency: FalkorDB (SSPLv1)
+
+This project depends on [FalkorDB](https://www.falkordb.com/) as its graph
+database. FalkorDB is licensed under the **Server Side Public License v1
+(SSPLv1)**, which has implications for how the complete stack can be deployed:
+
+| Deployment Scenario | SSPLv1 Obligation |
+|---------------------|-------------------|
+| **Internal use** (not offered as a service to third parties) | No restrictions. Use freely. |
+| **Offered as a service to external users** (e.g., SaaS, hosted API) | You must open-source the **entire service stack** under SSPLv1 — or obtain a [commercial licence](https://www.falkordb.com/) from FalkorDB. |
+| **Distributing this source code** (without FalkorDB binary) | No SSPL obligation. MIT applies to this code. |
+
+The SSPLv1 applies to the FalkorDB **server binary** only. The FalkorDB Python
+client library used by this project is MIT-licensed. This project's MIT licence
+does not conflict with the SSPL because FalkorDB is consumed as a separate
+network service, not linked or embedded.
+
+**If your organisation cannot accept SSPLv1 terms**, you will need either a
+commercial FalkorDB licence or to adapt the persistence layer to use an
+alternatively-licensed graph database.
+
+### Other Dependencies
+
+All Python library dependencies use permissive licences (MIT, BSD-3, Apache-2.0)
+with one exception: **ldap3** (LGPL-3, weak copyleft). See
+[threat-model.md](threat-model.md) for the full licence assessment.
 
 ## Contributing
 

@@ -27,7 +27,7 @@ A Flask application for visualizing graph data structures from FalkorDB, providi
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.14+
 - [uv](https://github.com/astral-sh/uv) package manager
 - FalkorDB instance (default: localhost:6379)
 
@@ -276,6 +276,67 @@ curl "http://localhost:8080/reports/projects?format=json" > projects.json
 
 # Validate using a JSON Schema validator (e.g., ajv-cli)
 npx ajv validate -s projects.schema.json -d projects.json
+```
+
+### SBOM Ingestion Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /ingest/cyclonedx` | Upload and process a CycloneDX SBOM |
+
+#### POST /ingest/cyclonedx
+
+Accepts a CycloneDX SBOM as a JSON body and persists the parsed projects,
+dependencies, and defects to the graph database via the `sbom-graph-model`
+library. Requires JWT authentication.
+
+**Request** (`Content-Type: application/json`):
+
+```json
+{
+  "sbom": { "bomFormat": "CycloneDX", "specVersion": "1.4", "metadata": { "..." }, "..." },
+  "app_id": "optional-custom-app-id",
+  "public_app_id": "optional-public-identifier",
+  "project_url": "https://github.com/org/repo"
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `sbom` | Yes | A complete CycloneDX JSON document |
+| `app_id` | No | Custom application ID. Defaults to SHA-1 of `metadata.component.name` |
+| `public_app_id` | No | Public application identifier. Defaults to `metadata.component.name` |
+| `project_url` | No | URL of the source repository |
+
+**Response** (`201 Created`):
+
+```json
+{
+  "status": "ok",
+  "app_id": "a1b2c3...",
+  "public_app_id": "my-application",
+  "projects_count": 42,
+  "dependencies_count": 87,
+  "defects_count": 3
+}
+```
+
+**Error Responses**:
+
+| Status | Condition |
+|--------|-----------|
+| `400` | Missing or invalid request body, missing `sbom` field |
+| `415` | Content-Type is not `application/json` |
+| `422` | CycloneDX structural validation failed |
+| `500` | Unexpected processing error |
+
+**Example**:
+
+```bash
+curl -X POST http://localhost:8080/ingest/cyclonedx \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <jwt-token>" \
+  -d '{"sbom": <cyclonedx-json>}'
 ```
 
 ### Health Endpoints
@@ -768,6 +829,7 @@ sbom-graph-api/
 │       ├── wsgi.py             # WSGI entry point
 │       ├── routes/
 │       │   ├── auth.py         # Authentication endpoints
+│       │   ├── ingest.py       # SBOM ingestion (CycloneDX upload)
 │       │   ├── visualizations.py
 │       │   ├── exports.py
 │       │   ├── reports.py
