@@ -266,13 +266,19 @@ class CycloneDXProcessor:
         path = parsed.path.lstrip("/")
         if path.endswith(".git"):
             path = path[:-4]
+        hostname = parsed.hostname or ""
+        is_known_git_host = (
+            hostname == "github.com"
+            or hostname.endswith(".github.com")
+            or hostname == "gitlab.com"
+            or hostname.endswith(".gitlab.com")
+            or hostname == "bitbucket.org"
+            or hostname.endswith(".bitbucket.org")
+        )
         return {
             "namespace": namespace,
             "name": path or None,
-            "vcs_type": "git" if (
-                url.endswith(".git") or "github.com" in url
-                or "gitlab.com" in url or "bitbucket.org" in url
-            ) else None,
+            "vcs_type": "git" if (url.endswith(".git") or is_known_git_host) else None,
         }
 
     @staticmethod
