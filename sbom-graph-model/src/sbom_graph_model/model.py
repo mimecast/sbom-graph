@@ -38,6 +38,7 @@ class Version:
         self.version: Optional[str] = None
         self.project: Optional["Project"] = None
         self.scan_id: Optional[str] = None
+        self.sbom_format: Optional[str] = None  # "cyclonedx" or "spdx"
 
     def __str__(self):
         return_value = 'Version {'
@@ -271,6 +272,88 @@ class License:
         self.name: Optional[str] = None
         self.url: Optional[str] = None
         self.risk_category: str = LicenseRiskCategory.UNKNOWN
+
+
+class TrustScore:
+    """Composite supply-chain trust score for a package version.
+
+    Combines signals from OpenSSF Scorecard, OSV, Sonatype OSS Index,
+    and deps.dev into a single 0--10 score per package, then propagates
+    inherited risk through the dependency graph to produce an effective
+    score that reflects the aggregate health of a package and all of
+    its transitive dependencies.
+
+    Attributes:
+        purl: Package URL (MERGE key -- one score per package version).
+        direct_score: Per-package composite from the 4-category formula.
+        effective_score: Blended own + inherited risk.
+        inherited_score: Weighted aggregate from dependency scores.
+        min_path_score: Lowest direct_score on any dependency path.
+        confidence: Data source coverage (0--1).
+        dep_count: Number of direct + transitive deps in the calculation.
+        security_practices_score: Category breakdown (0--10).
+        vulnerability_profile_score: Category breakdown (0--10).
+        maintenance_health_score: Category breakdown (0--10).
+        supply_chain_hygiene_score: Category breakdown (0--10).
+        sources_used: List of source names that contributed data.
+        scored_at: ISO timestamp of last scoring run.
+        scorecard_raw: Raw Scorecard JSON response (nullable).
+        depsdev_raw: Raw deps.dev JSON response (nullable).
+    """
+
+    def __init__(self):
+        self.purl: Optional[str] = None
+        self.direct_score: Optional[float] = None
+        self.effective_score: Optional[float] = None
+        self.inherited_score: Optional[float] = None
+        self.min_path_score: Optional[float] = None
+        self.confidence: Optional[float] = None
+        self.dep_count: Optional[int] = None
+        self.security_practices_score: Optional[float] = None
+        self.vulnerability_profile_score: Optional[float] = None
+        self.maintenance_health_score: Optional[float] = None
+        self.supply_chain_hygiene_score: Optional[float] = None
+        self.sources_used: list[str] = []
+        self.scored_at: Optional[str] = None
+        self.scorecard_raw: Optional[str] = None
+        self.depsdev_raw: Optional[str] = None
+
+
+class HasTrustScore:
+    """Edge linking a Version to its TrustScore (HAS_TRUST_SCORE)."""
+
+    def __init__(self):
+        self.version: Optional[Version] = None
+        self.trust_score: Optional[TrustScore] = None
+
+
+class SourceRepository:
+    """Represents a source code repository linked to a package.
+
+    Attributes:
+        url: Canonical repository URL (used as the MERGE key).
+        vcs_type: Version control system type (e.g. "git", "svn").
+        namespace: Hosting platform (e.g. "github.com", "gitlab.com").
+        name: Repository path within the namespace (e.g. "org/repo").
+        tag: Tag associated with the linked version.
+        commit: Commit hash associated with the linked version.
+    """
+
+    def __init__(self):
+        self.url: Optional[str] = None
+        self.vcs_type: Optional[str] = None
+        self.namespace: Optional[str] = None
+        self.name: Optional[str] = None
+        self.tag: Optional[str] = None
+        self.commit: Optional[str] = None
+
+
+class VersionSource:
+    """Edge linking a Version to a SourceRepository (HAS_SOURCE)."""
+
+    def __init__(self):
+        self.version: Optional[Version] = None
+        self.repository: Optional[SourceRepository] = None
 
 
 # Edges

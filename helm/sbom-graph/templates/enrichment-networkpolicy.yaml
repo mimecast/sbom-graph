@@ -32,7 +32,8 @@ spec:
         - protocol: TCP
           port: 6379
     # Allow HTTPS egress to external enrichment APIs
-    # (api.osv.dev, api.clearlydefined.io, and any future certifiers)
+    # (api.osv.dev, api.clearlydefined.io, api.scorecard.dev, ossindex.sonatype.org,
+    # api.deps.dev, and any future certifiers)
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

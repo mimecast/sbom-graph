@@ -185,6 +185,38 @@ Deployments.  Include via: {{- include "sbom-graph.enrichment.env" . | nindent N
 - name: CELERY_REDIS_SSL
   value: "true"
 {{- end }}
+{{- if .Values.enrichment.trustScore }}
+- name: TRUST_SCORE_ENABLED
+  value: {{ .Values.enrichment.trustScore.enabled | quote }}
+- name: TRUST_SCORE_INTERVAL
+  value: {{ .Values.enrichment.trustScore.interval | quote }}
+- name: TRUST_SCORE_ALPHA
+  value: {{ .Values.enrichment.trustScore.alpha | quote }}
+- name: TRUST_SCORE_DECAY
+  value: {{ .Values.enrichment.trustScore.decay | quote }}
+- name: TRUST_SCORE_MAX_DEPTH
+  value: {{ .Values.enrichment.trustScore.maxDepth | quote }}
+- name: TRUST_SCORE_WEIGHT_SECURITY_PRACTICES
+  value: {{ .Values.enrichment.trustScore.weights.securityPractices | quote }}
+- name: TRUST_SCORE_WEIGHT_VULNERABILITY_PROFILE
+  value: {{ .Values.enrichment.trustScore.weights.vulnerabilityProfile | quote }}
+- name: TRUST_SCORE_WEIGHT_MAINTENANCE_HEALTH
+  value: {{ .Values.enrichment.trustScore.weights.maintenanceHealth | quote }}
+- name: TRUST_SCORE_WEIGHT_SUPPLY_CHAIN_HYGIENE
+  value: {{ .Values.enrichment.trustScore.weights.supplyChainHygiene | quote }}
+{{- if and .Values.enrichment.trustScore.enabled .Values.enrichment.trustScore.ossindex.user }}
+- name: OSSINDEX_USER
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "sbom-graph.fullname" . }}-ossindex
+      key: OSSINDEX_USER
+- name: OSSINDEX_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "sbom-graph.fullname" . }}-ossindex
+      key: OSSINDEX_TOKEN
+{{- end }}
+{{- end }}
 {{- end }}
 
 {{/* ---- Enrichment Beat helpers ---- */}}

@@ -50,6 +50,8 @@ app.conf.update(
 )
 
 _ENRICHMENT_INTERVAL = int(os.environ.get("ENRICHMENT_INTERVAL", "3600"))
+_TRUST_SCORE_INTERVAL = int(os.environ.get("TRUST_SCORE_INTERVAL", "7200"))
+_TRUST_SCORE_ENABLED = os.environ.get("TRUST_SCORE_ENABLED", "true").lower() == "true"
 
 app.conf.beat_schedule = {
     "scheduled-enrichment": {
@@ -58,6 +60,13 @@ app.conf.beat_schedule = {
         "args": (),
     },
 }
+
+if _TRUST_SCORE_ENABLED:
+    app.conf.beat_schedule["propagate-effective-scores"] = {
+        "task": "sbom_graph_enrichment.tasks.propagate_effective_scores",
+        "schedule": _TRUST_SCORE_INTERVAL,
+        "args": (),
+    }
 
 app.autodiscover_tasks(["sbom_graph_enrichment"])
 

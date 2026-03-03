@@ -3153,6 +3153,113 @@ class FalkorDBService:
             "coverage_percent": pct,
         }
 
+    # Source repository queries
+
+    def get_all_source_repos(
+        self, internal_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return all source repositories with linked package counts.
+
+        Args:
+            internal_only: Restrict to INTERNAL-labeled versions.
+
+        Returns:
+            List of dicts with url, vcs_type, namespace, name, and
+            package_count.
+        """
+        label = f":{self.internal_label}" if internal_only else ":Version"
+
+        query = f"""
+            MATCH (v{label})-[:HAS_SOURCE]->(r:SourceRepository)
+            RETURN r.url AS url,
+                   r.vcs_type AS vcs_type,
+                   r.namespace AS namespace,
+                   r.name AS name,
+                   count(DISTINCT v) AS package_count
+            ORDER BY package_count DESC
+        """
+        result = self.execute_query(query, {})
+        repos = []
+        for row in result:
+            repos.append({
+                "url": row[0],
+                "vcs_type": row[1],
+                "namespace": row[2],
+                "name": row[3],
+                "package_count": row[4],
+            })
+        return repos
+
+    def get_packages_by_source_repo(self, repo_url: str) -> list[dict[str, Any]]:
+        """Return all packages sourced from a given repository.
+
+        Args:
+            repo_url: The canonical source repository URL.
+
+        Returns:
+            List of dicts with project_name, project_group, version,
+            purl, and sbom_format.
+        """
+        query = """
+            MATCH (v:Version)-[:HAS_SOURCE]->(r:SourceRepository {url: $repo_url})
+            RETURN v.project_name AS project_name,
+                   v.project_group AS project_group,
+                   v.name AS version,
+                   v.package_url AS purl,
+                   v.sbom_format AS sbom_format
+            ORDER BY v.project_name, v.name
+        """
+        result = self.execute_query(query, {"repo_url": repo_url})
+        packages = []
+        for row in result:
+            packages.append({
+                "project_name": row[0],
+                "project_group": row[1],
+                "version": row[2],
+                "purl": row[3],
+                "sbom_format": row[4],
+            })
+        return packages
+
+    def get_vulnerabilities_by_source_repo(self, repo_url: str) -> list[dict[str, Any]]:
+        """Return all vulnerabilities in packages sourced from a repository.
+
+        Args:
+            repo_url: The canonical source repository URL.
+
+        Returns:
+            List of dicts with defect_id, severity, description,
+            affected_project, and affected_version.
+        """
+        query = """
+            MATCH (v:Version)-[:HAS_SOURCE]->(r:SourceRepository {url: $repo_url})
+            MATCH (v)-[:VERSION_DEFECT]->(d:Defect)
+            RETURN COALESCE(d.id, d.defect_id) AS defect_id,
+                   d.severity AS severity,
+                   COALESCE(d.description, d.title) AS description,
+                   v.project_name AS affected_project,
+                   v.name AS affected_version
+            ORDER BY
+                CASE d.severity
+                    WHEN 'CRITICAL' THEN 1 WHEN 'critical' THEN 1
+                    WHEN 'HIGH' THEN 2 WHEN 'high' THEN 2
+                    WHEN 'MEDIUM' THEN 3 WHEN 'medium' THEN 3
+                    WHEN 'LOW' THEN 4 WHEN 'low' THEN 4
+                    ELSE 5
+                END
+        """
+        result = self.execute_query(query, {"repo_url": repo_url})
+        vulns = []
+        for row in result:
+            vulns.append({
+                "defect_id": row[0],
+                "severity": row[1],
+                "description": row[2],
+                "affected_project": row[3],
+                "affected_version": row[4],
+            })
+        return vulns
+
     def get_vulnerabilities_with_vex(
         self, internal_only: bool = False,
     ) -> list[dict[str, Any]]:
@@ -3200,6 +3307,228 @@ class FalkorDBService:
                 "affected_versions": row[5] or [],
             })
         return vulns
+
+    # Trust Score methods
+
+    def get_trust_score_for_purl(self, purl: str) -> dict[str, Any] | None:
+        """Return the full trust score breakdown for a single package.
+
+        Args:
+            purl: Package URL.
+
+        Returns:
+            Dict with all trust score fields, or None if no score exists.
+        """
+        query = """
+            MATCH (t:TrustScore {purl: $purl})
+            RETURN t.purl AS purl,
+                   t.direct_score AS direct_score,
+                   t.effective_score AS effective_score,
+                   t.inherited_score AS inherited_score,
+                   t.min_path_score AS min_path_score,
+                   t.confidence AS confidence,
+                   t.dep_count AS dep_count,
+                   t.security_practices_score AS security_practices_score,
+                   t.vulnerability_profile_score AS vulnerability_profile_score,
+                   t.maintenance_health_score AS maintenance_health_score,
+                   t.supply_chain_hygiene_score AS supply_chain_hygiene_score,
+                   t.sources_used AS sources_used,
+                   t.scored_at AS scored_at
+        """
+        result = self.execute_query(query, {"purl": purl})
+        if not result:
+            return None
+        row = result[0]
+        return {
+            "purl": row[0],
+            "direct_score": row[1],
+            "effective_score": row[2],
+            "inherited_score": row[3],
+            "min_path_score": row[4],
+            "confidence": row[5],
+            "dep_count": row[6],
+            "security_practices_score": row[7],
+            "vulnerability_profile_score": row[8],
+            "maintenance_health_score": row[9],
+            "supply_chain_hygiene_score": row[10],
+            "sources_used": row[11],
+            "scored_at": row[12],
+        }
+
+    def get_trust_score_risk_path(self, purl: str, limit: int = 10) -> list[dict[str, Any]]:
+        """Return the dependency risk path from a package, sorted by score impact.
+
+        Uses BFS to traverse DEPENDENCY_VERSION edges downward, collecting
+        trust scores for each dependency.
+
+        Args:
+            purl: Starting package URL.
+            limit: Maximum dependencies to return.
+
+        Returns:
+            List of dicts with purl, direct_score, effective_score, depth.
+        """
+        query = """
+            MATCH path = (v:Version {package_url: $purl})-[:DEPENDENCY_VERSION*1..5]->(dep:Version)
+            WHERE dep.package_url IS NOT NULL
+            WITH dep, length(path) AS depth
+            OPTIONAL MATCH (dep)-[:HAS_TRUST_SCORE]->(t:TrustScore)
+            RETURN DISTINCT dep.package_url AS purl,
+                   t.direct_score AS direct_score,
+                   t.effective_score AS effective_score,
+                   t.min_path_score AS min_path_score,
+                   depth
+            ORDER BY t.direct_score ASC
+            LIMIT $limit
+        """
+        result = self.execute_query(query, {"purl": purl, "limit": limit})
+        paths = []
+        for row in result:
+            paths.append({
+                "purl": row[0],
+                "direct_score": row[1],
+                "effective_score": row[2],
+                "min_path_score": row[3],
+                "depth": row[4],
+            })
+        return paths
+
+    def get_application_supply_chain_risk(self, purl: str) -> dict[str, Any]:
+        """Return aggregate supply-chain risk for an application package.
+
+        Args:
+            purl: Application package URL.
+
+        Returns:
+            Dict with effective_score, min_path_score, dep_count,
+            risk_distribution, and weakest_links.
+        """
+        score = self.get_trust_score_for_purl(purl)
+        if not score:
+            return {"purl": purl, "error": "No trust score found"}
+
+        weakest = self.get_trust_score_risk_path(purl, limit=5)
+
+        return {
+            "purl": purl,
+            "effective_score": score.get("effective_score"),
+            "direct_score": score.get("direct_score"),
+            "inherited_score": score.get("inherited_score"),
+            "min_path_score": score.get("min_path_score"),
+            "dep_count": score.get("dep_count"),
+            "confidence": score.get("confidence"),
+            "weakest_links": weakest,
+        }
+
+    def get_trust_score_distribution(self) -> dict[str, int]:
+        """Return a histogram of effective trust scores across all packages.
+
+        Returns:
+            Dict mapping score bucket labels to counts.
+        """
+        query = """
+            MATCH (t:TrustScore)
+            WHERE t.effective_score IS NOT NULL
+            RETURN
+                CASE
+                    WHEN t.effective_score >= 9 THEN 'excellent'
+                    WHEN t.effective_score >= 7 THEN 'good'
+                    WHEN t.effective_score >= 5 THEN 'moderate'
+                    WHEN t.effective_score >= 3 THEN 'poor'
+                    ELSE 'critical'
+                END AS bucket,
+                count(t) AS count
+            ORDER BY
+                CASE bucket
+                    WHEN 'critical' THEN 1
+                    WHEN 'poor' THEN 2
+                    WHEN 'moderate' THEN 3
+                    WHEN 'good' THEN 4
+                    WHEN 'excellent' THEN 5
+                END
+        """
+        result = self.execute_query(query, {})
+        distribution = {}
+        for row in result:
+            distribution[row[0]] = row[1]
+        return distribution
+
+    def get_remediation_priorities(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Return packages ranked by remediation priority.
+
+        Packages with the lowest effective_score that are depended on by the
+        most other packages are the highest priority for remediation.
+
+        Args:
+            limit: Maximum packages to return.
+
+        Returns:
+            List of dicts with purl, effective_score, direct_score,
+            min_path_score, and dependents_count.
+        """
+        query = """
+            MATCH (t:TrustScore)
+            WHERE t.effective_score IS NOT NULL
+            OPTIONAL MATCH (parent:Version)-[:DEPENDENCY_VERSION]->(v:Version {package_url: t.purl})
+            WITH t, count(DISTINCT parent) AS dependents_count
+            RETURN t.purl AS purl,
+                   t.effective_score AS effective_score,
+                   t.direct_score AS direct_score,
+                   t.min_path_score AS min_path_score,
+                   t.confidence AS confidence,
+                   dependents_count
+            ORDER BY t.effective_score ASC, dependents_count DESC
+            LIMIT $limit
+        """
+        result = self.execute_query(query, {"limit": limit})
+        priorities = []
+        for row in result:
+            priorities.append({
+                "purl": row[0],
+                "effective_score": row[1],
+                "direct_score": row[2],
+                "min_path_score": row[3],
+                "confidence": row[4],
+                "dependents_count": row[5],
+            })
+        return priorities
+
+    def get_trust_score_gaps(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Return packages with low confidence, sorted by dependency frequency.
+
+        These are packages where more data sources are needed to improve
+        scoring accuracy.
+
+        Args:
+            limit: Maximum packages to return.
+
+        Returns:
+            List of dicts with purl, confidence, sources_used, dependents_count.
+        """
+        query = """
+            MATCH (t:TrustScore)
+            WHERE t.confidence < 0.75
+            OPTIONAL MATCH (parent:Version)-[:DEPENDENCY_VERSION]->(v:Version {package_url: t.purl})
+            WITH t, count(DISTINCT parent) AS dependents_count
+            RETURN t.purl AS purl,
+                   t.confidence AS confidence,
+                   t.sources_used AS sources_used,
+                   t.direct_score AS direct_score,
+                   dependents_count
+            ORDER BY dependents_count DESC, t.confidence ASC
+            LIMIT $limit
+        """
+        result = self.execute_query(query, {"limit": limit})
+        gaps = []
+        for row in result:
+            gaps.append({
+                "purl": row[0],
+                "confidence": row[1],
+                "sources_used": row[2],
+                "direct_score": row[3],
+                "dependents_count": row[4],
+            })
+        return gaps
 
 
 # Global service instance

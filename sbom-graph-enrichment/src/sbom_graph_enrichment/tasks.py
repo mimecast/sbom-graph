@@ -10,6 +10,9 @@ to enable TCP/TLS connection pooling.
 from __future__ import annotations
 
 import logging
+import os
+from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Any
 
 from celery import shared_task
@@ -19,13 +22,20 @@ from sbom_graph_model import Defect, VersionDefect, Version, Project
 from .certifiers.base import Finding, FindingKind
 from .certifiers.osv import OSVCertifier
 from .certifiers.license import LicenseCertifier
+from .certifiers.scorecard import ScorecardCertifier
+from .certifiers.ossindex import OSSIndexCertifier
+from .certifiers.depsdev import DepsDevCertifier
+from .certifiers.trust_score import TrustScoreCalculator
 from .persistence_helpers import create_persistence, get_persistence, get_http_client
 
 logger = logging.getLogger(__name__)
 
-_CERTIFIERS = {
+_CERTIFIERS: dict[str, type] = {
     "osv": OSVCertifier,
     "clearlydefined": LicenseCertifier,
+    "scorecard": ScorecardCertifier,
+    "ossindex": OSSIndexCertifier,
+    "depsdev": DepsDevCertifier,
 }
 
 
@@ -70,6 +80,9 @@ def enrich_package(self: Any, purl: str, sources: list[str] | None = None) -> di
         elif finding.kind == FindingKind.LICENSE:
             _persist_license(persistence, finding)
             license_count += 1
+
+    if _TRUST_SCORE_ENABLED and all_findings:
+        compute_trust_score.delay(purl, _serialise_findings(all_findings))
 
     return {
         "purl": purl,
@@ -151,3 +164,277 @@ def _persist_license(persistence: Any, finding: Finding) -> None:
 
     purl = finding.package_url
     persistence.create_version_license(purl=purl, spdx_id=spdx_id)
+
+
+# ---------------------------------------------------------------------------
+# Trust score tasks
+# ---------------------------------------------------------------------------
+
+_TRUST_SCORE_ENABLED = os.environ.get("TRUST_SCORE_ENABLED", "true").lower() == "true"
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=120)
+def compute_trust_score(self: Any, purl: str, findings_data: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute and persist the direct trust score for a single PURL.
+
+    Called after :func:`enrich_package` completes.  Receives serialised
+    findings (dicts) and reconstructs them before passing to the calculator.
+
+    Args:
+        purl: The package URL being scored.
+        findings_data: List of serialised Finding dicts.
+
+    Returns:
+        Summary dict with the direct_score and confidence.
+    """
+    if not _TRUST_SCORE_ENABLED:
+        return {"purl": purl, "skipped": True}
+
+    findings = _deserialise_findings(findings_data)
+    calculator = TrustScoreCalculator()
+    result = calculator.compute(purl, findings)
+
+    persistence = get_persistence()
+    persistence.create_trust_score(
+        purl=purl,
+        direct_score=result.direct_score,
+        confidence=result.confidence,
+        security_practices_score=result.security_practices_score,
+        vulnerability_profile_score=result.vulnerability_profile_score,
+        maintenance_health_score=result.maintenance_health_score,
+        supply_chain_hygiene_score=result.supply_chain_hygiene_score,
+        sources_used=result.sources_used,
+        scored_at=datetime.now(timezone.utc).isoformat(),
+        scorecard_raw=result.scorecard_raw,
+        depsdev_raw=result.depsdev_raw,
+    )
+    persistence.link_version_to_trust_score(purl)
+
+    logger.info(
+        "Trust score computed for %s: direct=%.2f confidence=%.2f",
+        purl, result.direct_score, result.confidence,
+    )
+    return {
+        "purl": purl,
+        "direct_score": result.direct_score,
+        "confidence": result.confidence,
+    }
+
+
+@shared_task
+def propagate_effective_scores() -> dict[str, Any]:
+    """Propagate inherited risk through the dependency graph.
+
+    Performs a bottom-up traversal using reverse topological order to compute
+    ``effective_score``, ``inherited_score``, and ``min_path_score`` for
+    every package that has a TrustScore node.
+
+    Configurable via environment variables:
+    - ``TRUST_SCORE_ALPHA``: blend weight for own vs inherited (default 0.4).
+    - ``TRUST_SCORE_DECAY``: depth attenuation factor (default 0.8).
+    - ``TRUST_SCORE_MAX_DEPTH``: maximum traversal depth (default 20).
+    """
+    if not _TRUST_SCORE_ENABLED:
+        return {"skipped": True}
+
+    alpha = float(os.environ.get("TRUST_SCORE_ALPHA", "0.4"))
+    decay = float(os.environ.get("TRUST_SCORE_DECAY", "0.8"))
+    max_depth = int(os.environ.get("TRUST_SCORE_MAX_DEPTH", "20"))
+
+    persistence = create_persistence()
+
+    scores_rows = persistence.get_all_trust_scores()
+    direct_scores: dict[str, float] = {}
+    for row in scores_rows:
+        p = row.get("purl")
+        ds = row.get("direct_score")
+        if p and ds is not None:
+            direct_scores[p] = float(ds)
+
+    edges = persistence.get_dependency_graph_for_propagation()
+    children: dict[str, list[str]] = defaultdict(list)
+    for edge in edges:
+        parent = edge.get("parent_purl")
+        child = edge.get("child_purl")
+        if parent and child:
+            children[parent].append(child)
+
+    effective, inherited, min_path, dep_counts = _propagate(
+        direct_scores, children, alpha, decay, max_depth,
+    )
+
+    updated = 0
+    for purl in effective:
+        persistence.update_trust_score_propagation(
+            purl=purl,
+            effective_score=effective[purl],
+            inherited_score=inherited.get(purl, 0.0),
+            min_path_score=min_path.get(purl, direct_scores.get(purl, 5.0)),
+            dep_count=dep_counts.get(purl, 0),
+        )
+        updated += 1
+
+    logger.info("Propagated effective scores for %d packages", updated)
+    return {"updated": updated}
+
+
+def _propagate(
+    direct_scores: dict[str, float],
+    children: dict[str, list[str]],
+    alpha: float,
+    decay: float,
+    max_depth: int,
+) -> tuple[dict[str, float], dict[str, float], dict[str, float], dict[str, int]]:
+    """Bottom-up propagation of inherited risk.
+
+    Returns four dicts keyed by purl:
+    - effective_score
+    - inherited_score
+    - min_path_score
+    - dep_count
+    """
+    all_purls = set(direct_scores.keys())
+    effective: dict[str, float] = {}
+    inherited: dict[str, float] = {}
+    min_path: dict[str, float] = {}
+    dep_counts: dict[str, int] = {}
+
+    topo_order = _reverse_topological_sort(all_purls, children)
+
+    for purl in topo_order:
+        ds = direct_scores.get(purl, 5.0)
+        deps = children.get(purl, [])
+        scored_deps = [d for d in deps if d in direct_scores]
+
+        if not scored_deps:
+            effective[purl] = ds
+            inherited[purl] = 0.0
+            min_path[purl] = ds
+            dep_counts[purl] = 0
+            continue
+
+        weighted_sum = 0.0
+        weight_total = 0.0
+        local_min = ds
+        total_dep_count = 0
+
+        for dep_purl in scored_deps:
+            dep_eff = effective.get(dep_purl, direct_scores.get(dep_purl, 5.0))
+            dep_min = min_path.get(dep_purl, direct_scores.get(dep_purl, 5.0))
+            dep_dep_count = dep_counts.get(dep_purl, 0)
+
+            w = decay
+            weighted_sum += w * dep_eff
+            weight_total += w
+            local_min = min(local_min, dep_min)
+            total_dep_count += 1 + dep_dep_count
+
+        inh = weighted_sum / weight_total if weight_total > 0 else 0.0
+        eff = alpha * ds + (1 - alpha) * inh
+
+        effective[purl] = round(eff, 2)
+        inherited[purl] = round(inh, 2)
+        min_path[purl] = round(local_min, 2)
+        dep_counts[purl] = total_dep_count
+
+    return effective, inherited, min_path, dep_counts
+
+
+def _reverse_topological_sort(
+    nodes: set[str],
+    children: dict[str, list[str]],
+) -> list[str]:
+    """Compute reverse topological order (leaves first) using Kahn's algorithm.
+
+    Handles cycles gracefully by processing remaining nodes in arbitrary
+    order after all acyclic nodes are exhausted.
+    """
+    in_degree: dict[str, int] = {n: 0 for n in nodes}
+    for parent, deps in children.items():
+        if parent not in nodes:
+            continue
+        for dep in deps:
+            if dep in nodes:
+                in_degree.setdefault(dep, 0)
+                in_degree[parent] = in_degree.get(parent, 0)
+
+    reverse_children: dict[str, list[str]] = defaultdict(list)
+    for parent, deps in children.items():
+        for dep in deps:
+            if dep in nodes and parent in nodes:
+                reverse_children[dep].append(parent)
+
+    in_degree_fwd: dict[str, int] = {n: 0 for n in nodes}
+    for parent in nodes:
+        for dep in children.get(parent, []):
+            if dep in nodes:
+                in_degree_fwd[parent] = in_degree_fwd.get(parent, 0) + 0
+                in_degree_fwd[dep] = in_degree_fwd.get(dep, 0)
+
+    out_degree: dict[str, int] = {n: 0 for n in nodes}
+    for parent in nodes:
+        for dep in children.get(parent, []):
+            if dep in nodes:
+                out_degree[parent] = out_degree.get(parent, 0) + 1
+
+    in_deg: dict[str, int] = {n: 0 for n in nodes}
+    for parent in nodes:
+        for dep in children.get(parent, []):
+            if dep in nodes:
+                in_deg[dep] = in_deg.get(dep, 0) + 1
+
+    queue: list[str] = [n for n in nodes if out_degree.get(n, 0) == 0]
+    result: list[str] = []
+    visited: set[str] = set()
+
+    while queue:
+        node = queue.pop(0)
+        if node in visited:
+            continue
+        visited.add(node)
+        result.append(node)
+
+        for parent in reverse_children.get(node, []):
+            if parent in visited:
+                continue
+            out_degree[parent] = out_degree.get(parent, 1) - 1
+            if out_degree[parent] <= 0:
+                queue.append(parent)
+
+    for n in nodes:
+        if n not in visited:
+            result.append(n)
+
+    return result
+
+
+def _deserialise_findings(data_list: list[dict[str, Any]]) -> list[Finding]:
+    """Reconstruct Finding objects from serialised dicts."""
+    findings: list[Finding] = []
+    for item in data_list:
+        try:
+            kind = FindingKind(item["kind"])
+        except (KeyError, ValueError):
+            continue
+        findings.append(
+            Finding(
+                kind=kind,
+                source=item.get("source", ""),
+                package_url=item.get("package_url", ""),
+                data=item.get("data", {}),
+            )
+        )
+    return findings
+
+
+def _serialise_findings(findings: list[Finding]) -> list[dict[str, Any]]:
+    """Serialise Finding objects to JSON-safe dicts for task dispatch."""
+    return [
+        {
+            "kind": f.kind.value,
+            "source": f.source,
+            "package_url": f.package_url,
+            "data": f.data,
+        }
+        for f in findings
+    ]

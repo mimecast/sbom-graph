@@ -10,6 +10,7 @@ import logging
 import operator
 from functools import reduce
 from typing import Optional
+from urllib.parse import urlparse
 
 from ..model import Project, Version, Defect, License, VersionDefect
 from ..persistence import Persistence
@@ -153,6 +154,7 @@ class CycloneDXProcessor:
         version.scan_id = scan_id
         version.project = application
         version.version = component.get('version', "UNKNOWN")
+        version.sbom_format = "cyclonedx"
         ref = component.get('bom-ref')
 
         return ref, (application, version)
@@ -184,6 +186,7 @@ class CycloneDXProcessor:
         version.project = project
         version.version = json_component.get('version')
         version.scan_id = scan_id
+        version.sbom_format = "cyclonedx"
 
         return project, version
 
@@ -229,6 +232,48 @@ class CycloneDXProcessor:
             licenses.append(lic)
 
         return licenses
+
+    @staticmethod
+    def extract_vcs_url_from_component(component: dict) -> Optional[str]:
+        """Extract a VCS repository URL from CycloneDX externalReferences.
+
+        Looks for ``externalReferences`` entries with ``type`` equal to
+        ``"vcs"`` and returns the first URL found.
+
+        Args:
+            component: A CycloneDX component dictionary.
+
+        Returns:
+            The VCS URL or None if not found.
+        """
+        refs = component.get("externalReferences", [])
+        if not isinstance(refs, list):
+            return None
+        for ref in refs:
+            if not isinstance(ref, dict):
+                continue
+            if ref.get("type") == "vcs":
+                url = ref.get("url", "")
+                if url:
+                    return url
+        return None
+
+    @staticmethod
+    def _parse_repo_url(url: str) -> dict[str, Optional[str]]:
+        """Parse a repository URL into namespace, name, and vcs_type."""
+        parsed = urlparse(url.rstrip("/"))
+        namespace = parsed.netloc or None
+        path = parsed.path.lstrip("/")
+        if path.endswith(".git"):
+            path = path[:-4]
+        return {
+            "namespace": namespace,
+            "name": path or None,
+            "vcs_type": "git" if (
+                url.endswith(".git") or "github.com" in url
+                or "gitlab.com" in url or "bitbucket.org" in url
+            ) else None,
+        }
 
     @staticmethod
     def parse_defect_from_cyclone_dx(cyclone_dx_json: dict) -> Defect:
@@ -369,6 +414,7 @@ class CycloneDXProcessor:
 
         # Persist to database
         self._persist_projects(projects)
+        self._persist_source_repos(json_data, projects)
         self._persist_dependencies(dependency_versions, projects)
         self._persist_defects(json_data, defects, projects)
 
@@ -408,6 +454,51 @@ class CycloneDXProcessor:
                     version_name=version.version or "",
                     spdx_id=lic.spdx_id,
                 )
+
+    def _persist_source_repos(
+        self,
+        json_data: dict,
+        projects: dict[str, tuple[Project, Version]],
+    ) -> None:
+        """Create SourceRepository nodes and HAS_SOURCE edges from VCS data.
+
+        Extracts VCS URLs from CycloneDX ``externalReferences`` on each
+        component, as well as from the ``gitlab_project_url`` on the root.
+        """
+        components_by_ref: dict[str, dict] = {}
+        for comp in json_data.get("components", []):
+            if isinstance(comp, dict) and "bom-ref" in comp:
+                components_by_ref[comp["bom-ref"]] = comp
+
+        root_comp = json_data.get("metadata", {}).get("component", {})
+        if isinstance(root_comp, dict) and "bom-ref" in root_comp:
+            components_by_ref[root_comp["bom-ref"]] = root_comp
+
+        for ref, (project, version) in projects.items():
+            if version is None:
+                continue
+
+            repo_url = getattr(project, "repo", None)
+
+            comp = components_by_ref.get(ref, {})
+            vcs_url = self.extract_vcs_url_from_component(comp)
+            url = vcs_url or repo_url
+            if not url:
+                continue
+
+            parsed = self._parse_repo_url(url)
+            self.persistence.create_source_repository(
+                url=url,
+                vcs_type=parsed["vcs_type"],
+                namespace=parsed["namespace"],
+                name=parsed["name"],
+            )
+            self.persistence.link_version_to_source_by_name(
+                project_name=project.name or "",
+                project_group=project.group,
+                version_name=version.version or "",
+                repo_url=url,
+            )
 
     def _persist_dependencies(
         self,

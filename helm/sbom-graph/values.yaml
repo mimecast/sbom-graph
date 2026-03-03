@@ -82,6 +82,20 @@ enrichment:
   celeryBrokerDb: "1"
   celeryResultDb: "2"
   concurrency: 2
+  trustScore:
+    enabled: true
+    interval: "7200"
+    alpha: "0.4"
+    decay: "0.8"
+    maxDepth: "20"
+    weights:
+      securityPractices: "0.3"
+      vulnerabilityProfile: "0.35"
+      maintenanceHealth: "0.2"
+      supplyChainHygiene: "0.15"
+    ossindex:
+      user: ""
+      token: ""
   resources:
     limits:
       cpu: 500m

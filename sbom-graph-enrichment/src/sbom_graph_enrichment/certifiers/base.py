@@ -24,6 +24,10 @@ class FindingKind(str, Enum):
 
     VULNERABILITY = "vulnerability"
     LICENSE = "license"
+    SCORECARD = "scorecard"
+    OSSINDEX = "ossindex"
+    DEPSDEV = "depsdev"
+    TRUST_SCORE = "trust_score"
 
 
 @dataclass(slots=True)

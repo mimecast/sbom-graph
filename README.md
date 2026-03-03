@@ -48,6 +48,7 @@ For a full deployment walkthrough (prerequisites, TLS setup, Helm configuration,
     - Dynamic download links that respect current filter state
     - Interactive API documentation with forms to test all endpoints
     - Frozen table headers: Headers stay visible while scrolling through data
+  - **Supply-Chain Trust Score**: Composite trust score combining signals from OpenSSF Scorecard, OSV, Sonatype OSS Index, and deps.dev. Four-category scoring (Security Practices, Vulnerability Profile, Maintenance Health, Supply-Chain Hygiene). Inherited risk propagation through the dependency graph. CI/CD gate endpoint for policy enforcement. Remediation priority analysis.
 
 ## Project Structure
 

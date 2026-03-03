@@ -359,3 +359,202 @@ def check_package_policy(purl: str) -> tuple[Response, int]:
     result = service.check_policy(purl)
 
     return jsonify(result), 200
+
+
+# --- Source repository endpoints ---
+
+
+@bp.route("/source/packages")
+@auth_required
+def source_repo_packages() -> tuple[Response, int]:
+    """Return all packages sourced from a given repository URL.
+
+    Query Parameters:
+        repo_url (str): Required. The source repository URL.
+    """
+    repo_url = request.args.get("repo_url", "").strip()
+    if not repo_url:
+        return jsonify({"error": "Missing required query parameter: repo_url"}), 400
+    if len(repo_url) > 2048:
+        return jsonify({"error": "repo_url exceeds maximum length"}), 400
+
+    service = get_falkordb_service()
+    packages = service.get_packages_by_source_repo(repo_url)
+
+    return jsonify({
+        "repo_url": repo_url,
+        "packages": packages,
+        "count": len(packages),
+    }), 200
+
+
+@bp.route("/source/vulnerabilities")
+@auth_required
+def source_repo_vulnerabilities() -> tuple[Response, int]:
+    """Return all vulnerabilities in packages sourced from a repository.
+
+    Query Parameters:
+        repo_url (str): Required. The source repository URL.
+    """
+    repo_url = request.args.get("repo_url", "").strip()
+    if not repo_url:
+        return jsonify({"error": "Missing required query parameter: repo_url"}), 400
+    if len(repo_url) > 2048:
+        return jsonify({"error": "repo_url exceeds maximum length"}), 400
+
+    service = get_falkordb_service()
+    vulns = service.get_vulnerabilities_by_source_repo(repo_url)
+
+    return jsonify({
+        "repo_url": repo_url,
+        "vulnerabilities": vulns,
+        "count": len(vulns),
+    }), 200
+
+
+@bp.route("/package/<path:purl>/trust-score")
+@auth_required
+def package_trust_score(purl: str) -> tuple[Response, int]:
+    """Return full trust score breakdown for a package.
+
+    Returns:
+        JSON: full trust score object with all category scores.
+    """
+    err = _validate_purl(purl)
+    if err:
+        return err
+
+    service = get_falkordb_service()
+    score = service.get_trust_score_for_purl(purl)
+
+    if score is None:
+        return jsonify({"error": "No trust score found for this package"}), 404
+
+    return jsonify(score), 200
+
+
+@bp.route("/package/<path:purl>/trust-score/risk-path")
+@auth_required
+def package_risk_path(purl: str) -> tuple[Response, int]:
+    """Return dependency risk path analysis for a package.
+
+    Query params:
+        limit: Maximum dependencies to return (default 10, max 50).
+    """
+    err = _validate_purl(purl)
+    if err:
+        return err
+
+    limit = min(int(request.args.get("limit", "10")), 50)
+    service = get_falkordb_service()
+    paths = service.get_trust_score_risk_path(purl, limit=limit)
+
+    return jsonify({
+        "purl": purl,
+        "risk_path": paths,
+        "count": len(paths),
+    }), 200
+
+
+@bp.route("/application/<path:purl>/supply-chain-risk")
+@auth_required
+def application_supply_chain_risk(purl: str) -> tuple[Response, int]:
+    """Return aggregate supply-chain risk for an application.
+
+    Returns:
+        JSON: effective_score, min_path_score, dep_count, weakest_links.
+    """
+    err = _validate_purl(purl)
+    if err:
+        return err
+
+    service = get_falkordb_service()
+    risk = service.get_application_supply_chain_risk(purl)
+
+    if "error" in risk:
+        return jsonify(risk), 404
+
+    return jsonify(risk), 200
+
+
+@bp.route("/analysis/trust-score-distribution")
+@auth_required
+def trust_score_distribution() -> tuple[Response, int]:
+    """Return histogram of effective trust scores across all packages."""
+    service = get_falkordb_service()
+    distribution = service.get_trust_score_distribution()
+
+    return jsonify({
+        "distribution": distribution,
+    }), 200
+
+
+@bp.route("/analysis/remediation-priorities")
+@auth_required
+def remediation_priorities() -> tuple[Response, int]:
+    """Return packages ranked by remediation priority.
+
+    Query params:
+        limit: Maximum packages to return (default 20, max 100).
+    """
+    limit = min(int(request.args.get("limit", "20")), 100)
+    service = get_falkordb_service()
+    priorities = service.get_remediation_priorities(limit=limit)
+
+    return jsonify({
+        "priorities": priorities,
+        "count": len(priorities),
+    }), 200
+
+
+@bp.route("/package/<path:purl>/trust-check")
+@auth_required
+def package_trust_check(purl: str) -> tuple[Response, int]:
+    """CI/CD gate: check if a package meets minimum trust score thresholds.
+
+    Query params:
+        min_score: Minimum effective_score (default 5.0).
+        min_confidence: Minimum confidence (default 0.25).
+
+    Returns:
+        JSON: {pass: bool, effective_score, confidence, reason}.
+    """
+    err = _validate_purl(purl)
+    if err:
+        return err
+
+    min_score = float(request.args.get("min_score", "5.0"))
+    min_confidence = float(request.args.get("min_confidence", "0.25"))
+
+    service = get_falkordb_service()
+    score = service.get_trust_score_for_purl(purl)
+
+    if score is None:
+        return jsonify({
+            "pass": False,
+            "purl": purl,
+            "reason": "No trust score available",
+        }), 200
+
+    effective = score.get("effective_score") or score.get("direct_score") or 0
+    confidence = score.get("confidence") or 0
+
+    passed = effective >= min_score and confidence >= min_confidence
+    if passed:
+        reason = "OK"
+    else:
+        reason_parts: list[str] = []
+        if effective < min_score:
+            reason_parts.append(f"effective_score {effective:.1f} < {min_score:.1f}")
+        if confidence < min_confidence:
+            reason_parts.append(f"confidence {confidence:.2f} < {min_confidence:.2f}")
+        reason = "; ".join(reason_parts)
+
+    return jsonify({
+        "pass": passed,
+        "purl": purl,
+        "effective_score": effective,
+        "direct_score": score.get("direct_score"),
+        "confidence": confidence,
+        "reason": reason,
+    }), 200

@@ -2,11 +2,11 @@
 
 ## Summary
 
-SBOM Graph is a multi-component system for ingesting CycloneDX SBOMs, storing dependency relationships in a graph database (FalkorDB), enriching packages with vulnerability and license data from external sources, and providing interactive visualizations and reports. The system consists of:
+SBOM Graph is a multi-component system for ingesting CycloneDX and SPDX SBOMs, storing dependency relationships and source repository provenance in a graph database (FalkorDB), enriching packages with vulnerability and license data from external sources, and providing interactive visualizations and reports. The system consists of:
 
 - **sonatype-lifecycle-release-listener**: Webhook receiver that fetches SBOMs from SonaType and writes to FalkorDB
-- **sbom-graph-api**: Web application for viewing reports and visualizations (read path) and authenticated CycloneDX SBOM ingestion (write path via `POST /ingest/cyclonedx`)
-- **sbom-graph-enrichment**: Celery-based asynchronous pipeline that queries OSV.dev and ClearlyDefined APIs to enrich packages with vulnerability and license metadata; uses a per-worker-process `httpx.Client` for connection-pooled HTTPS and a cached `Persistence` instance for FalkorDB access
+- **sbom-graph-api**: Web application for viewing reports and visualizations (read path) and authenticated CycloneDX/SPDX SBOM ingestion (write paths via `POST /ingest/cyclonedx`, `POST /ingest/spdx`, `POST /ingest/sbom`)
+- **sbom-graph-enrichment**: Celery-based asynchronous pipeline that queries OSV.dev and ClearlyDefined APIs to enrich packages with vulnerability and license metadata, and also queries OpenSSF Scorecard, Sonatype OSS Index, and deps.dev APIs for trust score computation; uses a per-worker-process `httpx.Client` for connection-pooled HTTPS and a cached `Persistence` instance for FalkorDB access
 - **FalkorDB**: Graph database storing dependency data (Redis protocol); Redis instance also serves as Celery broker and result backend for the enrichment pipeline
 - **sbom-graph-model**: Shared library for SBOM parsing and persistence
 
@@ -73,6 +73,7 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | Graph data | FalkorDB | **High** -- dependency metadata, vulnerability data, organizational structure |
 | User credentials / tokens | sbom-graph-api SQLite DB | **High** -- authentication material |
 | Self-signed CA key | FalkorDB init container | **Medium** -- trust anchor for demo TLS |
+| OSS Index API credentials (OSSINDEX_USER/OSSINDEX_TOKEN) | sbom-graph-enrichment | **Medium** -- optional API key for higher rate limits |
 
 ## Trust Boundaries
 
@@ -86,6 +87,9 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | Enrichment Worker -> FalkorDB | Graph reads/writes (cached connection per worker) | Redis protocol (+/- TLS) |
 | Enrichment Worker -> OSV API | Vulnerability queries | HTTPS (connection-pooled httpx.Client) |
 | Enrichment Worker -> ClearlyDefined API | License queries | HTTPS (connection-pooled httpx.Client) |
+| Enrichment Worker -> Scorecard API | Scorecard queries | HTTPS (connection-pooled httpx.Client) |
+| Enrichment Worker -> OSS Index API | Vulnerability queries | HTTPS (connection-pooled httpx.Client) |
+| Enrichment Worker -> deps.dev API | Package metadata queries | HTTPS (connection-pooled httpx.Client) |
 | Enrichment Beat -> Redis | Task scheduling | Redis protocol |
 | Init Job -> FalkorDB | Demo data load | Redis protocol |
 
@@ -119,6 +123,13 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | S21 | Blast radius / patch plan information disclosure | I | sbom-graph-api | **Low** | **Medium** | **Low** | **MITIGATED** | `GET /api/v1/patch-plan/{defect_id}` and `GET /api/v1/blast-radius/{purl}` reveal the full dependency tree, team contacts, and organisational structure. Mitigated by: JWT authentication, `max_depth` capped at 50, `internal_only` filter available, `MAX_TRANSITIVE_NODES` safety cap prevents unbounded traversal. Residual: authenticated users see the full internal dependency graph which may be sensitive in multi-tenant scenarios. |
 | S22 | VEX statement injection (false "not_affected") | T, E | sbom-graph-api | **Medium** | **High** | **Medium** | **PARTIALLY MITIGATED** | `POST /ingest/vex` allows authenticated users to upload VEX documents that mark vulnerabilities as "not_affected", potentially suppressing legitimate vulnerability findings in reports. Mitigated by: JWT authentication, `VexStatus.from_str()` validation (only 4 allowed statuses), `source_document` audit trail, `timestamp` field, statements linked to existing Defect/Version nodes only. Residual: no approval workflow, no role-based restriction on VEX uploads, a single malicious VEX document can suppress multiple findings. |
 | S23 | Contact information exposure via PointOfContact nodes | I | sbom-graph-api | **Low** | **Low** | **Low** | **MITIGATED** | `POST /api/v1/contacts` stores email addresses and team/Slack channel info. `GET /api/v1/patch-plan` returns this data in responses. Mitigated by: JWT authentication on both endpoints, email format validation, length limits, package existence verification before linking. |
+| S24 | SPDX document poisoning via malformed packages | T, D | sbom-graph-api | **Medium** | **Medium** | **Medium** | **MITIGATED** | `POST /ingest/spdx` and `POST /ingest/sbom` accept SPDX documents that may contain crafted package names, PURLs, or relationship data. An attacker with valid JWT credentials could inject misleading dependency data, create phantom packages, or establish false dependency relationships. Mitigated by: `SPDXValidationError` structural validation before processing, JWT authentication, 50 MB `MAX_CONTENT_LENGTH`, SPDX format detection requires `spdxVersion` field, MERGE semantics prevent duplicate nodes, `sbom_format` property provides provenance tracking. Residual: semantically valid but misleading SPDX data (e.g. false dependency claims) cannot be detected automatically. |
+| S25 | Source repository URL tampering | T, I | sbom-graph-api, sbom-graph-model | **Medium** | **Medium** | **Medium** | **PARTIALLY MITIGATED** | SBOM documents (CycloneDX `externalReferences` or SPDX `downloadLocation`) provide source repository URLs that are persisted as `SourceRepository` nodes and queried via `GET /api/v1/source/packages` and `GET /api/v1/source/vulnerabilities`. An attacker could upload SBOMs with false VCS URLs, associating packages with repositories they don't belong to. This could mislead incident responders querying "which packages come from this compromised repo?". Mitigated by: JWT authentication, URL stored as-is (no SSRF -- URLs are data, not fetched server-side), `repo_url` query parameter validated for length (max 2048), MERGE on URL deduplicates. Residual: no verification that a purl actually originates from the claimed repository; trust is placed in the SBOM producer. |
+| S26 | Format auto-detection bypass in unified endpoint | S, T | sbom-graph-api | **Low** | **Medium** | **Low** | **MITIGATED** | `POST /ingest/sbom` auto-detects format from document structure. An attacker could craft a document that passes CycloneDX detection but contains SPDX-style payloads (or vice versa), potentially bypassing format-specific validation. Mitigated by: detection checks `bomFormat == "CycloneDX"` or `spdxVersion` presence; each processor then applies its own full structural validation; unrecognised documents are rejected with 400. |
+| S27 | Trust score data poisoning via compromised external APIs | T | Scorecard/OSS Index/deps.dev -> sbom-graph-enrichment -> FalkorDB | **Low** | **High** | **Medium** | **PARTIALLY MITIGATED** | If any of the four external APIs (Scorecard, OSV, OSS Index, deps.dev) return manipulated data, the trust score for affected packages will be incorrect, potentially causing safe packages to appear risky or risky packages to appear safe. This is more impactful than S17 because trust scores feed into CI/CD gate decisions. Mitigated by: HTTPS transport, explicit field extraction, multiple independent data sources (cross-validation), configurable weights, confidence score indicating data source coverage. Residual: structurally valid but semantically misleading data from a compromised API cannot be detected. |
+| S28 | Denial-of-service via Scorecard/deps.dev API rate exhaustion | D | sbom-graph-enrichment | **Medium** | **Medium** | **Medium** | **MITIGATED** | The trust score computation queries up to 4 external APIs per package. For large graphs (100K+ packages), this could generate millions of API calls, exhausting rate limits and potentially triggering IP bans. Mitigated by: per-certifier token-bucket rate limiting (30 req/min Scorecard, 60/120 req/min OSS Index, 150 req/min deps.dev), batched dispatch, configurable TRUST_SCORE_INTERVAL (default 7200s). |
+| S29 | Misleading effective scores from manipulated dependency graphs | T | sbom-graph-enrichment propagation task -> FalkorDB | **Low** | **High** | **Medium** | **PARTIALLY MITIGATED** | An attacker who can inject false dependency edges (via poisoned SBOMs -- see S1, S11, S24) could manipulate the inherited risk propagation, artificially raising or lowering effective scores for target packages. A single low-scoring fake dependency could drag down an entire application's effective score (denial of service on the trust metric), or a fake high-scoring dependency could mask inherited risk. Mitigated by: SBOM ingestion authentication (S11), alpha blending limits pure inheritance influence, min_path_score exposes the weakest link regardless of blending, SBOM format validation. Residual: authenticated users can still inject misleading dependency data. |
+| S30 | OSS Index credential leakage | I | sbom-graph-enrichment | **Low** | **Medium** | **Low** | **MITIGATED** | OSSINDEX_USER and OSSINDEX_TOKEN are passed as environment variables from a Kubernetes Secret. If leaked, an attacker could use the credentials for their own OSS Index queries (limited blast radius -- read-only API). Mitigated by: credentials stored in Kubernetes Secret (not Helm values by default), optional (system works without auth), read-only API access, Secret template gated on non-empty user value. |
 
 ### Data Flow Threats
 
@@ -186,6 +197,10 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | VEX source_document audit trail | sbom-graph-model | **Moderate** -- links statements to source documents for traceability |
 | Contact email format validation | sbom-graph-api | **Strong** -- email must contain `@`, length limited to 254 chars |
 | OpenVEX document structure validation | sbom-graph-model | **Moderate** -- `VexProcessor._validate_document()` checks for required fields |
+| Trust score rate limiting (per-certifier token buckets) | sbom-graph-enrichment | **Strong** -- prevents API rate exhaustion |
+| Trust score multi-source cross-validation | sbom-graph-enrichment | **Moderate** -- confidence score indicates data coverage |
+| Trust score CI/CD gate | sbom-graph-api | **Strong** -- configurable min_score and min_confidence thresholds |
+| OSS Index credentials in Kubernetes Secret | Helm chart | **Strong** -- gated on non-empty user value |
 
 ### Controls Missing
 
@@ -253,6 +268,9 @@ Before deploying to production, verify:
 - [ ] Webhook authentication is configured for sonatype-lifecycle-release-listener
 - [ ] `SONATYPE_HOST`, `SONATYPE_USERNAME`, `SONATYPE_PASSWORD` are configured
 - [ ] FalkorDB TLS CA is distributed to all client pods
+- [ ] `enrichment.trustScore.enabled` is set appropriately
+- [ ] `OSSINDEX_USER`/`OSSINDEX_TOKEN` are provisioned (optional, for higher rate limits)
+- [ ] Trust score propagation interval is set (`TRUST_SCORE_INTERVAL`)
 - [ ] `enrichment.networkPolicy.enabled` is set to `true` (requires CNI support)
 - [ ] NetworkPolicy restricts FalkorDB access to authorized pods only
 - [ ] All images are pinned to specific versions (not `latest`)
@@ -274,6 +292,7 @@ Before deploying to production, verify:
 | Flask-WTF | 1.x | 0 | Active | BSD-3 | Low |
 | ldap3 | 2.x | 1 (low) | Active | LGPL-3 (weak copyleft) | **Accepted** -- LGPL-3 is weak copyleft; safe for use as an unmodified import but requires licence notice and the ability for users to replace the library. Alternatives (`bonsai` MIT, `python-ldap` PSF) are C extensions requiring `libldap2` system libraries, which are incompatible with distroless containers without fragile `.so` copying. The pure-Python nature of ldap3 is essential for the distroless security posture. Accepted trade-off: LGPL-3 compliance obligations vs. container security and maintainability. Review with legal if organisation prohibits all copyleft. |
 | requests | 2.x | 0 | Very active | Apache-2 | Low |
+| httpx | 0.x | 0 | Active | BSD-3 | Low (already in enrichment, now used by 3 additional certifiers) |
 | cryptography | 44.x | 2 (patched) | Very active | Apache-2/BSD | Low |
 | Alpine (init) | 3.20 | Varies | Active | MIT | Low |
 
@@ -289,9 +308,10 @@ All primary dependencies are actively maintained with no unpatched critical vuln
             +-------------+----------------+--------------+----------------+
  Medium     |             | D4,I2,I3,S8   | D2, I5, S5   |                |
  Likelihood |             | S12,S16,S20    | S19,S22      |                |
+            |             | S24,S25,S28    |              |                |
             +-------------+----------------+--------------+----------------+
- Low        | I4,S13,S23  | I1,D3,S9,S14  | S11, S17     |                |
- Likelihood |             | S15,S21        |              |                |
+ Low        | I4,S13,S23  | I1,D3,S9,S14  | S11,S17,S27,S29 |                |
+ Likelihood | S26         | S15,S21,S30    |                |                |
             +-------------+----------------+--------------+----------------+
 
  Mitigated (removed from heat map): S2, S18
@@ -307,14 +327,18 @@ All primary dependencies are actively maintained with no unpatched critical vuln
 | Transitive dependency vulnerabilities | Medium | Lockfile pinning and CI/CD scanning mitigate. |
 | Self-signed TLS weaker than CA-issued | Low | Acceptable for demo/internal use. Production should use proper PKI. |
 | Enrichment external API data integrity | Medium | OSV/ClearlyDefined data is trusted after transport validation. Structurally valid but semantically wrong data cannot be detected automatically. |
+| Trust score external API data integrity | Medium | Multiple independent sources provide cross-validation. Confidence score alerts when coverage is low. Structurally valid manipulated data remains undetectable. |
+| SBOM source repository provenance | Medium | Source repository URLs from SBOMs are stored as-is. No verification that packages actually originate from claimed repositories. Trust is placed in the SBOM producer (build tool, CI pipeline). |
 | Redis password in Celery broker URL | Low | Log redaction filter prevents exposure in Celery/Kombu log output. Password remains in process memory (inherent to Celery's Redis transport). |
 
 ## Revision History
 
 | Date | Author | Changes |
 |------|--------|---------|
+| 2026-02-28 | AI-assisted threat model | Added trust score threats S27-S30 (data poisoning, rate exhaustion, dependency graph manipulation, OSS Index credential leakage). Updated Summary, Assets, Trust Boundaries, Security Controls, Risk Heat Map, Residual Risk, Deployment Checklist, Third-Party Assessment. |
 | 2026-03-01 | AI-assisted threat model | Initial system-level STRIPED analysis |
 | 2026-02-28 | AI-assisted threat model | Added enrichment pipeline data flows and threats (S15-S18) |
 | 2026-02-28 | AI-assisted threat model | Mitigated S18 (Redis URL log redaction filter), S2 (auto-generated FalkorDB password + startup warning), partially mitigated S5 (enrichment NetworkPolicy). Documented SSRF design decision (S15). Added enrichment controls to Security Controls Summary. |
 | 2026-02-28 | AI-assisted threat model | Added S19 (policy annotation abuse) and S20 (on-demand enrichment abuse) for vulnerability enrichment and policy annotation features. Added controls: JWT auth on new endpoints, policy input validation, enrichment request size limit, annotation audit trail, enrichment metadata tracking. |
 | 2026-02-28 | AI-assisted threat model | Added S21 (blast radius info disclosure), S22 (VEX statement injection), S23 (contact info exposure) for patch planning and VEX support features. Added controls: max_depth cap, VEX status validation, source_document audit trail, email format validation, OpenVEX document validation. |
+| 2026-02-28 | AI-assisted threat model | Added S24 (SPDX document poisoning), S25 (source repository URL tampering), S26 (format auto-detection bypass) for SPDX SBOM support and source repository tracking features. Added controls: SPDXValidationError structural validation, sbom_format provenance tracking, repo_url length validation, format-specific processor dispatch. |

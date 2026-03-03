@@ -351,6 +351,7 @@ class Persistence:
             ('type', version.project.type if version.project else None),
             ('package_url', version.project.purl if version.project else None),
             ('repo', version.project.repo if version.project else None),
+            ('sbom_format', version.sbom_format),
         ]
 
         if version.project and version.project.type == 'application':
@@ -770,6 +771,122 @@ class Persistence:
             params={"statement_id": statement_id, "defect_id": defect_id},
         )
 
+    # Source repository methods
+
+    def create_source_repository(
+        self,
+        url: str,
+        vcs_type: str | None = None,
+        namespace: str | None = None,
+        name: str | None = None,
+        tag: str | None = None,
+        commit: str | None = None,
+    ) -> None:
+        """Create or update a SourceRepository node.
+
+        Uses ``url`` as the MERGE key.
+
+        Args:
+            url: Canonical repository URL.
+            vcs_type: Version control type (e.g. "git", "svn").
+            namespace: Hosting platform (e.g. "github.com").
+            name: Repository path (e.g. "org/repo").
+            tag: Tag for the linked version.
+            commit: Commit hash for the linked version.
+        """
+        if not url:
+            logger.warning("Cannot create source repository: url is empty")
+            return
+
+        params: dict[str, Any] = {"url": url}
+        name_value_pairs: list[tuple[str, Any]] = [
+            ("vcs_type", vcs_type),
+            ("namespace", namespace),
+            ("name", name),
+            ("tag", tag),
+            ("commit_hash", commit),
+        ]
+
+        extended_query, params = self._create_extended_query(
+            name_value_pairs=name_value_pairs,
+            params=params,
+        )
+
+        query = f"""
+            MERGE (n:SourceRepository {{url: $url}})
+            {extended_query}
+        """
+        logger.info("Creating SourceRepository url=%s", url)
+        self.run_query(query=cast(LiteralString, query), params=params)
+
+    def link_version_to_source(self, purl: str, repo_url: str) -> None:
+        """Create a HAS_SOURCE edge between a Version and a SourceRepository.
+
+        Args:
+            purl: The package URL of the version.
+            repo_url: The repository URL.
+        """
+        if not purl or not repo_url:
+            logger.warning(
+                "Cannot create HAS_SOURCE edge: purl=%s repo_url=%s",
+                purl, repo_url,
+            )
+            return
+
+        query = """
+            MATCH (v:Version {package_url: $purl})
+            MATCH (r:SourceRepository {url: $repo_url})
+            MERGE (v)-[:HAS_SOURCE]->(r)
+        """
+        logger.info("Creating HAS_SOURCE edge purl=%s -> repo=%s", purl, repo_url)
+        self.run_query(query=query, params={"purl": purl, "repo_url": repo_url})
+
+    def link_version_to_source_by_name(
+        self,
+        project_name: str,
+        project_group: str | None,
+        version_name: str,
+        repo_url: str,
+    ) -> None:
+        """Create a HAS_SOURCE edge using version identity fields.
+
+        Useful during SBOM ingestion when the purl may not yet be set.
+
+        Args:
+            project_name: The project name.
+            project_group: The project group (may be None).
+            version_name: The version string.
+            repo_url: The repository URL.
+        """
+        if not repo_url:
+            return
+
+        params: dict[str, Any] = {
+            "project_name": project_name,
+            "version_name": version_name,
+            "repo_url": repo_url,
+        }
+
+        if project_group is not None:
+            query = """
+                MATCH (v:Version {name: $version_name, project_name: $project_name, project_group: $project_group})
+                MATCH (r:SourceRepository {url: $repo_url})
+                MERGE (v)-[:HAS_SOURCE]->(r)
+            """
+            params["project_group"] = project_group
+        else:
+            query = """
+                MATCH (v:Version {name: $version_name, project_name: $project_name})
+                MATCH (r:SourceRepository {url: $repo_url})
+                MERGE (v)-[:HAS_SOURCE]->(r)
+            """
+
+        logger.info(
+            "Creating HAS_SOURCE edge %s/%s -> %s",
+            project_name, version_name, repo_url,
+        )
+        self.run_query(query=query, params=params)
+
     # Edge creation methods
 
     def create_dependency(self, parent: Version, child: Version) -> None:
@@ -1153,6 +1270,207 @@ class Persistence:
             """
         )
 
+    # Trust Score methods
+
+    def create_trust_score(
+        self,
+        purl: str,
+        direct_score: float,
+        confidence: float,
+        security_practices_score: float,
+        vulnerability_profile_score: float,
+        maintenance_health_score: float,
+        supply_chain_hygiene_score: float,
+        sources_used: list[str],
+        scored_at: str,
+        scorecard_raw: str | None = None,
+        depsdev_raw: str | None = None,
+    ) -> None:
+        """Create or update a TrustScore node and link it to Version nodes.
+
+        Uses ``purl`` as the MERGE key so each package version has at most
+        one TrustScore.
+
+        Args:
+            purl: Package URL identifying the package version.
+            direct_score: Composite direct score (0--10).
+            confidence: Data source coverage (0--1).
+            security_practices_score: Category score (0--10).
+            vulnerability_profile_score: Category score (0--10).
+            maintenance_health_score: Category score (0--10).
+            supply_chain_hygiene_score: Category score (0--10).
+            sources_used: List of data source names.
+            scored_at: ISO timestamp of scoring.
+            scorecard_raw: Optional raw Scorecard JSON.
+            depsdev_raw: Optional raw deps.dev JSON.
+        """
+        if not purl:
+            logger.warning("Cannot create TrustScore: purl is empty")
+            return
+
+        params: dict[str, Any] = {
+            "purl": purl,
+            "direct_score": direct_score,
+            "confidence": confidence,
+            "security_practices_score": security_practices_score,
+            "vulnerability_profile_score": vulnerability_profile_score,
+            "maintenance_health_score": maintenance_health_score,
+            "supply_chain_hygiene_score": supply_chain_hygiene_score,
+            "sources_used": sources_used,
+            "scored_at": scored_at,
+        }
+
+        optional_sets: list[str] = []
+        if scorecard_raw is not None:
+            params["scorecard_raw"] = scorecard_raw
+            optional_sets.append("n.scorecard_raw = $scorecard_raw")
+        if depsdev_raw is not None:
+            params["depsdev_raw"] = depsdev_raw
+            optional_sets.append("n.depsdev_raw = $depsdev_raw")
+
+        extra_set = ", " + ", ".join(optional_sets) if optional_sets else ""
+
+        query = f"""
+            MERGE (n:TrustScore {{purl: $purl}})
+            ON CREATE SET
+                n.direct_score = $direct_score,
+                n.confidence = $confidence,
+                n.security_practices_score = $security_practices_score,
+                n.vulnerability_profile_score = $vulnerability_profile_score,
+                n.maintenance_health_score = $maintenance_health_score,
+                n.supply_chain_hygiene_score = $supply_chain_hygiene_score,
+                n.sources_used = $sources_used,
+                n.scored_at = $scored_at{extra_set}
+            ON MATCH SET
+                n.direct_score = $direct_score,
+                n.confidence = $confidence,
+                n.security_practices_score = $security_practices_score,
+                n.vulnerability_profile_score = $vulnerability_profile_score,
+                n.maintenance_health_score = $maintenance_health_score,
+                n.supply_chain_hygiene_score = $supply_chain_hygiene_score,
+                n.sources_used = $sources_used,
+                n.scored_at = $scored_at{extra_set}
+        """
+        logger.info("Creating TrustScore purl=%s direct_score=%.2f", purl, direct_score)
+        self.run_query(query=cast(LiteralString, query), params=params)
+
+    def link_version_to_trust_score(self, purl: str) -> None:
+        """Create a HAS_TRUST_SCORE edge between matching Version nodes and the TrustScore.
+
+        Args:
+            purl: The package URL shared by the Version and TrustScore nodes.
+        """
+        if not purl:
+            return
+
+        query = """
+            MATCH (v:Version {package_url: $purl})
+            MATCH (t:TrustScore {purl: $purl})
+            MERGE (v)-[:HAS_TRUST_SCORE]->(t)
+        """
+        logger.info("Creating HAS_TRUST_SCORE edge for purl=%s", purl)
+        self.run_query(query=query, params={"purl": purl})
+
+    def update_trust_score_propagation(
+        self,
+        purl: str,
+        effective_score: float,
+        inherited_score: float,
+        min_path_score: float,
+        dep_count: int,
+    ) -> None:
+        """Update propagation fields on an existing TrustScore node.
+
+        Called by the periodic propagation task after computing inherited
+        risk through the dependency graph.
+
+        Args:
+            purl: Package URL identifying the TrustScore.
+            effective_score: Blended own + inherited score (0--10).
+            inherited_score: Weighted aggregate from deps (0--10).
+            min_path_score: Weakest direct_score on any dependency path (0--10).
+            dep_count: Number of deps used in the calculation.
+        """
+        if not purl:
+            return
+
+        query = """
+            MATCH (n:TrustScore {purl: $purl})
+            SET n.effective_score = $effective_score,
+                n.inherited_score = $inherited_score,
+                n.min_path_score = $min_path_score,
+                n.dep_count = $dep_count
+        """
+        self.run_query(
+            query=query,
+            params={
+                "purl": purl,
+                "effective_score": effective_score,
+                "inherited_score": inherited_score,
+                "min_path_score": min_path_score,
+                "dep_count": dep_count,
+            },
+        )
+
+    def get_all_trust_scores(self) -> list[dict[str, Any]]:
+        """Return all TrustScore nodes as dictionaries.
+
+        Used by the propagation task to read current direct_scores.
+
+        Returns:
+            List of dictionaries with purl, direct_score, effective_score,
+            inherited_score, min_path_score, confidence, and dep_count.
+        """
+        result = self.run_query(
+            query=(
+                "MATCH (t:TrustScore) "
+                "RETURN t.purl AS purl, t.direct_score AS direct_score, "
+                "t.effective_score AS effective_score, "
+                "t.inherited_score AS inherited_score, "
+                "t.min_path_score AS min_path_score, "
+                "t.confidence AS confidence, "
+                "t.dep_count AS dep_count"
+            ),
+        )
+        return [
+            {
+                "purl": row.get("purl"),
+                "direct_score": row.get("direct_score"),
+                "effective_score": row.get("effective_score"),
+                "inherited_score": row.get("inherited_score"),
+                "min_path_score": row.get("min_path_score"),
+                "confidence": row.get("confidence"),
+                "dep_count": row.get("dep_count"),
+            }
+            for row in result.result_set
+        ]
+
+    def get_dependency_graph_for_propagation(self) -> list[dict[str, str]]:
+        """Return the dependency adjacency list for trust score propagation.
+
+        Returns pairs of (parent_purl, child_purl) from the
+        DEPENDENCY_VERSION edges, only for versions that have package_url set.
+
+        Returns:
+            List of dicts with ``parent_purl`` and ``child_purl`` keys.
+        """
+        result = self.run_query(
+            query=(
+                "MATCH (parent:Version)-[:DEPENDENCY_VERSION]->(child:Version) "
+                "WHERE parent.package_url IS NOT NULL "
+                "AND child.package_url IS NOT NULL "
+                "RETURN DISTINCT parent.package_url AS parent_purl, "
+                "child.package_url AS child_purl"
+            ),
+        )
+        return [
+            {
+                "parent_purl": row.get("parent_purl"),
+                "child_purl": row.get("child_purl"),
+            }
+            for row in result.result_set
+        ]
+
     # Index management
 
     def create_indexes(self) -> None:
@@ -1173,6 +1491,10 @@ class Persistence:
             ("PolicyAnnotation", "type"),
             ("PointOfContact", "email"),
             ("VexStatement", "statement_id"),
+            ("SourceRepository", "url"),
+            ("TrustScore", "purl"),
+            ("TrustScore", "effective_score"),
+            ("TrustScore", "min_path_score"),
         ]
 
         for label, property_name in index_definitions:

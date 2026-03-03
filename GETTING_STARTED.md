@@ -266,6 +266,25 @@ configuration values and their defaults.
 | `releaseListener.service.port` | `80` | Kubernetes Service port |
 | `releaseListener.service.targetPort` | `8000` | Container port |
 
+### Enrichment & Trust Score
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `enrichment.enabled` | `true` | Enable enrichment pipeline |
+| `enrichment.trustScore.enabled` | `true` | Enable trust score computation |
+| `enrichment.trustScore.interval` | `"7200"` | Trust score propagation interval (seconds) |
+| `enrichment.trustScore.alpha` | `"0.4"` | Blend weight for own vs inherited score |
+| `enrichment.trustScore.decay` | `"0.8"` | Depth attenuation factor for propagation |
+| `enrichment.trustScore.maxDepth` | `"20"` | Maximum traversal depth for propagation |
+| `enrichment.trustScore.weights.securityPractices` | `"0.3"` | Weight for Security Practices category |
+| `enrichment.trustScore.weights.vulnerabilityProfile` | `"0.35"` | Weight for Vulnerability Profile category |
+| `enrichment.trustScore.weights.maintenanceHealth` | `"0.2"` | Weight for Maintenance Health category |
+| `enrichment.trustScore.weights.supplyChainHygiene` | `"0.15"` | Weight for Supply-Chain Hygiene category |
+| `enrichment.trustScore.ossindex.user` | `""` | OSS Index API username (optional, for higher rate limits) |
+| `enrichment.trustScore.ossindex.token` | `""` | OSS Index API token (optional) |
+
+**OSS Index API key (optional):** For higher rate limits, create a [Sonatype OSS Index](https://ossindex.sonatype.org/) account and set `enrichment.trustScore.ossindex.user` and `enrichment.trustScore.ossindex.token` in your values or via `--set`. Without credentials, the enrichment pipeline uses anonymous access with stricter rate limits.
+
 ### Secrets Behaviour
 
 All secrets (FalkorDB password, Flask/JWT/encryption keys, webhook secret) follow
@@ -474,6 +493,21 @@ kubectl get secret sbom-graph-sbom-graph-api \
 kubectl get secret sbom-graph-sbom-graph-api \
   -n "$NAMESPACE" \
   -o jsonpath='{.data.token-db-encryption-key}' | base64 -d; echo
+```
+
+### Trust Score Verification
+
+With the API port-forwarded (e.g. `kubectl port-forward svc/sbom-graph-sbom-graph-api 8080:80`), verify trust score endpoints. When `AUTH_ENABLED=true`, include `Authorization: Bearer <token>` in requests.
+
+```bash
+# Package trust score (replace PURL with a known package, e.g. pkg:maven/org.apache.logging.log4j/log4j-core@2.17.1)
+curl "http://localhost:8080/api/v1/package/pkg:maven/org.apache.logging.log4j/log4j-core@2.17.1/trust-score"
+
+# Trust score distribution histogram
+curl "http://localhost:8080/api/v1/analysis/trust-score-distribution"
+
+# CI/CD gate: check if package meets minimum score (min_score defaults to 5.0)
+curl "http://localhost:8080/api/v1/package/pkg:maven/org.apache.logging.log4j/log4j-core@2.17.1/trust-check?min_score=5.0"
 ```
 
 ---

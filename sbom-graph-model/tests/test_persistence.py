@@ -999,19 +999,19 @@ class TestCentralityScores:
 class TestCreateIndexes:
     """Tests for Persistence.create_indexes."""
 
-    def test_creates_nine_indexes(self, mock_persistence, mock_graph):
+    def test_creates_thirteen_indexes(self, mock_persistence, mock_graph):
         mock_persistence.create_indexes()
-        assert mock_graph.query.call_count == 9
+        assert mock_graph.query.call_count == 13
 
     def test_handles_already_exists_gracefully(self, mock_persistence, mock_graph):
         mock_graph.query.side_effect = Exception("Index already exists")
         mock_persistence.create_indexes()
-        assert mock_graph.query.call_count == 9
+        assert mock_graph.query.call_count == 13
 
     def test_handles_equivalent_index_gracefully(self, mock_persistence, mock_graph):
         mock_graph.query.side_effect = Exception("An equivalent index already exists")
         mock_persistence.create_indexes()
-        assert mock_graph.query.call_count == 9
+        assert mock_graph.query.call_count == 13
 
     def test_logs_warning_on_unexpected_error(
         self, mock_persistence, mock_graph, caplog
@@ -1034,9 +1034,167 @@ class TestCreateIndexes:
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
         ]
         mock_persistence.create_indexes()
-        assert mock_graph.query.call_count == 9
+        assert mock_graph.query.call_count == 13
+
+
+# ---------------------------------------------------------------------------
+# Trust Score persistence
+# ---------------------------------------------------------------------------
+
+
+class TestCreateTrustScore:
+    """Tests for Persistence.create_trust_score."""
+
+    def test_creates_trust_score(self, mock_persistence, mock_graph):
+        mock_persistence.create_trust_score(
+            purl="pkg:maven/com.example/lib@1.0",
+            direct_score=7.5,
+            confidence=0.75,
+            security_practices_score=8.0,
+            vulnerability_profile_score=7.0,
+            maintenance_health_score=6.5,
+            supply_chain_hygiene_score=8.5,
+            sources_used=["scorecard", "osv", "depsdev"],
+            scored_at="2026-02-28T12:00:00Z",
+        )
+        mock_graph.query.assert_called_once()
+        q = mock_graph.query.call_args.kwargs["q"]
+        assert "MERGE" in q
+        assert "TrustScore" in q
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["purl"] == "pkg:maven/com.example/lib@1.0"
+        assert params["direct_score"] == 7.5
+        assert params["confidence"] == 0.75
+
+    def test_with_optional_raw_data(self, mock_persistence, mock_graph):
+        mock_persistence.create_trust_score(
+            purl="pkg:npm/foo@2.0",
+            direct_score=6.0,
+            confidence=1.0,
+            security_practices_score=6.0,
+            vulnerability_profile_score=6.0,
+            maintenance_health_score=6.0,
+            supply_chain_hygiene_score=6.0,
+            sources_used=["scorecard", "osv", "ossindex", "depsdev"],
+            scored_at="2026-02-28T12:00:00Z",
+            scorecard_raw='{"score":6}',
+            depsdev_raw='{"advisories":0}',
+        )
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["scorecard_raw"] == '{"score":6}'
+        assert params["depsdev_raw"] == '{"advisories":0}'
+
+    def test_empty_purl_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.create_trust_score(
+            purl="",
+            direct_score=5.0,
+            confidence=0.5,
+            security_practices_score=5.0,
+            vulnerability_profile_score=5.0,
+            maintenance_health_score=5.0,
+            supply_chain_hygiene_score=5.0,
+            sources_used=[],
+            scored_at="2026-02-28T12:00:00Z",
+        )
+        mock_graph.query.assert_not_called()
+
+
+class TestLinkVersionToTrustScore:
+    """Tests for Persistence.link_version_to_trust_score."""
+
+    def test_creates_edge(self, mock_persistence, mock_graph):
+        mock_persistence.link_version_to_trust_score("pkg:maven/a/b@1.0")
+        mock_graph.query.assert_called_once()
+        q = mock_graph.query.call_args.kwargs["q"]
+        assert "HAS_TRUST_SCORE" in q
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["purl"] == "pkg:maven/a/b@1.0"
+
+    def test_empty_purl_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.link_version_to_trust_score("")
+        mock_graph.query.assert_not_called()
+
+
+class TestUpdateTrustScorePropagation:
+    """Tests for Persistence.update_trust_score_propagation."""
+
+    def test_updates_fields(self, mock_persistence, mock_graph):
+        mock_persistence.update_trust_score_propagation(
+            purl="pkg:maven/a/b@1.0",
+            effective_score=6.5,
+            inherited_score=5.8,
+            min_path_score=3.2,
+            dep_count=42,
+        )
+        mock_graph.query.assert_called_once()
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["effective_score"] == 6.5
+        assert params["inherited_score"] == 5.8
+        assert params["min_path_score"] == 3.2
+        assert params["dep_count"] == 42
+
+    def test_empty_purl_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.update_trust_score_propagation(
+            purl="",
+            effective_score=0.0,
+            inherited_score=0.0,
+            min_path_score=0.0,
+            dep_count=0,
+        )
+        mock_graph.query.assert_not_called()
+
+
+class TestGetAllTrustScores:
+    """Tests for Persistence.get_all_trust_scores."""
+
+    def test_returns_rows(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(
+            result_set=[
+                {
+                    "purl": "pkg:maven/a/b@1.0",
+                    "direct_score": 7.5,
+                    "effective_score": 6.5,
+                    "inherited_score": 5.8,
+                    "min_path_score": 3.2,
+                    "confidence": 0.75,
+                    "dep_count": 42,
+                },
+            ]
+        )
+        result = mock_persistence.get_all_trust_scores()
+        assert len(result) == 1
+        assert result[0]["purl"] == "pkg:maven/a/b@1.0"
+        assert result[0]["direct_score"] == 7.5
+
+    def test_empty_graph(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(result_set=[])
+        assert mock_persistence.get_all_trust_scores() == []
+
+
+class TestGetDependencyGraphForPropagation:
+    """Tests for Persistence.get_dependency_graph_for_propagation."""
+
+    def test_returns_edges(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(
+            result_set=[
+                {"parent_purl": "pkg:maven/a/b@1.0", "child_purl": "pkg:maven/c/d@2.0"},
+                {"parent_purl": "pkg:maven/a/b@1.0", "child_purl": "pkg:npm/e@3.0"},
+            ]
+        )
+        result = mock_persistence.get_dependency_graph_for_propagation()
+        assert len(result) == 2
+        assert result[0]["parent_purl"] == "pkg:maven/a/b@1.0"
+        assert result[1]["child_purl"] == "pkg:npm/e@3.0"
+
+    def test_empty_graph(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(result_set=[])
+        assert mock_persistence.get_dependency_graph_for_propagation() == []
 
 
 # ---------------------------------------------------------------------------

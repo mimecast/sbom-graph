@@ -487,3 +487,146 @@ class TestHasVersion:
         hv.version = sample_version
         assert hv.project.name == "test-project"
         assert hv.version.version == "1.0.0"
+
+
+class TestTrustScore:
+    """Tests for the TrustScore node class."""
+
+    def test_default_init(self):
+        from sbom_graph_model.model import TrustScore
+        ts = TrustScore()
+        assert ts.purl is None
+        assert ts.direct_score is None
+        assert ts.effective_score is None
+        assert ts.inherited_score is None
+        assert ts.min_path_score is None
+        assert ts.confidence is None
+        assert ts.dep_count is None
+        assert ts.security_practices_score is None
+        assert ts.vulnerability_profile_score is None
+        assert ts.maintenance_health_score is None
+        assert ts.supply_chain_hygiene_score is None
+        assert ts.sources_used == []
+        assert ts.scored_at is None
+        assert ts.scorecard_raw is None
+        assert ts.depsdev_raw is None
+
+    def test_set_all_attributes(self):
+        from sbom_graph_model.model import TrustScore
+        ts = TrustScore()
+        ts.purl = "pkg:maven/com.example/lib@1.0"
+        ts.direct_score = 7.5
+        ts.effective_score = 6.5
+        ts.inherited_score = 5.8
+        ts.min_path_score = 3.2
+        ts.confidence = 0.75
+        ts.dep_count = 42
+        ts.security_practices_score = 8.0
+        ts.vulnerability_profile_score = 7.0
+        ts.maintenance_health_score = 6.5
+        ts.supply_chain_hygiene_score = 8.5
+        ts.sources_used = ["scorecard", "osv", "depsdev"]
+        ts.scored_at = "2026-02-28T12:00:00Z"
+        ts.scorecard_raw = '{"score":7.5}'
+        ts.depsdev_raw = '{"advisories":0}'
+
+        assert ts.purl == "pkg:maven/com.example/lib@1.0"
+        assert ts.direct_score == 7.5
+        assert ts.effective_score == 6.5
+        assert ts.sources_used == ["scorecard", "osv", "depsdev"]
+
+    def test_sources_used_not_shared_across_instances(self):
+        from sbom_graph_model.model import TrustScore
+        ts1 = TrustScore()
+        ts2 = TrustScore()
+        ts1.sources_used.append("scorecard")
+        assert len(ts2.sources_used) == 0
+
+
+class TestHasTrustScore:
+    """Tests for the HasTrustScore edge class."""
+
+    def test_default_init(self):
+        from sbom_graph_model.model import HasTrustScore
+        hts = HasTrustScore()
+        assert hts.version is None
+        assert hts.trust_score is None
+
+    def test_set_attributes(self, sample_version):
+        from sbom_graph_model.model import HasTrustScore, TrustScore
+        ts = TrustScore()
+        ts.purl = "pkg:maven/com.example/lib@1.0"
+        hts = HasTrustScore()
+        hts.version = sample_version
+        hts.trust_score = ts
+        assert hts.version.version == "1.0.0"
+        assert hts.trust_score.purl == "pkg:maven/com.example/lib@1.0"
+
+
+class TestSourceRepository:
+    """Tests for the SourceRepository node class."""
+
+    def test_default_init(self):
+        from sbom_graph_model.model import SourceRepository
+        sr = SourceRepository()
+        assert sr.url is None
+        assert sr.vcs_type is None
+        assert sr.namespace is None
+        assert sr.name is None
+        assert sr.tag is None
+        assert sr.commit is None
+
+    def test_set_all_attributes(self):
+        from sbom_graph_model.model import SourceRepository
+        sr = SourceRepository()
+        sr.url = "https://github.com/org/repo"
+        sr.vcs_type = "git"
+        sr.namespace = "github.com"
+        sr.name = "org/repo"
+        sr.tag = "v1.0.0"
+        sr.commit = "abc123"
+
+        assert sr.url == "https://github.com/org/repo"
+        assert sr.vcs_type == "git"
+        assert sr.namespace == "github.com"
+        assert sr.name == "org/repo"
+        assert sr.tag == "v1.0.0"
+        assert sr.commit == "abc123"
+
+
+class TestVersionSource:
+    """Tests for the VersionSource edge class."""
+
+    def test_default_init(self):
+        from sbom_graph_model.model import VersionSource
+        vs = VersionSource()
+        assert vs.version is None
+        assert vs.repository is None
+
+    def test_set_all_attributes(self, sample_version):
+        from sbom_graph_model.model import VersionSource, SourceRepository
+        sr = SourceRepository()
+        sr.url = "https://github.com/org/repo"
+        vs = VersionSource()
+        vs.version = sample_version
+        vs.repository = sr
+        assert vs.version.version == "1.0.0"
+        assert vs.repository.url == "https://github.com/org/repo"
+
+
+class TestVersionSbomFormat:
+    """Tests for the sbom_format property on Version."""
+
+    def test_default_is_none(self):
+        v = Version()
+        assert v.sbom_format is None
+
+    def test_set_cyclonedx(self):
+        v = Version()
+        v.sbom_format = "cyclonedx"
+        assert v.sbom_format == "cyclonedx"
+
+    def test_set_spdx(self):
+        v = Version()
+        v.sbom_format = "spdx"
+        assert v.sbom_format == "spdx"

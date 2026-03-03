@@ -1944,3 +1944,58 @@ def license_conflicts_report() -> Response | tuple[str | Response, int]:
         internal_only=internal_only,
         generated_at=_get_current_timestamp(),
     )
+
+
+@bp.route("/source-repos")
+@auth_required
+def source_repos() -> Response:
+    """List all tracked source repositories with linked package counts.
+
+    Query Parameters:
+        format: 'json' to download (default: html)
+        internal_only: Set to 'true' to show only internal-labeled nodes (default: false)
+    """
+    output_format = validate_format(request.args.get("format"))
+    internal_only = validate_boolean(request.args.get("internal_only"))
+
+    service = get_falkordb_service()
+    repos = service.get_all_source_repos(internal_only=internal_only)
+
+    if output_format == "json":
+        return _build_json_response(
+            {
+                "report_type": "source-repos",
+                "generated_at": _get_current_timestamp(),
+                "filter": "internal_only" if internal_only else "all",
+                "data": repos,
+                "total": len(repos),
+            },
+            "source_repos.json",
+        )
+
+    return Response(
+        render_template(
+            TABLE_TEMPLATE,
+            title=_get_internal_title("Source Repositories", internal_only),
+            internal_only=internal_only,
+            headers=["URL", "VCS Type", "Namespace", "Name", "Packages"],
+            data=[
+                [
+                    r.get("url", ""),
+                    r.get("vcs_type", ""),
+                    r.get("namespace", ""),
+                    r.get("name", ""),
+                    r.get("package_count", 0),
+                ]
+                for r in repos
+            ],
+            stats={"Total Repositories": len(repos)},
+            json_url=build_url_with_params(
+                url_for("reports.source_repos"),
+                format="json",
+                internal_only=internal_only,
+            ),
+            schema_url=None,
+        ),
+        mimetype="text/html",
+    )
