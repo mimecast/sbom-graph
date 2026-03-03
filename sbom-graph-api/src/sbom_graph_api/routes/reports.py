@@ -1851,6 +1851,77 @@ def policy_violations() -> Response | tuple[str | Response, int]:
     )
 
 
+@bp.route("/vex-coverage")
+@auth_required
+def vex_coverage() -> Response | tuple[str | Response, int]:
+    """Report showing VEX coverage statistics."""
+    internal_only = validate_boolean(request.args.get("internal_only"))
+    output_format = validate_format(request.args.get("format", "html"))
+
+    service = get_falkordb_service()
+    coverage = service.get_vex_coverage(internal_only=internal_only)
+    vulns = service.get_vulnerabilities_with_vex(internal_only=internal_only)
+
+    if output_format == "json":
+        return _build_json_response(
+            {
+                "report_type": "vex-coverage",
+                "generated_at": _get_current_timestamp(),
+                "filter": "internal_only" if internal_only else "all",
+                "stats": coverage,
+                "data": vulns,
+            },
+            "vex_coverage.json",
+        )
+
+    if output_format == "excel":
+        from sbom_graph_api.exports.excel import create_generic_excel
+
+        return create_generic_excel(
+            data=vulns,
+            columns=["defect_id", "severity", "description", "vex_status", "vex_count"],
+            sheet_name="VEX Coverage",
+            filename="vex_coverage.xlsx",
+        )
+
+    return Response(
+        render_template(
+            TABLE_TEMPLATE,
+            title=_get_internal_title("VEX Coverage", internal_only),
+            internal_only=internal_only,
+            headers=["Vulnerability", "Severity", "Description", "VEX Status", "VEX Statements"],
+            data=[
+                [
+                    v.get("defect_id", ""),
+                    v.get("severity", ""),
+                    v.get("description", "")[:100] if v.get("description") else "",
+                    v.get("vex_status") or "No VEX",
+                    v.get("vex_count", 0),
+                ]
+                for v in vulns
+            ],
+            stats={
+                "Total Vulnerabilities": coverage.get("total_vulnerabilities", 0),
+                "With VEX": coverage.get("with_vex", 0),
+                "Without VEX": coverage.get("without_vex", 0),
+                "Coverage": f"{coverage.get('coverage_percent', 0)}%",
+            },
+            excel_url=build_url_with_params(
+                url_for("reports.vex_coverage"),
+                format="excel",
+                internal_only=internal_only,
+            ),
+            json_url=build_url_with_params(
+                url_for("reports.vex_coverage"),
+                format="json",
+                internal_only=internal_only,
+            ),
+            schema_url=None,
+        ),
+        mimetype="text/html",
+    )
+
+
 @bp.route("/license-conflicts")
 @auth_required
 def license_conflicts_report() -> Response | tuple[str | Response, int]:

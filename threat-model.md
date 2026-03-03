@@ -116,6 +116,9 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 
 | S19 | Policy annotation abuse (CertifyGood on vulnerable package) | T, E | sbom-graph-api | **Medium** | **High** | **Medium** | **PARTIALLY MITIGATED** | `POST /api/v1/policy/annotate` allows any authenticated user to create "good" annotations on known-vulnerable packages, bypassing CI/CD policy gates. Mitigated by: JWT authentication required, `created_by` audit field on every annotation, justification required, package existence verified before annotation. Residual: no role-based access control (all authenticated users can annotate), no approval workflow, annotations do not expire unless `expires_at` is set. |
 | S20 | On-demand enrichment abuse | D | sbom-graph-api -> sbom-graph-enrichment | **Medium** | **Medium** | **Medium** | **MITIGATED** | `POST /api/v1/enrich/vulnerabilities` allows authenticated users to trigger enrichment for up to 1000 purls per request, or fan-out for all packages. Mitigated by: JWT authentication, maximum 1000 purls per request, purl format validation, batched dispatch in the fan-out task, Celery rate limiting in the OSV certifier. |
+| S21 | Blast radius / patch plan information disclosure | I | sbom-graph-api | **Low** | **Medium** | **Low** | **MITIGATED** | `GET /api/v1/patch-plan/{defect_id}` and `GET /api/v1/blast-radius/{purl}` reveal the full dependency tree, team contacts, and organisational structure. Mitigated by: JWT authentication, `max_depth` capped at 50, `internal_only` filter available, `MAX_TRANSITIVE_NODES` safety cap prevents unbounded traversal. Residual: authenticated users see the full internal dependency graph which may be sensitive in multi-tenant scenarios. |
+| S22 | VEX statement injection (false "not_affected") | T, E | sbom-graph-api | **Medium** | **High** | **Medium** | **PARTIALLY MITIGATED** | `POST /ingest/vex` allows authenticated users to upload VEX documents that mark vulnerabilities as "not_affected", potentially suppressing legitimate vulnerability findings in reports. Mitigated by: JWT authentication, `VexStatus.from_str()` validation (only 4 allowed statuses), `source_document` audit trail, `timestamp` field, statements linked to existing Defect/Version nodes only. Residual: no approval workflow, no role-based restriction on VEX uploads, a single malicious VEX document can suppress multiple findings. |
+| S23 | Contact information exposure via PointOfContact nodes | I | sbom-graph-api | **Low** | **Low** | **Low** | **MITIGATED** | `POST /api/v1/contacts` stores email addresses and team/Slack channel info. `GET /api/v1/patch-plan` returns this data in responses. Mitigated by: JWT authentication on both endpoints, email format validation, length limits, package existence verification before linking. |
 
 ### Data Flow Threats
 
@@ -177,6 +180,12 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | Enrichment request size limit | sbom-graph-api | **Strong** -- max 1000 purls per enrichment request |
 | Policy annotation audit trail | sbom-graph-api | **Moderate** -- `created_by`, `created_at` on every annotation |
 | Vulnerability enrichment metadata | sbom-graph-enrichment | **Moderate** -- `last_enriched_at`, `enrichment_source`, `aliases` tracked |
+| JWT auth on patch-plan/blast-radius/contacts/VEX endpoints | sbom-graph-api | **Strong** -- all new endpoints require `@auth_required` |
+| Patch plan max_depth cap (50) | sbom-graph-api | **Strong** -- prevents unbounded BFS traversal |
+| VEX status validation | sbom-graph-model | **Strong** -- `VexStatus.from_str()` rejects invalid statuses |
+| VEX source_document audit trail | sbom-graph-model | **Moderate** -- links statements to source documents for traceability |
+| Contact email format validation | sbom-graph-api | **Strong** -- email must contain `@`, length limited to 254 chars |
+| OpenVEX document structure validation | sbom-graph-model | **Moderate** -- `VexProcessor._validate_document()` checks for required fields |
 
 ### Controls Missing
 
@@ -279,10 +288,10 @@ All primary dependencies are actively maintained with no unpatched critical vuln
  Likelihood |             |                |              |                |
             +-------------+----------------+--------------+----------------+
  Medium     |             | D4,I2,I3,S8   | D2, I5, S5   |                |
- Likelihood |             | S12,S16,S20    | S19          |                |
+ Likelihood |             | S12,S16,S20    | S19,S22      |                |
             +-------------+----------------+--------------+----------------+
- Low        | I4, S13     | I1,D3,S9,S14  | S11, S17     |                |
- Likelihood |             | S15            |              |                |
+ Low        | I4,S13,S23  | I1,D3,S9,S14  | S11, S17     |                |
+ Likelihood |             | S15,S21        |              |                |
             +-------------+----------------+--------------+----------------+
 
  Mitigated (removed from heat map): S2, S18
@@ -308,3 +317,4 @@ All primary dependencies are actively maintained with no unpatched critical vuln
 | 2026-02-28 | AI-assisted threat model | Added enrichment pipeline data flows and threats (S15-S18) |
 | 2026-02-28 | AI-assisted threat model | Mitigated S18 (Redis URL log redaction filter), S2 (auto-generated FalkorDB password + startup warning), partially mitigated S5 (enrichment NetworkPolicy). Documented SSRF design decision (S15). Added enrichment controls to Security Controls Summary. |
 | 2026-02-28 | AI-assisted threat model | Added S19 (policy annotation abuse) and S20 (on-demand enrichment abuse) for vulnerability enrichment and policy annotation features. Added controls: JWT auth on new endpoints, policy input validation, enrichment request size limit, annotation audit trail, enrichment metadata tracking. |
+| 2026-02-28 | AI-assisted threat model | Added S21 (blast radius info disclosure), S22 (VEX statement injection), S23 (contact info exposure) for patch planning and VEX support features. Added controls: max_depth cap, VEX status validation, source_document audit trail, email format validation, OpenVEX document validation. |

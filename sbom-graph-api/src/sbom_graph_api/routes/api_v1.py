@@ -208,6 +208,142 @@ def delete_policy_annotation(annotation_id: str) -> tuple[Response, int]:
     return jsonify({"status": "deleted", "annotation_id": annotation_id}), 200
 
 
+@bp.route("/patch-plan/<path:defect_id>")
+@auth_required
+def get_patch_plan(defect_id: str) -> tuple[Response, int]:
+    """Return frontier-level patch plan for a vulnerability.
+
+    Query params:
+        max_depth: Maximum BFS depth (default 10).
+        internal_only: "true" to restrict to internal packages.
+    """
+    if not defect_id:
+        return jsonify({"error": "defect_id is required"}), 400
+
+    max_depth = min(int(request.args.get("max_depth", "10")), 50)
+    internal_only = request.args.get("internal_only", "false").lower() == "true"
+
+    service = get_falkordb_service()
+    result = service.compute_patch_plan(
+        defect_id=defect_id,
+        max_depth=max_depth,
+        internal_only=internal_only,
+    )
+
+    if result.get("defect") is None:
+        return jsonify({"error": "Vulnerability not found"}), 404
+
+    return jsonify(result), 200
+
+
+@bp.route("/blast-radius/<path:purl>")
+@auth_required
+def get_blast_radius(purl: str) -> tuple[Response, int]:
+    """Return blast radius for a compromised package.
+
+    Query params:
+        max_depth: Maximum BFS depth (default 10).
+        internal_only: "true" to restrict to internal packages.
+    """
+    err = _validate_purl(purl)
+    if err:
+        return err
+
+    max_depth = min(int(request.args.get("max_depth", "10")), 50)
+    internal_only = request.args.get("internal_only", "false").lower() == "true"
+
+    service = get_falkordb_service()
+    result = service.compute_blast_radius(
+        purl=purl,
+        max_depth=max_depth,
+        internal_only=internal_only,
+    )
+
+    return jsonify(result), 200
+
+
+_MAX_EMAIL_LENGTH = 254
+_MAX_TEAM_LENGTH = 200
+
+
+@bp.route("/contacts", methods=["POST"])
+@auth_required
+def create_contact() -> tuple[Response, int]:
+    """Create a PointOfContact linked to a package.
+
+    Body: ``{email, purl, team?, slack_channel?}``.
+    """
+    body = request.get_json(silent=True)
+    if not body:
+        return jsonify({"error": "JSON body required"}), 400
+
+    email = body.get("email", "")
+    purl = body.get("purl", "")
+    team = body.get("team")
+    slack_channel = body.get("slack_channel")
+
+    if not email or not isinstance(email, str) or "@" not in email:
+        return jsonify({"error": "Valid email is required"}), 400
+    if len(email) > _MAX_EMAIL_LENGTH:
+        return jsonify({"error": "email exceeds maximum length"}), 400
+    if not purl or not isinstance(purl, str) or not purl.startswith("pkg:"):
+        return jsonify({"error": "Valid purl is required"}), 400
+    if len(purl) > _MAX_PURL_LENGTH:
+        return jsonify({"error": "purl exceeds maximum length"}), 400
+    if team and len(team) > _MAX_TEAM_LENGTH:
+        return jsonify({"error": "team exceeds maximum length"}), 400
+
+    service = get_falkordb_service()
+    version_exists = service.execute_query(
+        "MATCH (v:Version {package_url: $purl}) RETURN 1 LIMIT 1",
+        {"purl": purl},
+    )
+    if not version_exists:
+        return jsonify({"error": "Package not found in graph"}), 404
+
+    service.execute_write(
+        """
+        MERGE (c:PointOfContact {email: $email})
+        ON CREATE SET c.team = $team, c.slack_channel = $slack_channel
+        ON MATCH SET c.team = $team, c.slack_channel = $slack_channel
+        """,
+        {"email": email, "team": team, "slack_channel": slack_channel},
+    )
+    service.execute_write(
+        """
+        MATCH (c:PointOfContact {email: $email})
+        MATCH (v:Version {package_url: $purl})
+        MERGE (c)-[:CONTACT_FOR]->(v)
+        """,
+        {"email": email, "purl": purl},
+    )
+
+    return jsonify({
+        "email": email,
+        "purl": purl,
+        "team": team,
+        "slack_channel": slack_channel,
+    }), 201
+
+
+@bp.route("/package/<path:purl>/vex")
+@auth_required
+def package_vex(purl: str) -> tuple[Response, int]:
+    """Return VEX statements for a package's vulnerabilities."""
+    err = _validate_purl(purl)
+    if err:
+        return err
+
+    service = get_falkordb_service()
+    statements = service.get_vex_for_package(purl)
+
+    return jsonify({
+        "purl": purl,
+        "statements": statements,
+        "count": len(statements),
+    }), 200
+
+
 @bp.route("/package/<path:purl>/policy")
 @auth_required
 def check_package_policy(purl: str) -> tuple[Response, int]:

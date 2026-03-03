@@ -623,6 +623,153 @@ class Persistence:
             logger.info("Deleted PolicyAnnotation id=%s", annotation_id)
         return deleted
 
+    def create_point_of_contact(
+        self,
+        email: str,
+        team: str | None = None,
+        slack_channel: str | None = None,
+    ) -> None:
+        """Create or update a PointOfContact node.
+
+        Uses ``email`` as the MERGE key.
+
+        Args:
+            email: Contact email address.
+            team: Team name.
+            slack_channel: Slack channel.
+        """
+        if not email:
+            logger.warning("Cannot create point of contact: email is empty")
+            return
+
+        params: dict[str, Any] = {"email": email}
+        name_value_pairs: list[tuple[str, Any]] = [
+            ("team", team),
+            ("slack_channel", slack_channel),
+        ]
+
+        extended_query, params = self._create_extended_query(
+            name_value_pairs=name_value_pairs,
+            params=params,
+        )
+
+        query = f"""
+            MERGE (n:PointOfContact {{email: $email}})
+            {extended_query}
+        """
+        logger.info("Creating PointOfContact email=%s", email)
+        self.run_query(query=cast(LiteralString, query), params=params)
+
+    def link_contact_to_version(self, email: str, purl: str) -> None:
+        """Create a CONTACT_FOR edge between a PointOfContact and a Version.
+
+        Args:
+            email: The contact email.
+            purl: The package URL of the version.
+        """
+        if not email or not purl:
+            logger.warning(
+                "Cannot create CONTACT_FOR edge: email=%s purl=%s", email, purl,
+            )
+            return
+
+        query = """
+            MATCH (c:PointOfContact {email: $email})
+            MATCH (v:Version {package_url: $purl})
+            MERGE (c)-[:CONTACT_FOR]->(v)
+        """
+        logger.info("Creating CONTACT_FOR edge email=%s -> purl=%s", email, purl)
+        self.run_query(query=query, params={"email": email, "purl": purl})
+
+    def create_vex_statement(
+        self,
+        statement_id: str,
+        status: str,
+        justification: str | None = None,
+        impact_statement: str | None = None,
+        action_statement: str | None = None,
+        source_document: str | None = None,
+        timestamp: str | None = None,
+    ) -> None:
+        """Create or update a VexStatement node.
+
+        Args:
+            statement_id: Unique ID (UUID).
+            status: One of not_affected, affected, fixed, under_investigation.
+            justification: Reason for the status.
+            impact_statement: Impact description.
+            action_statement: Recommended action.
+            source_document: Source document URI.
+            timestamp: ISO timestamp.
+        """
+        if not statement_id:
+            logger.warning("Cannot create VEX statement: statement_id is empty")
+            return
+
+        from .model import VexStatus
+        safe_status = VexStatus.from_str(status)
+
+        params: dict[str, Any] = {"statement_id": statement_id}
+        name_value_pairs: list[tuple[str, Any]] = [
+            ("status", safe_status),
+            ("justification", justification),
+            ("impact_statement", impact_statement),
+            ("action_statement", action_statement),
+            ("source_document", source_document),
+            ("timestamp", timestamp),
+        ]
+
+        extended_query, params = self._create_extended_query(
+            name_value_pairs=name_value_pairs,
+            params=params,
+        )
+
+        query = f"""
+            MERGE (n:VexStatement {{statement_id: $statement_id}})
+            {extended_query}
+        """
+        logger.info("Creating VexStatement id=%s status=%s", statement_id, safe_status)
+        self.run_query(query=cast(LiteralString, query), params=params)
+
+    def link_vex_to_version(self, statement_id: str, purl: str) -> None:
+        """Create a HAS_VEX edge between a Version and a VexStatement.
+
+        Args:
+            statement_id: The VEX statement ID.
+            purl: The package URL of the version.
+        """
+        if not statement_id or not purl:
+            return
+
+        query = """
+            MATCH (v:Version {package_url: $purl})
+            MATCH (s:VexStatement {statement_id: $statement_id})
+            MERGE (v)-[:HAS_VEX]->(s)
+        """
+        logger.info("Creating HAS_VEX edge purl=%s -> statement=%s", purl, statement_id)
+        self.run_query(query=query, params={"purl": purl, "statement_id": statement_id})
+
+    def link_vex_to_defect(self, statement_id: str, defect_id: str) -> None:
+        """Create a REFERS_TO edge between a VexStatement and a Defect.
+
+        Args:
+            statement_id: The VEX statement ID.
+            defect_id: The defect/vulnerability ID.
+        """
+        if not statement_id or not defect_id:
+            return
+
+        query = """
+            MATCH (s:VexStatement {statement_id: $statement_id})
+            MATCH (d:Defect {id: $defect_id})
+            MERGE (s)-[:REFERS_TO]->(d)
+        """
+        logger.info("Creating REFERS_TO edge statement=%s -> defect=%s", statement_id, defect_id)
+        self.run_query(
+            query=query,
+            params={"statement_id": statement_id, "defect_id": defect_id},
+        )
+
     # Edge creation methods
 
     def create_dependency(self, parent: Version, child: Version) -> None:
@@ -1024,6 +1171,8 @@ class Persistence:
             ("License", "spdx_id"),
             ("PolicyAnnotation", "annotation_id"),
             ("PolicyAnnotation", "type"),
+            ("PointOfContact", "email"),
+            ("VexStatement", "statement_id"),
         ]
 
         for label, property_name in index_definitions:

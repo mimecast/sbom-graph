@@ -2866,6 +2866,341 @@ class FalkorDBService:
             "annotations": annotations,
         }
 
+    def compute_patch_plan(
+        self,
+        defect_id: str,
+        max_depth: int = 10,
+        internal_only: bool = False,
+    ) -> dict[str, Any]:
+        """Compute a frontier-level patch plan for a vulnerability.
+
+        Starts from the Defect node, traverses VERSION_DEFECT to get
+        affected versions (frontier level 0), then BFS outward via
+        reverse DEPENDENCY_VERSION edges to compute frontier levels 1..N.
+        At each level, collects affected projects and associated PointOfContact nodes.
+
+        Args:
+            defect_id: The vulnerability ID (e.g. CVE-2024-xxx).
+            max_depth: Maximum BFS depth.
+            internal_only: If True, only include INTERNAL-labelled nodes.
+
+        Returns:
+            Dict with defect info, frontiers, total_affected, and contacts.
+        """
+        defect_query = """
+            MATCH (d:Defect)
+            WHERE d.id = $defect_id OR d.defect_id = $defect_id
+            RETURN d.id AS id, COALESCE(d.id, d.defect_id) AS defect_id,
+                   d.severity AS severity, d.aliases AS aliases,
+                   d.description AS description
+            LIMIT 1
+        """
+        defect_result = self.execute_query(defect_query, {"defect_id": defect_id})
+        if not defect_result:
+            return {"defect": None, "frontiers": [], "total_affected": 0, "contacts": []}
+
+        defect_row = defect_result[0]
+        defect_info = {
+            "id": defect_row[0] or defect_row[1],
+            "severity": defect_row[2],
+            "aliases": defect_row[3] or [],
+            "description": defect_row[4],
+        }
+
+        label = f":{self.internal_label}" if internal_only else ":Version"
+        level0_query = f"""
+            MATCH (v{label})-[:VERSION_DEFECT]->(d:Defect)
+            WHERE d.id = $defect_id OR d.defect_id = $defect_id
+            RETURN v.project_name AS project_name, v.name AS version,
+                   v.package_url AS purl, v.project_group AS project_group
+        """
+        level0_result = self.execute_query(level0_query, {"defect_id": defect_id})
+
+        frontiers: list[dict[str, Any]] = []
+        all_contacts: list[dict[str, Any]] = []
+        visited_purls: set[str] = set()
+        current_purls: set[str] = set()
+
+        level0_packages: list[dict[str, Any]] = []
+        for row in level0_result:
+            purl = row[2]
+            pkg: dict[str, Any] = {
+                "project_name": row[0] or "",
+                "version": row[1] or "",
+                "purl": purl or "",
+                "project_group": row[3] or "",
+                "contacts": [],
+            }
+            if purl:
+                contacts = self._get_contacts_for_purl(purl)
+                pkg["contacts"] = contacts
+                all_contacts.extend(contacts)
+                visited_purls.add(purl)
+                current_purls.add(purl)
+            level0_packages.append(pkg)
+
+        if level0_packages:
+            frontiers.append({"level": 0, "packages": level0_packages})
+
+        for level in range(1, max_depth + 1):
+            if not current_purls:
+                break
+
+            dep_query = f"""
+                MATCH (parent{label})-[:DEPENDENCY_VERSION]->(child:Version)
+                WHERE child.package_url IN $purls
+                  AND parent.package_url IS NOT NULL
+                RETURN DISTINCT parent.project_name AS project_name,
+                       parent.name AS version,
+                       parent.package_url AS purl,
+                       parent.project_group AS project_group
+            """
+            dep_result = self.execute_query(dep_query, {"purls": list(current_purls)})
+
+            next_purls: set[str] = set()
+            level_packages: list[dict[str, Any]] = []
+
+            for row in dep_result:
+                purl = row[2]
+                if purl and purl not in visited_purls:
+                    visited_purls.add(purl)
+                    next_purls.add(purl)
+                    contacts = self._get_contacts_for_purl(purl)
+                    all_contacts.extend(contacts)
+                    level_packages.append({
+                        "project_name": row[0] or "",
+                        "version": row[1] or "",
+                        "purl": purl,
+                        "project_group": row[3] or "",
+                        "contacts": contacts,
+                    })
+
+            if level_packages:
+                frontiers.append({"level": level, "packages": level_packages})
+
+            current_purls = next_purls
+
+            if len(visited_purls) >= MAX_TRANSITIVE_NODES:
+                break
+
+        seen_emails: set[str] = set()
+        unique_contacts: list[dict[str, Any]] = []
+        for c in all_contacts:
+            if c["email"] not in seen_emails:
+                seen_emails.add(c["email"])
+                unique_contacts.append(c)
+
+        total = sum(len(f["packages"]) for f in frontiers)
+
+        return {
+            "defect": defect_info,
+            "frontiers": frontiers,
+            "total_affected": total,
+            "contacts": unique_contacts,
+        }
+
+    def _get_contacts_for_purl(self, purl: str) -> list[dict[str, Any]]:
+        """Get PointOfContact nodes linked to a package version."""
+        result = self.execute_query(
+            """
+            MATCH (c:PointOfContact)-[:CONTACT_FOR]->(v:Version {package_url: $purl})
+            RETURN c.email AS email, c.team AS team, c.slack_channel AS slack_channel
+            """,
+            {"purl": purl},
+        )
+        return [
+            {"email": row[0] or "", "team": row[1] or "", "slack_channel": row[2] or ""}
+            for row in result
+        ]
+
+    def compute_blast_radius(
+        self,
+        purl: str,
+        max_depth: int = 10,
+        internal_only: bool = False,
+    ) -> dict[str, Any]:
+        """Compute blast radius from a specific package outward through dependants.
+
+        Args:
+            purl: The package URL to analyze.
+            max_depth: Maximum BFS depth.
+            internal_only: If True, only include INTERNAL-labelled nodes.
+
+        Returns:
+            Dict with package info, affected dependants by depth, and total count.
+        """
+        label = f":{self.internal_label}" if internal_only else ":Version"
+        frontiers: list[dict[str, Any]] = []
+        visited: set[str] = {purl}
+        current: set[str] = {purl}
+
+        for depth in range(1, max_depth + 1):
+            if not current:
+                break
+
+            query = f"""
+                MATCH (parent{label})-[:DEPENDENCY_VERSION]->(child:Version)
+                WHERE child.package_url IN $purls
+                  AND parent.package_url IS NOT NULL
+                RETURN DISTINCT parent.project_name AS project_name,
+                       parent.name AS version,
+                       parent.package_url AS purl,
+                       parent.project_group AS project_group
+            """
+            result = self.execute_query(query, {"purls": list(current)})
+
+            next_frontier: set[str] = set()
+            level_packages: list[dict[str, Any]] = []
+
+            for row in result:
+                p = row[2]
+                if p and p not in visited:
+                    visited.add(p)
+                    next_frontier.add(p)
+                    level_packages.append({
+                        "project_name": row[0] or "",
+                        "version": row[1] or "",
+                        "purl": p,
+                        "project_group": row[3] or "",
+                    })
+
+            if level_packages:
+                frontiers.append({"depth": depth, "packages": level_packages})
+
+            current = next_frontier
+
+            if len(visited) >= MAX_TRANSITIVE_NODES:
+                break
+
+        total = sum(len(f["packages"]) for f in frontiers)
+
+        return {
+            "package": purl,
+            "frontiers": frontiers,
+            "total_affected": total,
+        }
+
+    def get_vex_for_package(self, purl: str) -> list[dict[str, Any]]:
+        """Return VEX statements for a package.
+
+        Args:
+            purl: The package URL.
+
+        Returns:
+            List of VEX statement dicts with linked vulnerability info.
+        """
+        query = """
+            MATCH (v:Version {package_url: $purl})-[:HAS_VEX]->(s:VexStatement)
+            OPTIONAL MATCH (s)-[:REFERS_TO]->(d:Defect)
+            RETURN s.statement_id AS statement_id,
+                   s.status AS status,
+                   s.justification AS justification,
+                   s.impact_statement AS impact_statement,
+                   s.action_statement AS action_statement,
+                   s.source_document AS source_document,
+                   s.timestamp AS timestamp,
+                   COALESCE(d.id, d.defect_id) AS vulnerability_id,
+                   d.severity AS vulnerability_severity
+            ORDER BY s.timestamp DESC
+        """
+        result = self.execute_query(query, {"purl": purl})
+        statements = []
+        for row in result:
+            statements.append({
+                "statement_id": row[0],
+                "status": row[1],
+                "justification": row[2],
+                "impact_statement": row[3],
+                "action_statement": row[4],
+                "source_document": row[5],
+                "timestamp": row[6],
+                "vulnerability_id": row[7],
+                "vulnerability_severity": row[8],
+            })
+        return statements
+
+    def get_vex_coverage(
+        self, internal_only: bool = False,
+    ) -> dict[str, Any]:
+        """Return VEX coverage statistics.
+
+        Counts vulnerabilities with and without VEX statements.
+        """
+        label = f":{self.internal_label}" if internal_only else ":Version"
+
+        total_query = f"""
+            MATCH (v{label})-[:VERSION_DEFECT]->(d:Defect)
+            RETURN count(DISTINCT d) AS total_vulns
+        """
+        total_result = self.execute_query(total_query, {})
+        total_vulns = total_result[0][0] if total_result else 0
+
+        covered_query = f"""
+            MATCH (v{label})-[:VERSION_DEFECT]->(d:Defect)
+            MATCH (v)-[:HAS_VEX]->(s:VexStatement)-[:REFERS_TO]->(d)
+            RETURN count(DISTINCT d) AS covered_vulns
+        """
+        covered_result = self.execute_query(covered_query, {})
+        covered_vulns = covered_result[0][0] if covered_result else 0
+
+        uncovered = total_vulns - covered_vulns
+        pct = round((covered_vulns / total_vulns * 100), 1) if total_vulns > 0 else 0.0
+
+        return {
+            "total_vulnerabilities": total_vulns,
+            "with_vex": covered_vulns,
+            "without_vex": uncovered,
+            "coverage_percent": pct,
+        }
+
+    def get_vulnerabilities_with_vex(
+        self, internal_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return all vulnerabilities with their latest VEX status.
+
+        Each vulnerability includes its latest VEX status (if any).
+        """
+        label = f":{self.internal_label}" if internal_only else ":Version"
+
+        query = f"""
+            MATCH (v{label})-[:VERSION_DEFECT]->(d:Defect)
+            OPTIONAL MATCH (v)-[:HAS_VEX]->(s:VexStatement)-[:REFERS_TO]->(d)
+            WITH d, collect(DISTINCT s) AS statements,
+                 collect(DISTINCT {{
+                     project_name: v.project_name,
+                     version: v.name,
+                     project_group: v.project_group
+                 }}) AS affected
+            RETURN COALESCE(d.id, d.defect_id) AS defect_id,
+                   d.severity AS severity,
+                   d.description AS description,
+                   CASE WHEN size(statements) > 0
+                        THEN head(statements).status
+                        ELSE null END AS vex_status,
+                   size(statements) AS vex_count,
+                   affected
+            ORDER BY
+                CASE d.severity
+                    WHEN 'CRITICAL' THEN 1 WHEN 'critical' THEN 1
+                    WHEN 'HIGH' THEN 2 WHEN 'high' THEN 2
+                    WHEN 'MEDIUM' THEN 3 WHEN 'medium' THEN 3
+                    WHEN 'LOW' THEN 4 WHEN 'low' THEN 4
+                    ELSE 5
+                END
+        """
+        result = self.execute_query(query, {})
+        vulns = []
+        for row in result:
+            vulns.append({
+                "defect_id": row[0],
+                "severity": row[1],
+                "description": row[2],
+                "vex_status": row[3],
+                "vex_count": row[4],
+                "affected_versions": row[5] or [],
+            })
+        return vulns
+
 
 # Global service instance
 _service: FalkorDBService | None = None

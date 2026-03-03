@@ -120,6 +120,7 @@ def create_app() -> Flask:
     # Exempt JWT-only endpoints from CSRF (no browser form)
     csrf.exempt(app.view_functions["auth.refresh"])
     csrf.exempt(app.view_functions["ingest.upload_cyclonedx"])
+    csrf.exempt(app.view_functions["ingest.upload_vex"])
     csrf.exempt(api_v1.bp)
 
     # Health check endpoint (no auth, no CSRF)

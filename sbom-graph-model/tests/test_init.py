@@ -39,9 +39,11 @@ class TestRootPackageExports:
     def test_all_list_complete(self):
         expected = {
             "RiskStatus", "DefectType", "ProjectType", "LicenseRiskCategory",
-            "PolicyType",
+            "PolicyType", "VexStatus",
             "Version", "Project", "Defect", "License", "PolicyAnnotation",
-            "VersionDefect", "VersionLicense", "VersionPolicy", "DependencyVersion", "HasVersion",
+            "PointOfContact", "VexStatement",
+            "VersionDefect", "VersionLicense", "VersionPolicy", "ContactFor",
+            "VersionVex", "VexRefersTo", "DependencyVersion", "HasVersion",
             "Persistence",
         }
         assert set(sbom_graph_model.__all__) == expected

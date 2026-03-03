@@ -147,3 +147,45 @@ def upload_cyclonedx() -> tuple[Response, int]:
     except Exception:
         logger.exception("Unexpected error processing SBOM")
         return jsonify({"error": "An unexpected error occurred while processing the SBOM"}), 500
+
+
+@bp.route("/vex", methods=["POST"])
+@auth_required
+def upload_vex() -> tuple[Response, int]:
+    """Upload an OpenVEX document.
+
+    Accepts a JSON body containing an OpenVEX document. Parses and
+    persists VEX statements, linking them to existing Defect and
+    Version nodes.
+
+    Returns:
+        JSON summary: ``{status, statements_count, linked_vulnerabilities}``.
+    """
+    body = request.get_json(silent=True)
+    if not body:
+        return jsonify({"error": "JSON body required"}), 400
+
+    if not isinstance(body, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+
+    try:
+        from sbom_graph_model.vex import VexProcessor, VexProcessingError
+    except ImportError:
+        return jsonify({"error": "VEX processing module not available"}), 503
+
+    persistence = _create_persistence()
+
+    try:
+        processor = VexProcessor(persistence)
+        result = processor.process_vex_document(body)
+    except VexProcessingError as e:
+        return jsonify({"error": str(e)}), 422
+    except Exception:
+        logger.exception("VEX processing failed")
+        return jsonify({"error": "Internal error processing VEX document"}), 500
+
+    return jsonify({
+        "status": "ok",
+        "statements_count": result["statements_processed"],
+        "linked_vulnerabilities": result["linked_vulnerabilities"],
+    }), 201

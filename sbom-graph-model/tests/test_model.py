@@ -10,11 +10,13 @@ from datetime import datetime
 import pytest
 
 from sbom_graph_model.model import (
+    ContactFor,
     Defect,
     DefectType,
     DependencyVersion,
     HasVersion,
     License,
+    PointOfContact,
     PolicyAnnotation,
     PolicyType,
     Project,
@@ -23,6 +25,10 @@ from sbom_graph_model.model import (
     Version,
     VersionDefect,
     VersionPolicy,
+    VexRefersTo,
+    VexStatement,
+    VexStatus,
+    VersionVex,
 )
 
 
@@ -256,6 +262,129 @@ class TestVersionPolicy:
         vp = VersionPolicy()
         assert vp.version is None
         assert vp.annotation is None
+
+
+class TestPointOfContact:
+    """Tests for the PointOfContact node class."""
+
+    def test_default_init(self):
+        poc = PointOfContact()
+        assert poc.email is None
+        assert poc.team is None
+        assert poc.slack_channel is None
+
+    def test_set_fields(self):
+        poc = PointOfContact()
+        poc.email = "team@example.com"
+        poc.team = "security-team"
+        poc.slack_channel = "#patches"
+        assert poc.email == "team@example.com"
+        assert poc.team == "security-team"
+        assert poc.slack_channel == "#patches"
+
+
+class TestContactFor:
+    """Tests for the ContactFor edge class."""
+
+    def test_default_init(self):
+        cf = ContactFor()
+        assert cf.contact is None
+        assert cf.version is None
+
+    def test_set_attributes(self, sample_version):
+        cf = ContactFor()
+        poc = PointOfContact()
+        poc.email = "owner@example.com"
+        cf.contact = poc
+        cf.version = sample_version
+        assert cf.contact.email == "owner@example.com"
+        assert cf.version.version == "1.0.0"
+
+
+class TestVexStatus:
+    """Tests for the VexStatus string enum."""
+
+    def test_from_str_not_affected(self):
+        assert VexStatus.from_str("not_affected") == "not_affected"
+
+    def test_from_str_affected(self):
+        assert VexStatus.from_str("affected") == "affected"
+
+    def test_from_str_fixed(self):
+        assert VexStatus.from_str("fixed") == "fixed"
+
+    def test_from_str_under_investigation(self):
+        assert VexStatus.from_str("under_investigation") == "under_investigation"
+
+    def test_from_str_invalid_raises(self):
+        with pytest.raises(ValueError, match="Invalid VEX status"):
+            VexStatus.from_str("invalid")
+
+    def test_from_str_none_raises(self):
+        with pytest.raises(ValueError):
+            VexStatus.from_str(None)
+
+
+class TestVexStatement:
+    """Tests for the VexStatement node class."""
+
+    def test_default_init(self):
+        vs = VexStatement()
+        assert vs.statement_id is None
+        assert vs.status is None
+        assert vs.justification is None
+        assert vs.impact_statement is None
+        assert vs.action_statement is None
+        assert vs.source_document is None
+        assert vs.timestamp is None
+
+    def test_set_fields(self):
+        vs = VexStatement()
+        vs.statement_id = "uuid-vex-1"
+        vs.status = VexStatus.NOT_AFFECTED
+        vs.justification = "Component not in use"
+        vs.impact_statement = "No impact"
+        vs.action_statement = "None required"
+        vs.source_document = "vex://doc-1"
+        vs.timestamp = "2024-06-01T00:00:00Z"
+        assert vs.statement_id == "uuid-vex-1"
+        assert vs.status == "not_affected"
+
+
+class TestVersionVex:
+    """Tests for the VersionVex edge class."""
+
+    def test_default_init(self):
+        vv = VersionVex()
+        assert vv.version is None
+        assert vv.statement is None
+
+    def test_set_attributes(self, sample_version):
+        vv = VersionVex()
+        vs = VexStatement()
+        vs.statement_id = "stmt-1"
+        vv.version = sample_version
+        vv.statement = vs
+        assert vv.version.version == "1.0.0"
+        assert vv.statement.statement_id == "stmt-1"
+
+
+class TestVexRefersTo:
+    """Tests for the VexRefersTo edge class."""
+
+    def test_default_init(self):
+        vrt = VexRefersTo()
+        assert vrt.statement is None
+        assert vrt.defect is None
+
+    def test_set_attributes(self, sample_defect):
+        vrt = VexRefersTo()
+        vs = VexStatement()
+        vs.statement_id = "stmt-1"
+        vrt.statement = vs
+        vrt.defect = sample_defect
+        assert vrt.statement.statement_id == "stmt-1"
+        assert vrt.defect.id == "CVE-2024-12345"
 
 
 class TestDefectEnrichmentFields:

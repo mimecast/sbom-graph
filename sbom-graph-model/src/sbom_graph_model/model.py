@@ -139,6 +139,88 @@ class VersionPolicy:
         self.annotation: Optional[PolicyAnnotation] = None
 
 
+class PointOfContact:
+    """Represents a team or individual responsible for a package.
+
+    Attributes:
+        email: Contact email address.
+        team: Team name responsible for the package.
+        slack_channel: Slack channel for notifications.
+    """
+
+    def __init__(self):
+        self.email: Optional[str] = None
+        self.team: Optional[str] = None
+        self.slack_channel: Optional[str] = None
+
+
+class ContactFor:
+    """Edge linking a PointOfContact to a Version (CONTACT_FOR)."""
+
+    def __init__(self):
+        self.contact: Optional[PointOfContact] = None
+        self.version: Optional[Version] = None
+
+
+class VexStatus(str):
+    """VEX statement status values."""
+    NOT_AFFECTED = "not_affected"
+    AFFECTED = "affected"
+    FIXED = "fixed"
+    UNDER_INVESTIGATION = "under_investigation"
+
+    _VALID: frozenset[str] = frozenset({
+        NOT_AFFECTED, AFFECTED, FIXED, UNDER_INVESTIGATION,
+    })
+
+    @classmethod
+    def from_str(cls, value: str | None) -> str:
+        if value and value in cls._VALID:
+            return value
+        raise ValueError(
+            f"Invalid VEX status {value!r}: must be one of {sorted(cls._VALID)}"
+        )
+
+
+class VexStatement:
+    """Represents a VEX (Vulnerability Exploitability eXchange) statement.
+
+    Attributes:
+        statement_id: Unique identifier (auto-generated UUID).
+        status: One of not_affected, affected, fixed, under_investigation.
+        justification: Reason for the status determination.
+        impact_statement: Description of the impact.
+        action_statement: Recommended action.
+        source_document: URI or identifier of the source VEX document.
+        timestamp: ISO timestamp of the statement.
+    """
+
+    def __init__(self):
+        self.statement_id: Optional[str] = None
+        self.status: Optional[str] = None  # VexStatus value
+        self.justification: Optional[str] = None
+        self.impact_statement: Optional[str] = None
+        self.action_statement: Optional[str] = None
+        self.source_document: Optional[str] = None
+        self.timestamp: Optional[str] = None
+
+
+class VersionVex:
+    """Edge linking a Version to a VexStatement (HAS_VEX)."""
+
+    def __init__(self):
+        self.version: Optional[Version] = None
+        self.statement: Optional[VexStatement] = None
+
+
+class VexRefersTo:
+    """Edge linking a VexStatement to a Defect (REFERS_TO)."""
+
+    def __init__(self):
+        self.statement: Optional[VexStatement] = None
+        self.defect: Optional[Defect] = None
+
+
 class LicenseRiskCategory(str):
     """Risk category for software licenses.
 
