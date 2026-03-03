@@ -15,7 +15,7 @@ import re
 import threading
 import time
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
 
@@ -145,7 +145,12 @@ def _fetch_project(
     for link in links:
         label = (link.get("label") or "").upper()
         url = link.get("url", "")
-        if label in ("SOURCE_REPO", "HOMEPAGE", "REPOSITORY") and "github.com" in url:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if (
+            label in ("SOURCE_REPO", "HOMEPAGE", "REPOSITORY")
+            and (host == "github.com" or host.endswith(".github.com"))
+        ):
             project_key = quote(url, safe="")
             project_url = f"{DEPSDEV_API_ALPHA}/projects/{project_key}"
             try:
