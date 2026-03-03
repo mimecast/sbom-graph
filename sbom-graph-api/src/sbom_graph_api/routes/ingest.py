@@ -180,7 +180,11 @@ def upload_vex() -> tuple[Response, int]:
         processor = VexProcessor(persistence)
         result = processor.process_vex_document(body)
     except VexProcessingError as e:
-        return jsonify({"error": str(e)}), 422
+        logger.warning("VEX document validation failed", exc_info=e)
+        return jsonify({
+            "error": "VEX document validation failed",
+            "error_code": "VEX_VALIDATION_ERROR",
+        }), 422
     except Exception:
         logger.exception("VEX processing failed")
         return jsonify({"error": "Internal error processing VEX document"}), 500
