@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
 
 from sbom_graph_enrichment.certifiers.base import FindingKind
 from sbom_graph_enrichment.certifiers.depsdev import (
