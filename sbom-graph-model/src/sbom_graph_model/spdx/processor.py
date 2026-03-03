@@ -553,5 +553,6 @@ def _extract_group_from_purl(purl: str) -> Optional[str]:
         if len(parts) >= 3:
             return parts[1]
     except (IndexError, ValueError):
-        pass
+        # Malformed purl; return None to indicate that no group could be extracted.
+        logger.debug("Failed to extract group from purl %r", purl, exc_info=True)
     return None
