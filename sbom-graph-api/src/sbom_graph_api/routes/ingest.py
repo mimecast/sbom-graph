@@ -273,7 +273,7 @@ def upload_spdx() -> tuple[Response, int]:
 
     except SPDXValidationError as e:
         logger.warning("SPDX validation failed: %s", e)
-        return jsonify({"error": "SPDX validation failed", "detail": str(e)}), 422
+        return jsonify({"error": "SPDX validation failed"}), 422
 
     except Exception:
         logger.exception("Unexpected error processing SPDX SBOM")
