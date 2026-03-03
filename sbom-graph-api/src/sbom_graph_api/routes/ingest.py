@@ -398,7 +398,8 @@ def upload_sbom() -> tuple[Response, int]:
                 "defects_count": len(defects),
             }), 201
         except SPDXValidationError as e:
-            return jsonify({"error": "SPDX validation failed", "detail": str(e)}), 422
+            logger.exception("SPDX validation failed during SBOM upload")
+            return jsonify({"error": "SPDX validation failed"}), 422
         except Exception:
             logger.exception("Unexpected error processing SPDX SBOM")
             return jsonify({"error": "An unexpected error occurred"}), 500
