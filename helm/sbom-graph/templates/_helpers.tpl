@@ -135,3 +135,71 @@ Returns "true" when TLS is enabled but no key/cert values are provided.
 {{- define "sbom-graph.tls.selfSigned" -}}
 {{- if and .Values.falkordb.tls.enabled (not (include "sbom-graph.tls.isProvided" .)) }}true{{- end }}
 {{- end }}
+
+{{/* ---- Enrichment Worker helpers ---- */}}
+
+{{- define "sbom-graph.enrichment.fullname" -}}
+{{- printf "%s-enrichment" (include "sbom-graph.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "sbom-graph.enrichment.labels" -}}
+{{ include "sbom-graph.labels" . }}
+app.kubernetes.io/component: enrichment
+{{- end }}
+
+{{- define "sbom-graph.enrichment.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "sbom-graph.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: enrichment
+{{- end }}
+
+{{/*
+Shared environment variables used by both the enrichment worker and beat
+Deployments.  Include via: {{- include "sbom-graph.enrichment.env" . | nindent N }}
+*/}}
+{{- define "sbom-graph.enrichment.env" -}}
+- name: FALKORDB_HOST
+  value: {{ include "sbom-graph.falkordb.fullname" . | quote }}
+- name: FALKORDB_PORT
+  value: "6379"
+- name: FALKORDB_GRAPH_NAME
+  value: {{ .Values.graphName | quote }}
+- name: FALKORDB_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "sbom-graph.falkordb.secretName" . }}
+      key: password
+- name: CELERY_BROKER_DB
+  value: {{ .Values.enrichment.celeryBrokerDb | quote }}
+- name: CELERY_RESULT_DB
+  value: {{ .Values.enrichment.celeryResultDb | quote }}
+- name: ENRICHMENT_INTERVAL
+  value: {{ .Values.enrichment.interval | quote }}
+{{- if .Values.global.internalPrefixes }}
+- name: INTERNAL_PREFIXES
+  value: {{ .Values.global.internalPrefixes | quote }}
+{{- end }}
+{{- if .Values.falkordb.tls.enabled }}
+- name: FALKORDB_CACERTS
+  value: /tls/ca.crt
+- name: CELERY_REDIS_SSL
+  value: "true"
+{{- end }}
+{{- end }}
+
+{{/* ---- Enrichment Beat helpers ---- */}}
+
+{{- define "sbom-graph.enrichmentBeat.fullname" -}}
+{{- printf "%s-enrichment-beat" (include "sbom-graph.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "sbom-graph.enrichmentBeat.labels" -}}
+{{ include "sbom-graph.labels" . }}
+app.kubernetes.io/component: enrichment-beat
+{{- end }}
+
+{{- define "sbom-graph.enrichmentBeat.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "sbom-graph.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: enrichment-beat
+{{- end }}

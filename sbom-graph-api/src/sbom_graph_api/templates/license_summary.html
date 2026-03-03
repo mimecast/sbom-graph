@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/report.css') }}">
+    <style>
+        td { vertical-align: top; }
+        .risk-permissive { color: #388e3c; }
+        .risk-weak_copyleft { color: #f57c00; }
+        .risk-strong_copyleft { color: #d32f2f; }
+        .risk-proprietary { color: #7b1fa2; }
+        .risk-unknown { color: #757575; }
+    </style>
+</head>
+<body>
+    <h1>{{ title }}</h1>
+
+    <div class="download-links">
+        <a href="{{ url_for('reports.license_summary_report', project_name=project_name, version_name=version_name, format='excel') }}" class="download-link">Download as Excel</a>
+        <a href="{{ url_for('reports.license_summary_report', project_name=project_name, version_name=version_name, format='json') }}" class="download-link">Download as JSON</a>
+    </div>
+
+    <p>Generated at: {{ generated_at }}</p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Group</th>
+                <th>Project</th>
+                <th>Version</th>
+                <th>PURL</th>
+                <th>SPDX ID</th>
+                <th>License</th>
+                <th>Risk Category</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in summary %}
+            <tr>
+                <td>{{ row.project_group }}</td>
+                <td>{{ row.project_name }}</td>
+                <td>{{ row.version }}</td>
+                <td>{{ row.purl }}</td>
+                <td>{{ row.spdx_id }}</td>
+                <td>{{ row.license_name }}</td>
+                <td class="risk-{{ row.risk_category }}">{{ row.risk_category | replace('_', ' ') | title }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7">No license data found.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>

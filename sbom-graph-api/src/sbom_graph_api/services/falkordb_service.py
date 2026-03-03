@@ -24,6 +24,7 @@ from typing import Any
 from falkordb import FalkorDB, Graph
 
 from sbom_graph_api.config import FalkorDBConfig, get_config
+from sbom_graph_model import LicenseRiskCategory
 
 # Default maximum depth for transitive queries to prevent runaway traversals
 # Set high enough to capture deep dependency chains (some graphs have 20+ levels)
@@ -123,6 +124,19 @@ class FalkorDBService:
         """
         result = self.graph.ro_query(query, params or {})
         return result.result_set
+
+    def execute_write(self, query: str, params: dict[str, Any] | None = None) -> list[Any]:
+        """Execute a write query (MERGE, CREATE, DELETE, SET) and return results.
+
+        Args:
+            query: Cypher query string
+            params: Query parameters
+
+        Returns:
+            List of result rows
+        """
+        result = self.graph.query(query, params or {})
+        return result.result_set if hasattr(result, "result_set") else []
 
     def find_version(
         self,
@@ -1969,17 +1983,19 @@ class FalkorDBService:
         Returns:
             List of vulnerability dicts with severity, affected versions, etc.
         """
-        # Query all defects with their affected versions
         if internal_only:
             query = f"""
                 MATCH (v:{self.internal_label})-[:VERSION_DEFECT]->(d:Defect)
-                RETURN DISTINCT d.defect_id as defect_id,
-                       d.title as title,
+                RETURN DISTINCT COALESCE(d.defect_id, d.id) as defect_id,
+                       COALESCE(d.title, d.description) as title,
                        d.description as description,
                        d.severity as severity,
-                       d.cvss_score as cvss_score,
+                       COALESCE(d.cvss_score, d.cvss) as cvss_score,
                        d.cwe_id as cwe_id,
                        d.published_date as published_date,
+                       d.last_enriched_at as last_enriched_at,
+                       d.aliases as aliases,
+                       d.enrichment_source as enrichment_source,
                        collect(DISTINCT {{
                            project_name: v.project_name,
                            version: v.name,
@@ -1988,23 +2004,30 @@ class FalkorDBService:
                 ORDER BY
                     CASE d.severity
                         WHEN 'CRITICAL' THEN 1
+                        WHEN 'critical' THEN 1
                         WHEN 'HIGH' THEN 2
+                        WHEN 'high' THEN 2
                         WHEN 'MEDIUM' THEN 3
+                        WHEN 'medium' THEN 3
                         WHEN 'LOW' THEN 4
+                        WHEN 'low' THEN 4
                         ELSE 5
                     END,
-                    d.cvss_score DESC
+                    COALESCE(d.cvss_score, d.cvss, 0) DESC
             """
         else:
             query = """
                 MATCH (v:Version)-[:VERSION_DEFECT]->(d:Defect)
-                RETURN DISTINCT d.defect_id as defect_id,
-                       d.title as title,
+                RETURN DISTINCT COALESCE(d.defect_id, d.id) as defect_id,
+                       COALESCE(d.title, d.description) as title,
                        d.description as description,
                        d.severity as severity,
-                       d.cvss_score as cvss_score,
+                       COALESCE(d.cvss_score, d.cvss) as cvss_score,
                        d.cwe_id as cwe_id,
                        d.published_date as published_date,
+                       d.last_enriched_at as last_enriched_at,
+                       d.aliases as aliases,
+                       d.enrichment_source as enrichment_source,
                        collect(DISTINCT {
                            project_name: v.project_name,
                            version: v.name,
@@ -2013,12 +2036,16 @@ class FalkorDBService:
                 ORDER BY
                     CASE d.severity
                         WHEN 'CRITICAL' THEN 1
+                        WHEN 'critical' THEN 1
                         WHEN 'HIGH' THEN 2
+                        WHEN 'high' THEN 2
                         WHEN 'MEDIUM' THEN 3
+                        WHEN 'medium' THEN 3
                         WHEN 'LOW' THEN 4
+                        WHEN 'low' THEN 4
                         ELSE 5
                     END,
-                    d.cvss_score DESC
+                    COALESCE(d.cvss_score, d.cvss, 0) DESC
             """
 
         result = self.execute_query(query, {})
@@ -2033,7 +2060,10 @@ class FalkorDBService:
                 "cvss_score": row[4],
                 "cwe_id": row[5],
                 "published_date": row[6],
-                "affected_versions": row[7] if row[7] else [],
+                "last_enriched_at": row[7],
+                "aliases": row[8] or [],
+                "enrichment_source": row[9],
+                "affected_versions": row[10] if row[10] else [],
             })
 
         return vulnerabilities
@@ -2256,6 +2286,585 @@ class FalkorDBService:
             })
 
         return centrality_data
+
+    # ---- License queries ----
+
+    def get_all_licenses(self, internal_only: bool = True) -> list[dict[str, Any]]:
+        """Return all licenses with their usage counts.
+
+        Args:
+            internal_only: If True, only count versions labelled INTERNAL.
+
+        Returns:
+            List of dicts: ``{spdx_id, name, risk_category, usage_count}``.
+        """
+        label = f":{self.internal_label}" if internal_only else ""
+        query = f"""
+            MATCH (v:Version{label})-[:HAS_LICENSE]->(l:License)
+            RETURN
+                l.spdx_id AS spdx_id,
+                l.name AS name,
+                l.risk_category AS risk_category,
+                COUNT(DISTINCT v) AS usage_count
+            ORDER BY usage_count DESC
+        """
+        result = self.execute_query(query)
+        return [
+            {
+                "spdx_id": row[0] or "",
+                "name": row[1] or "",
+                "risk_category": LicenseRiskCategory.from_str(row[2]),
+                "usage_count": row[3] or 0,
+            }
+            for row in result
+        ]
+
+    def get_license_summary(
+        self,
+        project_name: str,
+        version_name: str,
+        project_group: str | None = None,
+        max_depth: int = DEFAULT_MAX_DEPTH,
+    ) -> list[dict[str, Any]]:
+        """Return the license BOM for a specific project version.
+
+        Uses iterative BFS (bounded by *max_depth*) to traverse the
+        dependency tree safely, avoiding FalkorDB's entity-match limit
+        and infinite loops from cyclic graphs.
+
+        Args:
+            project_name: The project name.
+            version_name: The version string.
+            project_group: Optional project group.
+            max_depth: Maximum BFS depth for transitive dependencies.
+
+        Returns:
+            List of dicts with license and package info.
+        """
+        if project_group:
+            root_match = (
+                "MATCH (root:Version {project_name: $project_name, name: $version_name, project_group: $project_group})"
+            )
+            params: dict[str, Any] = {
+                "project_name": project_name,
+                "version_name": version_name,
+                "project_group": project_group,
+            }
+        else:
+            root_match = (
+                "MATCH (root:Version {project_name: $project_name, name: $version_name})"
+            )
+            params = {
+                "project_name": project_name,
+                "version_name": version_name,
+            }
+
+        root_query = f"""
+            {root_match}
+            OPTIONAL MATCH (root)-[:HAS_LICENSE]->(l:License)
+            RETURN
+                root.project_group AS project_group,
+                root.project_name AS dep_project_name,
+                root.name AS dep_version,
+                root.package_url AS purl,
+                l.spdx_id AS spdx_id,
+                l.name AS license_name,
+                l.risk_category AS risk_category
+        """
+        results: list[dict[str, Any]] = []
+        seen_keys: set[str] = set()
+        root_result = self.execute_query(root_query, params)
+        frontier_purls: set[str] = set()
+
+        for row in root_result:
+            purl = row[3] or ""
+            if purl:
+                frontier_purls.add(purl)
+            spdx = row[4]
+            if spdx:
+                key = f"{purl}|{spdx}"
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    results.append({
+                        "project_group": row[0] or "",
+                        "project_name": row[1] or "",
+                        "version": row[2] or "",
+                        "purl": purl,
+                        "spdx_id": spdx or "",
+                        "license_name": row[5] or "",
+                        "risk_category": LicenseRiskCategory.from_str(row[6]),
+                    })
+
+        visited: set[str] = set(frontier_purls)
+        for _depth in range(max_depth):
+            if not frontier_purls or len(results) >= MAX_TRANSITIVE_NODES:
+                break
+            dep_query = """
+                MATCH (parent:Version)-[:DEPENDENCY_VERSION]->(child:Version)
+                WHERE parent.package_url IN $purls
+                OPTIONAL MATCH (child)-[:HAS_LICENSE]->(l:License)
+                RETURN
+                    child.project_group AS project_group,
+                    child.project_name AS dep_project_name,
+                    child.name AS dep_version,
+                    child.package_url AS purl,
+                    l.spdx_id AS spdx_id,
+                    l.name AS license_name,
+                    l.risk_category AS risk_category
+            """
+            dep_result = self.execute_query(dep_query, {"purls": list(frontier_purls)})
+            next_frontier: set[str] = set()
+            for row in dep_result:
+                child_purl = row[3] or ""
+                if child_purl and child_purl not in visited:
+                    visited.add(child_purl)
+                    next_frontier.add(child_purl)
+                spdx = row[4]
+                if spdx:
+                    key = f"{child_purl}|{spdx}"
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        results.append({
+                            "project_group": row[0] or "",
+                            "project_name": row[1] or "",
+                            "version": row[2] or "",
+                            "purl": child_purl,
+                            "spdx_id": spdx or "",
+                            "license_name": row[5] or "",
+                            "risk_category": LicenseRiskCategory.from_str(row[6]),
+                        })
+            frontier_purls = next_frontier
+
+        results.sort(key=lambda r: (r["risk_category"], r["project_name"]))
+        return results
+
+    def get_license_conflicts(self, internal_only: bool = True, max_depth: int = DEFAULT_MAX_DEPTH) -> list[dict[str, Any]]:
+        """Find projects that mix strong-copyleft with permissive licenses.
+
+        Performs a single combined BFS from *all* application purls to build
+        an in-memory adjacency list and license map, then detects per-app
+        conflicts via in-memory traversal.  This reduces database queries
+        from ``N_apps * depth`` to ``depth + 2`` regardless of application
+        count.
+
+        Args:
+            internal_only: If True, only check INTERNAL applications.
+            max_depth: Maximum BFS depth for transitive dependencies.
+
+        Returns:
+            List of dicts describing conflicting license combinations.
+        """
+        label = f":{self.internal_label}" if internal_only else ""
+        apps_query = f"""
+            MATCH (app:Version:Application{label})
+            RETURN app.project_group AS pg, app.project_name AS pn,
+                   app.name AS vn, app.package_url AS purl
+        """
+        apps_result = self.execute_query(apps_query)
+
+        app_infos: list[dict[str, str]] = []
+        seed_purls: set[str] = set()
+        for row in apps_result:
+            purl = row[3]
+            if not purl:
+                continue
+            app_infos.append({"pg": row[0] or "", "pn": row[1] or "", "vn": row[2] or "", "purl": purl})
+            seed_purls.add(purl)
+
+        if not app_infos:
+            return []
+
+        # In-memory graph built by the combined BFS
+        adj: dict[str, set[str]] = {}
+        # purl -> set of (spdx_id, risk_category) tuples
+        lic_map: dict[str, set[tuple[str, str]]] = {}
+
+        frontier = set(seed_purls)
+        visited = set(seed_purls)
+
+        # Collect licenses on the seed nodes
+        lic_query = """
+            MATCH (v:Version)-[:HAS_LICENSE]->(l:License)
+            WHERE v.package_url IN $purls
+            RETURN v.package_url AS vpurl, l.spdx_id AS sid, l.risk_category AS rc
+        """
+        for row in self.execute_query(lic_query, {"purls": list(frontier)}):
+            vpurl = row[0]
+            if vpurl and row[1]:
+                lic_map.setdefault(vpurl, set()).add(
+                    (row[1], LicenseRiskCategory.from_str(row[2]))
+                )
+
+        # Combined BFS: one query per depth level across all apps
+        for _depth in range(max_depth):
+            if not frontier:
+                break
+
+            dep_query = """
+                MATCH (p:Version)-[:DEPENDENCY_VERSION]->(c:Version)
+                WHERE p.package_url IN $purls
+                OPTIONAL MATCH (c)-[:HAS_LICENSE]->(l:License)
+                RETURN p.package_url AS ppurl, c.package_url AS cpurl,
+                       l.spdx_id AS sid, l.risk_category AS rc
+            """
+            dep_result = self.execute_query(dep_query, {"purls": list(frontier)})
+
+            next_frontier: set[str] = set()
+            for row in dep_result:
+                ppurl, cpurl = row[0], row[1]
+                if ppurl and cpurl:
+                    adj.setdefault(ppurl, set()).add(cpurl)
+                if cpurl and row[2]:
+                    lic_map.setdefault(cpurl, set()).add(
+                        (row[2], LicenseRiskCategory.from_str(row[3]))
+                    )
+                if cpurl and cpurl not in visited:
+                    visited.add(cpurl)
+                    next_frontier.add(cpurl)
+
+            frontier = next_frontier
+
+            if len(visited) >= MAX_TRANSITIVE_NODES:
+                break
+
+        # Per-app in-memory traversal (zero DB calls)
+        conflicts: list[dict[str, Any]] = []
+        for app in app_infos:
+            app_licenses: set[str] = set()
+            app_categories: set[str] = set()
+
+            stack = [app["purl"]]
+            app_visited: set[str] = set()
+            while stack:
+                current = stack.pop()
+                if current in app_visited:
+                    continue
+                app_visited.add(current)
+
+                for sid, rc in lic_map.get(current, ()):
+                    app_licenses.add(sid)
+                    if rc:
+                        app_categories.add(rc)
+
+                for child in adj.get(current, ()):
+                    if child not in app_visited:
+                        stack.append(child)
+
+            if LicenseRiskCategory.STRONG_COPYLEFT in app_categories and LicenseRiskCategory.PERMISSIVE in app_categories:
+                conflicts.append({
+                    "project_group": app["pg"],
+                    "project_name": app["pn"],
+                    "version_name": app["vn"],
+                    "licenses": sorted(app_licenses),
+                    "risk_categories": sorted(app_categories),
+                })
+
+        conflicts.sort(key=lambda c: c["project_name"])
+        return conflicts
+
+    def get_package_licenses(self, purl: str) -> list[dict[str, Any]]:
+        """Return licenses for a specific package by purl.
+
+        Args:
+            purl: The package URL.
+
+        Returns:
+            List of license dicts.
+        """
+        query = """
+            MATCH (v:Version {package_url: $purl})-[:HAS_LICENSE]->(l:License)
+            RETURN
+                l.spdx_id AS spdx_id,
+                l.name AS name,
+                l.risk_category AS risk_category,
+                l.url AS url
+        """
+        result = self.execute_query(query, {"purl": purl})
+        return [
+            {
+                "spdx_id": row[0] or "",
+                "name": row[1] or "",
+                "risk_category": LicenseRiskCategory.from_str(row[2]),
+                "url": row[3] or "",
+            }
+            for row in result
+        ]
+
+    def get_vulnerability_freshness(
+        self, internal_only: bool = False
+    ) -> list[dict[str, Any]]:
+        """Return packages with enrichment freshness status.
+
+        Each row contains the package purl, project info, and the most recent
+        ``last_enriched_at`` timestamp from linked defect nodes (or null if
+        never enriched).
+        """
+        label = f":{self.internal_label}" if internal_only else ":Version"
+        query = f"""
+            MATCH (v{label})
+            WHERE v.package_url IS NOT NULL
+            OPTIONAL MATCH (v)-[:VERSION_DEFECT]->(d:Defect)
+            WITH v,
+                 max(d.last_enriched_at) AS latest_enrichment
+            RETURN v.project_group AS project_group,
+                   v.project_name AS project_name,
+                   v.name AS version_name,
+                   v.package_url AS purl,
+                   latest_enrichment
+            ORDER BY latest_enrichment ASC
+        """
+        result = self.execute_query(query, {})
+        rows = []
+        for row in result:
+            rows.append({
+                "project_group": row[0] or "",
+                "project_name": row[1] or "",
+                "version_name": row[2] or "",
+                "purl": row[3] or "",
+                "last_enriched_at": row[4],
+            })
+        return rows
+
+    def get_package_vulnerabilities(
+        self,
+        purl: str,
+        include_dependencies: bool = False,
+        max_depth: int = DEFAULT_MAX_DEPTH,
+    ) -> dict[str, Any]:
+        """Return vulnerabilities for a package, optionally including transitive deps.
+
+        Args:
+            purl: The package URL.
+            include_dependencies: If True, also return transitive dependency vulns.
+            max_depth: Maximum traversal depth for transitive dependencies.
+
+        Returns:
+            Dict with ``package``, ``vulnerabilities``, and optionally
+            ``transitive_vulnerabilities`` keys.
+        """
+        direct_query = """
+            MATCH (v:Version {package_url: $purl})-[:VERSION_DEFECT]->(d:Defect)
+            RETURN COALESCE(d.id, d.defect_id) AS id,
+                   d.severity AS severity,
+                   d.cvss AS cvss,
+                   d.cvss_string AS cvss_vector,
+                   d.description AS description,
+                   d.aliases AS aliases,
+                   d.enrichment_source AS source,
+                   d.last_enriched_at AS last_enriched_at
+        """
+        direct_result = self.execute_query(direct_query, {"purl": purl})
+        direct_vulns = []
+        for row in direct_result:
+            direct_vulns.append({
+                "id": row[0],
+                "severity": row[1],
+                "cvss": row[2],
+                "cvss_vector": row[3],
+                "description": row[4],
+                "aliases": row[5] or [],
+                "source": row[6],
+                "last_enriched_at": row[7],
+            })
+
+        result: dict[str, Any] = {
+            "package": purl,
+            "vulnerabilities": direct_vulns,
+            "count": len(direct_vulns),
+        }
+
+        if include_dependencies:
+            dep_purls: set[str] = set()
+            frontier = {purl}
+            visited = {purl}
+
+            for _depth in range(max_depth):
+                if not frontier:
+                    break
+                dep_query = """
+                    MATCH (p:Version)-[:DEPENDENCY_VERSION]->(c:Version)
+                    WHERE p.package_url IN $purls AND c.package_url IS NOT NULL
+                    RETURN DISTINCT c.package_url AS cpurl
+                """
+                dep_result = self.execute_query(dep_query, {"purls": list(frontier)})
+                next_frontier: set[str] = set()
+                for dep_row in dep_result:
+                    cpurl = dep_row[0]
+                    if cpurl and cpurl not in visited:
+                        visited.add(cpurl)
+                        next_frontier.add(cpurl)
+                        dep_purls.add(cpurl)
+                frontier = next_frontier
+                if len(visited) >= MAX_TRANSITIVE_NODES:
+                    break
+
+            trans_vulns: list[dict[str, Any]] = []
+            if dep_purls:
+                batch_size = 500
+                dep_purl_list = list(dep_purls)
+                for i in range(0, len(dep_purl_list), batch_size):
+                    batch = dep_purl_list[i : i + batch_size]
+                    tv_query = """
+                        MATCH (v:Version)-[:VERSION_DEFECT]->(d:Defect)
+                        WHERE v.package_url IN $purls
+                        RETURN v.package_url AS purl,
+                               COALESCE(d.id, d.defect_id) AS id,
+                               d.severity AS severity,
+                               d.description AS description,
+                               d.aliases AS aliases,
+                               d.enrichment_source AS source
+                    """
+                    tv_result = self.execute_query(tv_query, {"purls": batch})
+                    for tv_row in tv_result:
+                        trans_vulns.append({
+                            "package": tv_row[0],
+                            "id": tv_row[1],
+                            "severity": tv_row[2],
+                            "description": tv_row[3],
+                            "aliases": tv_row[4] or [],
+                            "source": tv_row[5],
+                        })
+
+            result["transitive_vulnerabilities"] = trans_vulns
+            result["transitive_count"] = len(trans_vulns)
+
+        return result
+
+    def get_policy_annotations(
+        self, type_filter: str | None = None, internal_only: bool = False
+    ) -> list[dict[str, Any]]:
+        """Return all policy annotations, optionally filtered by type.
+
+        Args:
+            type_filter: Optional policy type ("bad", "good", "hold").
+            internal_only: If True, only return annotations on internal packages.
+        """
+        label = f":{self.internal_label}" if internal_only else ":Version"
+        params: dict[str, Any] = {}
+
+        type_clause = ""
+        if type_filter:
+            type_clause = "AND a.type = $type_filter"
+            params["type_filter"] = type_filter
+
+        query = f"""
+            MATCH (v{label})-[:HAS_POLICY]->(a:PolicyAnnotation)
+            WHERE v.package_url IS NOT NULL {type_clause}
+            RETURN a.annotation_id AS annotation_id,
+                   a.type AS type,
+                   a.justification AS justification,
+                   a.created_by AS created_by,
+                   a.created_at AS created_at,
+                   a.expires_at AS expires_at,
+                   v.package_url AS purl,
+                   v.project_name AS project_name,
+                   v.name AS version_name,
+                   v.project_group AS project_group
+            ORDER BY a.created_at DESC
+        """
+        result = self.execute_query(query, params)
+        annotations: list[dict[str, Any]] = []
+        for row in result:
+            annotations.append({
+                "annotation_id": row[0],
+                "type": row[1],
+                "justification": row[2],
+                "created_by": row[3],
+                "created_at": row[4],
+                "expires_at": row[5],
+                "purl": row[6],
+                "project_name": row[7] or "",
+                "version_name": row[8] or "",
+                "project_group": row[9] or "",
+            })
+        return annotations
+
+    def get_policy_violations(
+        self, internal_only: bool = False
+    ) -> list[dict[str, Any]]:
+        """Return all 'bad' policy annotations that are still in use.
+
+        For each bad-annotated package, returns the count of dependant
+        applications that transitively depend on it.
+        """
+        label = f":{self.internal_label}" if internal_only else ":Version"
+        query = f"""
+            MATCH (v{label})-[:HAS_POLICY]->(a:PolicyAnnotation {{type: 'bad'}})
+            WHERE v.package_url IS NOT NULL
+            OPTIONAL MATCH (app:Application)-[:DEPENDENCY_VERSION*1..5]->(v)
+            WITH a, v, count(DISTINCT app) AS dependant_count
+            RETURN a.annotation_id AS annotation_id,
+                   a.justification AS justification,
+                   a.created_by AS created_by,
+                   a.created_at AS created_at,
+                   a.expires_at AS expires_at,
+                   v.package_url AS purl,
+                   v.project_name AS project_name,
+                   v.name AS version_name,
+                   dependant_count
+            ORDER BY dependant_count DESC
+        """
+        result = self.execute_query(query, {})
+        violations: list[dict[str, Any]] = []
+        for row in result:
+            violations.append({
+                "annotation_id": row[0],
+                "justification": row[1],
+                "created_by": row[2],
+                "created_at": row[3],
+                "expires_at": row[4],
+                "purl": row[5],
+                "project_name": row[6] or "",
+                "version_name": row[7] or "",
+                "dependant_count": row[8] or 0,
+            })
+        return violations
+
+    def check_policy(self, purl: str) -> dict[str, Any]:
+        """Check the policy status for a package URL (CI/CD gate).
+
+        Returns pass/fail/hold with all applicable annotations.
+
+        Args:
+            purl: The package URL to check.
+
+        Returns:
+            Dict with ``status`` ("pass", "fail", "hold") and ``annotations`` list.
+        """
+        query = """
+            MATCH (v:Version {package_url: $purl})-[:HAS_POLICY]->(a:PolicyAnnotation)
+            RETURN a.annotation_id AS annotation_id,
+                   a.type AS type,
+                   a.justification AS justification,
+                   a.created_by AS created_by,
+                   a.created_at AS created_at,
+                   a.expires_at AS expires_at
+            ORDER BY a.created_at DESC
+        """
+        result = self.execute_query(query, {"purl": purl})
+        annotations = []
+        for row in result:
+            annotations.append({
+                "annotation_id": row[0],
+                "type": row[1],
+                "justification": row[2],
+                "created_by": row[3],
+                "created_at": row[4],
+                "expires_at": row[5],
+            })
+
+        if any(a["type"] == "bad" for a in annotations):
+            status = "fail"
+        elif any(a["type"] == "hold" for a in annotations):
+            status = "hold"
+        else:
+            status = "pass"
+
+        return {
+            "purl": purl,
+            "status": status,
+            "annotations": annotations,
+        }
 
 
 # Global service instance

@@ -70,6 +70,31 @@ releaseListener:
       cpu: 100m
       memory: 128Mi
 
+enrichment:
+  enabled: true
+  image:
+    repository: sbom-graph-enrichment
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  interval: "3600"
+  sources: '["osv","clearlydefined"]'
+  celeryBrokerDb: "1"
+  celeryResultDb: "2"
+  concurrency: 2
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  networkPolicy:
+    # Enable to restrict enrichment pod egress to FalkorDB, DNS, and
+    # external HTTPS (port 443) only.  Requires a CNI that supports
+    # NetworkPolicy (e.g. Calico, Cilium).
+    enabled: false
+
 initData:
   enabled: true
 

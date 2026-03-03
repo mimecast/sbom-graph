@@ -25,9 +25,11 @@ class TestRootPackageExports:
         assert sbom_graph_model.Project is not None
         assert sbom_graph_model.Defect is not None
         assert sbom_graph_model.License is not None
+        assert sbom_graph_model.PolicyAnnotation is not None
 
     def test_exports_edge_classes(self):
         assert sbom_graph_model.VersionDefect is not None
+        assert sbom_graph_model.VersionPolicy is not None
         assert sbom_graph_model.DependencyVersion is not None
         assert sbom_graph_model.HasVersion is not None
 
@@ -36,9 +38,10 @@ class TestRootPackageExports:
 
     def test_all_list_complete(self):
         expected = {
-            "RiskStatus", "DefectType", "ProjectType",
-            "Version", "Project", "Defect", "License",
-            "VersionDefect", "DependencyVersion", "HasVersion",
+            "RiskStatus", "DefectType", "ProjectType", "LicenseRiskCategory",
+            "PolicyType",
+            "Version", "Project", "Defect", "License", "PolicyAnnotation",
+            "VersionDefect", "VersionLicense", "VersionPolicy", "DependencyVersion", "HasVersion",
             "Persistence",
         }
         assert set(sbom_graph_model.__all__) == expected

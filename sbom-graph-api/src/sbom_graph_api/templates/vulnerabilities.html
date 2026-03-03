@@ -63,6 +63,7 @@
                     <th>Title</th>
                     <th>CWE</th>
                     <th>Published</th>
+                    <th>Last Scanned</th>
                     <th>Affected Versions</th>
                     <th>Actions</th>
                 </tr>
@@ -82,6 +83,7 @@
                     <td>{{ vuln.title }}</td>
                     <td>{{ vuln.cwe_id }}</td>
                     <td>{{ vuln.published_date }}</td>
+                    <td>{{ vuln.last_enriched_at or '' }}</td>
                     <td>
                         <ul class="affected-versions">
                             {% for affected in vuln.affected_versions %}

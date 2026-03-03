@@ -2,11 +2,12 @@
 
 ## Summary
 
-SBOM Graph is a three-component system for ingesting CycloneDX SBOMs, storing dependency relationships in a graph database (FalkorDB), and providing interactive visualizations and reports. The system consists of:
+SBOM Graph is a multi-component system for ingesting CycloneDX SBOMs, storing dependency relationships in a graph database (FalkorDB), enriching packages with vulnerability and license data from external sources, and providing interactive visualizations and reports. The system consists of:
 
 - **sonatype-lifecycle-release-listener**: Webhook receiver that fetches SBOMs from SonaType and writes to FalkorDB
 - **sbom-graph-api**: Web application for viewing reports and visualizations (read path) and authenticated CycloneDX SBOM ingestion (write path via `POST /ingest/cyclonedx`)
-- **FalkorDB**: Graph database storing dependency data (Redis protocol)
+- **sbom-graph-enrichment**: Celery-based asynchronous pipeline that queries OSV.dev and ClearlyDefined APIs to enrich packages with vulnerability and license metadata; uses a per-worker-process `httpx.Client` for connection-pooled HTTPS and a cached `Persistence` instance for FalkorDB access
+- **FalkorDB**: Graph database storing dependency data (Redis protocol); Redis instance also serves as Celery broker and result backend for the enrichment pipeline
 - **sbom-graph-model**: Shared library for SBOM parsing and persistence
 
 This document covers **cross-component and infrastructure-level threats**. Component-specific findings are detailed in:
@@ -82,6 +83,10 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | Cluster -> Internet | SBOM fetch from SonaType API | HTTPS |
 | Cluster -> LDAP | User authentication | LDAP/LDAPS |
 | App -> FalkorDB | Graph reads/writes | Redis protocol (+/- TLS) |
+| Enrichment Worker -> FalkorDB | Graph reads/writes (cached connection per worker) | Redis protocol (+/- TLS) |
+| Enrichment Worker -> OSV API | Vulnerability queries | HTTPS (connection-pooled httpx.Client) |
+| Enrichment Worker -> ClearlyDefined API | License queries | HTTPS (connection-pooled httpx.Client) |
+| Enrichment Beat -> Redis | Task scheduling | Redis protocol |
 | Init Job -> FalkorDB | Demo data load | Redis protocol |
 
 ## System-Level Threat Analysis (STRIPED)
@@ -91,10 +96,10 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | # | Threat | STRIPED | Components | Likelihood | Impact | Risk | Status | Detail |
 |---|--------|---------|------------|------------|--------|------|--------|--------|
 | S1 | Graph data poisoning via unauthenticated webhook | S, T | sonatype-lifecycle-release-listener -> FalkorDB -> sbom-graph-api | **High** | **Critical** | **Critical** | **OPEN** | An attacker can POST crafted webhook payloads to the sonatype-lifecycle-release-listener, triggering SBOM ingestion of arbitrary data. Poisoned graph data propagates to all reports and visualizations shown to users, potentially hiding real vulnerabilities or creating false ones. This is the highest-priority system risk. |
-| S2 | FalkorDB password not set by default | S, E | All components -> FalkorDB | **High** | **High** | **Critical** | **OPEN** | The umbrella chart defaults `falkordb.password` to `""`. When empty, no `FALKORDB_PASSWORD` env var is injected and no Kubernetes Secret is created. FalkorDB runs without authentication, allowing any pod in the namespace (or any pod that can reach the ClusterIP) to read/write the graph. |
+| S2 | FalkorDB password not set by default | S, E | All components -> FalkorDB | **High** | **High** | **Critical** | **MITIGATED** | The umbrella chart defaults `falkordb.password` to `""` but the `falkordb-secret.yaml` template auto-generates a 32-character random password when no explicit value or existing Secret is found. All deployments (FalkorDB, sbom-graph-api, release-listener, enrichment worker/beat) inject `FALKORDB_PASSWORD` from this Secret via `secretKeyRef`. The enrichment `persistence_helpers.py` logs a warning if the env var is empty (local development without Helm). Residual: operators who deploy outside Helm must set the password manually. |
 | S3 | TLS configuration mismatch between components | I | sbom-graph-api <-> FalkorDB | **High** | **Medium** | **High** | **OPEN** | FalkorDB is deployed with TLS by default (`tls.enabled: true`, non-TLS port disabled). However, `FalkorDBService` in sbom-graph-api does not pass `ssl` or `ssl_ca_certs` when connecting. The umbrella chart sets `TLS_ENABLED` but this controls the sbom-graph-api HTTP server TLS, not the FalkorDB client connection. sbom-graph-api will fail to connect to a TLS-only FalkorDB, or if TLS is disabled to work around this, traffic is unencrypted. |
 | S4 | Umbrella chart missing critical sbom-graph-api secrets | I, E | sbom-graph-api | **High** | **Critical** | **Critical** | **OPEN** | The umbrella chart does not set `FLASK_SECRET_KEY`, `JWT_SECRET_KEY`, `TOKEN_DB_ENCRYPTION_KEY`, or `AUTH_ENABLED`. sbom-graph-api has a guard that rejects insecure defaults when `FLASK_DEBUG=false`, but the chart also does not set `FLASK_DEBUG`. The resulting behavior depends on image defaults and is non-deterministic. If auth is disabled (the default), all reports and visualizations are publicly accessible within the cluster. |
-| S5 | No NetworkPolicy restricting FalkorDB access | E | FalkorDB | **Medium** | **High** | **High** | **OPEN** | The umbrella chart does not include a Kubernetes NetworkPolicy. Any pod in the namespace (or cluster, depending on CNI defaults) can connect to the FalkorDB ClusterIP on port 6379. Combined with S2 (no password), this allows arbitrary graph manipulation. |
+| S5 | No NetworkPolicy restricting FalkorDB access | E | FalkorDB | **Medium** | **High** | **High** | **PARTIALLY MITIGATED** | The umbrella chart now includes an opt-in NetworkPolicy for the enrichment worker and beat pods (`enrichment.networkPolicy.enabled`). When enabled, enrichment egress is restricted to: DNS (port 53), FalkorDB/Redis (port 6379, by pod selector), and external HTTPS (port 443, excluding RFC 1918 ranges). Residual: FalkorDB ingress is not yet restricted — any pod in the namespace can still connect on 6379. A FalkorDB-specific NetworkPolicy should be added to complete the control. |
 | S6 | Self-signed TLS CA not distributed to clients | I | FalkorDB -> sonatype-lifecycle-release-listener, sbom-graph-api | **High** | **Medium** | **High** | **OPEN** | When TLS is auto-generated via the init container, the self-signed CA certificate is stored in an emptyDir volume on the FalkorDB pod. Neither the sonatype-lifecycle-release-listener nor sbom-graph-api deployments mount this volume or receive the CA cert. Clients cannot verify the FalkorDB server certificate, resulting in connection failures or requiring TLS verification to be disabled. |
 | S7 | SonaType credentials not provisioned by umbrella chart | I | sonatype-lifecycle-release-listener -> SonaType | **High** | **Medium** | **Medium** | **OPEN** | The umbrella chart does not set `SONATYPE_HOST`, `SONATYPE_USERNAME`, or `SONATYPE_PASSWORD` for the sonatype-lifecycle-release-listener. Webhook processing will fail at runtime when attempting to fetch SBOMs. This is a deployment correctness issue that may lead operators to pass credentials via insecure means (e.g., plain env vars in overrides). |
 | S8 | Init data job bypasses TLS and auth | T, E | init-data-job -> FalkorDB | **Medium** | **Medium** | **Medium** | **PARTIALLY MITIGATED** | The `init-data-job.yaml` does not set `FALKORDB_CACERTS` or pass TLS parameters to `populate_acme_corp.py`. The readiness check uses a Python TCP connect (reusing the application image, no BusyBox dependency), which will succeed on the TLS port but does not verify the certificate. The job also does not receive the FalkorDB password if `falkordb.password` is set after the initial deployment. |
@@ -104,6 +109,13 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | S12 | Denial of service via oversized SBOM upload | D | sbom-graph-api | **Medium** | **Medium** | **Medium** | **MITIGATED** | Large CycloneDX payloads could exhaust memory or CPU during parsing. Mitigated by Flask `MAX_CONTENT_LENGTH` (50 MB), Gunicorn worker timeouts, and Kubernetes resource limits. |
 | S13 | Information disclosure in SBOM processing errors | I | sbom-graph-api | **Low** | **Low** | **Low** | **MITIGATED** | SBOM processing errors could leak internal paths or database details. Mitigated by generic error messages for 500 responses (only `CycloneDXValidationError` details are returned to the client at 422). |
 | S14 | Mass assignment via extra JSON fields in ingest request | T | sbom-graph-api | **Low** | **Medium** | **Low** | **MITIGATED** | Attacker could include extra fields (e.g., `role`, `is_admin`) in the ingest JSON body. Mitigated by explicit field extraction: only `sbom`, `app_id`, `public_app_id`, and `project_url` are read from the request body. |
+| S15 | Enrichment worker SSRF via crafted purl | S, T | sbom-graph-enrichment -> OSV/ClearlyDefined | **Low** | **Medium** | **Low** | **MITIGATED** | A malicious purl stored in the graph could cause the enrichment worker to construct requests to unintended hosts. Mitigated by: (1) hardcoded API base URLs in certifiers (`OSV_API_URL`, `CLEARLY_DEFINED_API`) — purl only populates the URL path, (2) `_purl_to_coordinates` rejects unknown package types via `provider_map` allowlist, (3) 30 s `httpx.Client` timeout prevents slow-loris, (4) opt-in NetworkPolicy restricts egress to port 443 on public IPs only. Design decision documented in `certifiers/license.py` module docstring. |
+| S16 | Enrichment worker DoS via unbounded fan-out | D | sbom-graph-enrichment | **Medium** | **Medium** | **Medium** | **MITIGATED** | `enrich_all_packages` dispatches a task per purl in the graph. For very large graphs (100K+ packages) this could overwhelm the Redis broker. Mitigated by batched dispatch (`_DISPATCH_BATCH_SIZE = 500`), Celery `worker_prefetch_multiplier=1`, `task_acks_late=True`, and `result_expires=86400` to prevent indefinite Redis key accumulation. |
+| S17 | Graph poisoning via compromised external API response | T | OSV/ClearlyDefined -> sbom-graph-enrichment -> FalkorDB | **Low** | **High** | **Medium** | **PARTIALLY MITIGATED** | If OSV.dev or ClearlyDefined returns malicious data, it is persisted to the graph. Mitigated by: HTTPS transport validation, explicit field extraction from API responses (only expected keys), and `LicenseRiskCategory.from_str()` validation. Residual risk: structurally valid but semantically misleading data cannot be detected. |
+| S18 | Redis password exposure in Celery broker URL | I | sbom-graph-enrichment | **Medium** | **Medium** | **Medium** | **PARTIALLY MITIGATED** | The Redis password is embedded in the Celery broker URL string. Celery's standard Redis transport requires this — `broker_transport_options` only supports password separation for Redis Sentinel, which is not used here. Mitigated by: a `_RedactSecretsFilter` logging filter on `celery` and `kombu` loggers that replaces `redis://:password@` patterns with `redis://:*****@` in all log messages, tuple args, and dict args. Residual: password remains in the process-internal URL string and may appear in core dumps, tracebacks printed to stderr, or debugger inspection. |
+
+| S19 | Policy annotation abuse (CertifyGood on vulnerable package) | T, E | sbom-graph-api | **Medium** | **High** | **Medium** | **PARTIALLY MITIGATED** | `POST /api/v1/policy/annotate` allows any authenticated user to create "good" annotations on known-vulnerable packages, bypassing CI/CD policy gates. Mitigated by: JWT authentication required, `created_by` audit field on every annotation, justification required, package existence verified before annotation. Residual: no role-based access control (all authenticated users can annotate), no approval workflow, annotations do not expire unless `expires_at` is set. |
+| S20 | On-demand enrichment abuse | D | sbom-graph-api -> sbom-graph-enrichment | **Medium** | **Medium** | **Medium** | **MITIGATED** | `POST /api/v1/enrich/vulnerabilities` allows authenticated users to trigger enrichment for up to 1000 purls per request, or fan-out for all packages. Mitigated by: JWT authentication, maximum 1000 purls per request, purl format validation, batched dispatch in the fan-out task, Celery rate limiting in the OSV certifier. |
 
 ### Data Flow Threats
 
@@ -155,14 +167,23 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | Read-only root filesystem | All containers | **Strong** -- prevents runtime modification |
 | Dropped capabilities | All containers | **Strong** -- `ALL` dropped |
 | Kubernetes Secrets for credentials | Helm charts | **Moderate** -- base64, not encrypted by default |
+| Redis URL log redaction | sbom-graph-enrichment | **Strong** -- `_RedactSecretsFilter` on celery/kombu loggers |
+| NetworkPolicy (opt-in) | Helm chart (enrichment) | **Strong** -- restricts egress to DNS, FalkorDB, HTTPS only |
+| SSRF-safe certifier design | sbom-graph-enrichment | **Strong** -- hardcoded hosts, path-only purl interpolation |
+| Auto-generated FalkorDB password | Helm chart | **Strong** -- `falkordb-secret.yaml` generates 32-char random password |
+| Empty password startup warning | sbom-graph-enrichment | **Moderate** -- warns when FALKORDB_PASSWORD env var is empty |
+| JWT auth on policy/enrichment endpoints | sbom-graph-api | **Strong** -- all write endpoints require `@auth_required` |
+| Policy annotation input validation | sbom-graph-api | **Strong** -- type allowlist, purl format, length limits, package existence check |
+| Enrichment request size limit | sbom-graph-api | **Strong** -- max 1000 purls per enrichment request |
+| Policy annotation audit trail | sbom-graph-api | **Moderate** -- `created_by`, `created_at` on every annotation |
+| Vulnerability enrichment metadata | sbom-graph-enrichment | **Moderate** -- `last_enriched_at`, `enrichment_source`, `aliases` tracked |
 
 ### Controls Missing
 
 | Missing Control | Impact | Components |
 |----------------|--------|------------|
 | Webhook authentication | Critical | sonatype-lifecycle-release-listener |
-| FalkorDB password enforcement | Critical | Umbrella chart |
-| NetworkPolicy | High | Umbrella chart |
+| FalkorDB ingress NetworkPolicy | High | Umbrella chart |
 | TLS CA distribution | High | Umbrella chart |
 | Application secrets provisioning | Critical | Umbrella chart -> sbom-graph-api |
 | Rate limiting | Medium | sonatype-lifecycle-release-listener, sbom-graph-api |
@@ -215,7 +236,7 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 
 Before deploying to production, verify:
 
-- [ ] `falkordb.password` is set to a strong random value
+- [x] `falkordb.password` is auto-generated if not set (32-char random)
 - [ ] `FLASK_SECRET_KEY` is set (min 32 bytes, cryptographically random)
 - [ ] `JWT_SECRET_KEY` is set (min 32 bytes, cryptographically random)
 - [ ] `TOKEN_DB_ENCRYPTION_KEY` is set (min 32 bytes)
@@ -223,6 +244,7 @@ Before deploying to production, verify:
 - [ ] Webhook authentication is configured for sonatype-lifecycle-release-listener
 - [ ] `SONATYPE_HOST`, `SONATYPE_USERNAME`, `SONATYPE_PASSWORD` are configured
 - [ ] FalkorDB TLS CA is distributed to all client pods
+- [ ] `enrichment.networkPolicy.enabled` is set to `true` (requires CNI support)
 - [ ] NetworkPolicy restricts FalkorDB access to authorized pods only
 - [ ] All images are pinned to specific versions (not `latest`)
 - [ ] `initData.enabled` is set to `false` for production
@@ -253,15 +275,17 @@ All primary dependencies are actively maintained with no unpatched critical vuln
 ```
               Low Impact    Medium Impact    High Impact    Critical Impact
             +-------------+----------------+--------------+----------------+
- High       |             | S7, S10        | S3, S5, S6   | S1, S2, S4     |
+ High       |             | S7, S10        | S3, S6       | S1, S4         |
  Likelihood |             |                |              |                |
             +-------------+----------------+--------------+----------------+
- Medium     |             | D4,I2,I3,S8,S12| D2, I5       |                |
- Likelihood |             |                |              |                |
+ Medium     |             | D4,I2,I3,S8   | D2, I5, S5   |                |
+ Likelihood |             | S12,S16,S20    | S19          |                |
             +-------------+----------------+--------------+----------------+
- Low        | I4, S13     | I1,D3,S9,S14   | S11          |                |
- Likelihood |             |                |              |                |
+ Low        | I4, S13     | I1,D3,S9,S14  | S11, S17     |                |
+ Likelihood |             | S15            |              |                |
             +-------------+----------------+--------------+----------------+
+
+ Mitigated (removed from heat map): S2, S18
 ```
 
 ## Residual Risk (After Mitigations)
@@ -273,9 +297,14 @@ All primary dependencies are actively maintained with no unpatched critical vuln
 | Large SBOM resource consumption | Low | Gunicorn timeouts and Kubernetes resource limits provide backstops. |
 | Transitive dependency vulnerabilities | Medium | Lockfile pinning and CI/CD scanning mitigate. |
 | Self-signed TLS weaker than CA-issued | Low | Acceptable for demo/internal use. Production should use proper PKI. |
+| Enrichment external API data integrity | Medium | OSV/ClearlyDefined data is trusted after transport validation. Structurally valid but semantically wrong data cannot be detected automatically. |
+| Redis password in Celery broker URL | Low | Log redaction filter prevents exposure in Celery/Kombu log output. Password remains in process memory (inherent to Celery's Redis transport). |
 
 ## Revision History
 
 | Date | Author | Changes |
 |------|--------|---------|
 | 2026-03-01 | AI-assisted threat model | Initial system-level STRIPED analysis |
+| 2026-02-28 | AI-assisted threat model | Added enrichment pipeline data flows and threats (S15-S18) |
+| 2026-02-28 | AI-assisted threat model | Mitigated S18 (Redis URL log redaction filter), S2 (auto-generated FalkorDB password + startup warning), partially mitigated S5 (enrichment NetworkPolicy). Documented SSRF design decision (S15). Added enrichment controls to Security Controls Summary. |
+| 2026-02-28 | AI-assisted threat model | Added S19 (policy annotation abuse) and S20 (on-demand enrichment abuse) for vulnerability enrichment and policy annotation features. Added controls: JWT auth on new endpoints, policy input validation, enrichment request size limit, annotation audit trail, enrichment metadata tracking. |

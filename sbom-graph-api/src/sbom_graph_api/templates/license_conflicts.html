@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/report.css') }}">
+    <style>
+        td { vertical-align: top; }
+        .conflict-badge { background: #d32f2f; color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 0.85em; }
+    </style>
+</head>
+<body>
+    <h1>{{ title }}</h1>
+
+    <div class="controls">
+        <div class="toggle-container">
+            <span class="toggle-label">Filter:</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="internalOnlyToggle" {{ 'checked' if internal_only else '' }}>
+                <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-status" id="toggleStatus">{{ 'Internal Only' if internal_only else 'All projects' }}</span>
+        </div>
+
+        <div class="download-links">
+            <a href="{{ url_for('reports.license_conflicts_report', format='json', internal_only=internal_only) }}" class="download-link">Download as JSON</a>
+        </div>
+    </div>
+
+    <p>Generated at: {{ generated_at }}</p>
+
+    {% if conflicts %}
+    <p><span class="conflict-badge">{{ conflicts | length }}</span> project(s) with conflicting licenses.</p>
+    {% endif %}
+
+    <table>
+        <thead>
+            <tr>
+                <th>Group</th>
+                <th>Project</th>
+                <th>Version</th>
+                <th>Licenses</th>
+                <th>Risk Categories</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in conflicts %}
+            <tr>
+                <td>{{ row.project_group }}</td>
+                <td>{{ row.project_name }}</td>
+                <td>{{ row.version_name }}</td>
+                <td>{{ row.licenses | join(', ') }}</td>
+                <td>{{ row.risk_categories | join(', ') }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5">No license conflicts detected.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <script>
+        document.getElementById('internalOnlyToggle').addEventListener('change', function() {
+            const internal = this.checked;
+            window.location.href = '{{ url_for("reports.license_conflicts_report") }}?internal_only=' + internal;
+        });
+    </script>
+</body>
+</html>

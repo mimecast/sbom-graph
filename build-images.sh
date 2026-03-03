@@ -6,6 +6,7 @@ cd "$SCRIPT_DIR"
 
 ADV_TAG="${ADV_TAG:-sbom-graph-api:latest}"
 RL_TAG="${RL_TAG:-sonatype-lifecycle-release-listener:latest}"
+ENR_TAG="${ENR_TAG:-sbom-graph-enrichment:latest}"
 NO_CACHE=""
 TARGETS=()
 
@@ -21,10 +22,12 @@ Targets:
   model                Build sbom-graph-model wheel only
   sbom-graph-api    Build sbom-graph-api Docker image
   sonatype-lifecycle-release-listener     Build sonatype-lifecycle-release-listener Docker image
+  sbom-graph-enrichment                   Build sbom-graph-enrichment Docker image
 
 Options:
   --adv-tag TAG    Tag for sbom-graph-api image (default: sbom-graph-api:latest)
   --rl-tag TAG     Tag for sonatype-lifecycle-release-listener image (default: sonatype-lifecycle-release-listener:latest)
+  --enr-tag TAG    Tag for sbom-graph-enrichment image (default: sbom-graph-enrichment:latest)
   --no-cache       Disable Docker build cache
   -h, --help       Show this help
 
@@ -37,6 +40,7 @@ Examples:
 Environment variables:
   ADV_TAG    Override sbom-graph-api image tag
   RL_TAG     Override sonatype-lifecycle-release-listener image tag
+  ENR_TAG    Override sbom-graph-enrichment image tag
 EOF
 }
 
@@ -44,6 +48,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --adv-tag) ADV_TAG="$2"; shift 2 ;;
         --rl-tag)  RL_TAG="$2";  shift 2 ;;
+        --enr-tag) ENR_TAG="$2"; shift 2 ;;
         --no-cache) NO_CACHE="--no-cache"; shift ;;
         -h|--help) usage; exit 0 ;;
         -*) echo "Unknown option: $1"; usage; exit 1 ;;
@@ -86,12 +91,28 @@ build_sonatype_lifecycle_release_listener() {
     echo "    Done: $RL_TAG"
 }
 
+build_sbom_graph_enrichment() {
+    if ! ls sbom-graph-model/dist/sbom_graph_model-*.whl >/dev/null 2>&1; then
+        echo "    sbom-graph-model wheel not found, building it first..."
+        build_model
+    fi
+
+    echo "==> Building sbom-graph-enrichment Docker image ($ENR_TAG)..."
+    docker build \
+        ${NO_CACHE:+"$NO_CACHE"} \
+        -t "$ENR_TAG" \
+        -f sbom-graph-enrichment/Dockerfile \
+        .
+    echo "    Done: $ENR_TAG"
+}
+
 for target in "${TARGETS[@]}"; do
     case "$target" in
         all)
             build_model
             build_sbom_graph_api
             build_sonatype_lifecycle_release_listener
+            build_sbom_graph_enrichment
             ;;
         model)
             build_model
@@ -101,6 +122,9 @@ for target in "${TARGETS[@]}"; do
             ;;
         sonatype-lifecycle-release-listener)
             build_sonatype_lifecycle_release_listener
+            ;;
+        sbom-graph-enrichment)
+            build_sbom_graph_enrichment
             ;;
         *)
             echo "Unknown target: $target"

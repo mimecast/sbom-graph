@@ -1,4 +1,4 @@
-# sbom-graph
+![SBOM-Graph](./sbom-graph-logo.jpeg)
 
 ## Tool Overview and Capabilities
 
@@ -25,6 +25,7 @@ The project is made up of 3 parts:
 3. **sbom-graph-api** -- A Flask application for visualizing graph data, ingesting CycloneDX SBOMs via authenticated API, and providing insights into dependency relationships, SNAPSHOT dependencies, and self-dependency detection
 
 For detailed architecture documentation, see [SPECIFICATION.md](SPECIFICATION.md).
+For a full deployment walkthrough (prerequisites, TLS setup, Helm configuration, local and remote Kubernetes), see [GETTING_STARTED.md](GETTING_STARTED.md).
 
    **Features**
     - **K-Partite Dependency Visualization**: Hierarchical visualization of transitive dependencies with color-coded partition levels

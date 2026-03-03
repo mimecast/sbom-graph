@@ -15,11 +15,14 @@ from sbom_graph_model.model import (
     DependencyVersion,
     HasVersion,
     License,
+    PolicyAnnotation,
+    PolicyType,
     Project,
     ProjectType,
     RiskStatus,
     Version,
     VersionDefect,
+    VersionPolicy,
 )
 
 
@@ -201,17 +204,92 @@ class TestDefect:
         assert d.discovered.year == 2024
 
 
+class TestPolicyType:
+    """Tests for the PolicyType string enum."""
+
+    def test_from_str_bad(self):
+        assert PolicyType.from_str("bad") == "bad"
+
+    def test_from_str_good(self):
+        assert PolicyType.from_str("good") == "good"
+
+    def test_from_str_hold(self):
+        assert PolicyType.from_str("hold") == "hold"
+
+    def test_from_str_invalid_raises(self):
+        with pytest.raises(ValueError):
+            PolicyType.from_str("invalid")
+
+    def test_from_str_none_raises(self):
+        with pytest.raises(ValueError):
+            PolicyType.from_str(None)
+
+
+class TestPolicyAnnotation:
+    """Tests for the PolicyAnnotation node class."""
+
+    def test_default_init(self):
+        pa = PolicyAnnotation()
+        assert pa.annotation_id is None
+        assert pa.type is None
+        assert pa.justification is None
+        assert pa.created_by is None
+        assert pa.created_at is None
+        assert pa.expires_at is None
+
+    def test_set_fields(self):
+        pa = PolicyAnnotation()
+        pa.annotation_id = "uuid-123"
+        pa.type = PolicyType.BAD
+        pa.justification = "reason"
+        pa.created_by = "admin"
+        pa.created_at = "2024-06-01T00:00:00Z"
+        pa.expires_at = "2025-01-01T00:00:00Z"
+        assert pa.annotation_id == "uuid-123"
+        assert pa.type == "bad"
+
+
+class TestVersionPolicy:
+    """Tests for the VersionPolicy edge class."""
+
+    def test_default_init(self):
+        vp = VersionPolicy()
+        assert vp.version is None
+        assert vp.annotation is None
+
+
+class TestDefectEnrichmentFields:
+    """Tests for Defect enrichment metadata fields."""
+
+    def test_new_fields_default(self):
+        d = Defect()
+        assert d.last_enriched_at is None
+        assert d.enrichment_source is None
+        assert d.aliases == []
+
+    def test_set_enrichment_fields(self):
+        d = Defect()
+        d.last_enriched_at = "2024-06-01T00:00:00Z"
+        d.enrichment_source = "osv"
+        d.aliases = ["CVE-2024-1", "GHSA-xxx"]
+        assert d.last_enriched_at == "2024-06-01T00:00:00Z"
+        assert len(d.aliases) == 2
+
+
 class TestLicense:
     """Tests for the License node class."""
 
     def test_default_init(self):
         lic = License()
-        assert lic.id is None
+        assert lic.spdx_id is None
+        assert lic.name is None
+        assert lic.url is None
+        assert lic.risk_category == "unknown"
 
-    def test_set_id(self):
+    def test_set_spdx_id(self):
         lic = License()
-        lic.id = "Apache-2.0"
-        assert lic.id == "Apache-2.0"
+        lic.spdx_id = "Apache-2.0"
+        assert lic.spdx_id == "Apache-2.0"
 
 
 class TestVersionDefect:

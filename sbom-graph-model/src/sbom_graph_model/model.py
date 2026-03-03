@@ -90,13 +90,105 @@ class Defect:
         self.cvss: Optional[int] = None
         self.cvss_string: Optional[str] = None
         self.source: Optional[tuple[str, str]] = None
+        self.last_enriched_at: Optional[str] = None  # ISO timestamp
+        self.enrichment_source: Optional[str] = None  # "osv", "nvd", "sbom"
+        self.aliases: list[str] = []  # CVE/GHSA/OSV cross-references
+
+
+class PolicyType(str):
+    """Policy annotation type for packages."""
+    BAD = "bad"
+    GOOD = "good"
+    HOLD = "hold"
+
+    _VALID: frozenset[str] = frozenset({BAD, GOOD, HOLD})
+
+    @classmethod
+    def from_str(cls, value: str | None) -> str:
+        if value and value in cls._VALID:
+            return value
+        raise ValueError(f"Invalid policy type {value!r}: must be one of {sorted(cls._VALID)}")
+
+
+class PolicyAnnotation:
+    """Represents a policy annotation (CertifyBad/CertifyGood/Hold).
+
+    Attributes:
+        annotation_id: Unique identifier (auto-generated UUID).
+        type: One of "bad", "good", "hold".
+        justification: Reason for the annotation.
+        created_by: Username of creator.
+        created_at: ISO timestamp of creation.
+        expires_at: Optional ISO timestamp of expiration.
+    """
+
+    def __init__(self):
+        self.annotation_id: Optional[str] = None
+        self.type: Optional[str] = None  # PolicyType value
+        self.justification: Optional[str] = None
+        self.created_by: Optional[str] = None
+        self.created_at: Optional[str] = None
+        self.expires_at: Optional[str] = None
+
+
+class VersionPolicy:
+    """Edge linking a Version to a PolicyAnnotation (HAS_POLICY)."""
+
+    def __init__(self):
+        self.version: Optional[Version] = None
+        self.annotation: Optional[PolicyAnnotation] = None
+
+
+class LicenseRiskCategory(str):
+    """Risk category for software licenses.
+
+    Values are the canonical strings stored in the graph database.
+    Use :meth:`from_str` to safely convert an arbitrary string to a
+    known category (falling back to :attr:`UNKNOWN`).
+    """
+
+    PERMISSIVE = "permissive"
+    WEAK_COPYLEFT = "weak_copyleft"
+    STRONG_COPYLEFT = "strong_copyleft"
+    PROPRIETARY = "proprietary"
+    UNKNOWN = "unknown"
+
+    _VALID: frozenset[str] = frozenset({
+        PERMISSIVE,
+        WEAK_COPYLEFT,
+        STRONG_COPYLEFT,
+        PROPRIETARY,
+        UNKNOWN,
+    })
+
+    @classmethod
+    def from_str(cls, value: str | None) -> str:
+        """Convert an arbitrary string to a valid risk category.
+
+        Returns :attr:`UNKNOWN` for ``None`` or unrecognised values.
+        """
+        if value and value in cls._VALID:
+            return value
+        return cls.UNKNOWN
 
 
 class License:
-    """Represents a software license."""
+    """Represents a software license.
+
+    Attributes:
+        spdx_id: SPDX identifier (e.g. ``"MIT"``, ``"Apache-2.0"``).
+            Used as the MERGE key in the graph.
+        name: Human-readable license name.
+        url: URL to the license text.
+        risk_category: Copyleft risk classification -- must be a value
+            from :class:`LicenseRiskCategory`.
+    """
 
     def __init__(self):
-        self.id: Optional[str] = None
+        self.spdx_id: Optional[str] = None
+        self.name: Optional[str] = None
+        self.url: Optional[str] = None
+        self.risk_category: str = LicenseRiskCategory.UNKNOWN
 
 
 # Edges
@@ -121,6 +213,14 @@ class DependencyVersion:
         self.child_version: Optional[Version] = None
         self.chosen_license: Optional[License] = None
         self.vex_information: Optional[dict] = None
+
+
+class VersionLicense:
+    """Edge linking a Version to a License it uses (HAS_LICENSE)."""
+
+    def __init__(self):
+        self.version: Optional[Version] = None
+        self.license: Optional[License] = None
 
 
 class HasVersion:

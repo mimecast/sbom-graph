@@ -1,0 +1,70 @@
+{{- if .Values.enrichment.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sbom-graph.enrichmentBeat.fullname" . }}
+  labels:
+    {{- include "sbom-graph.enrichmentBeat.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "sbom-graph.enrichmentBeat.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sbom-graph.enrichmentBeat.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: enrichment-beat
+          image: "{{ .Values.enrichment.image.repository }}:{{ .Values.enrichment.image.tag }}"
+          imagePullPolicy: {{ .Values.enrichment.image.pullPolicy }}
+          env:
+            {{- include "sbom-graph.enrichment.env" . | nindent 12 }}
+          args:
+            - "-A"
+            - "sbom_graph_enrichment.celery_app"
+            - "beat"
+            - "--loglevel=info"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.falkordb.tls.enabled }}
+            - name: tls-ca
+              mountPath: /tls
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.falkordb.tls.enabled }}
+        - name: tls-ca
+          secret:
+            secretName: {{ include "sbom-graph.tls.secretName" . }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+{{- end }}

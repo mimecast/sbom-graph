@@ -11,7 +11,7 @@ import operator
 from functools import reduce
 from typing import Optional
 
-from ..model import Project, Version, Defect, VersionDefect
+from ..model import Project, Version, Defect, License, VersionDefect
 from ..persistence import Persistence
 
 logger = logging.getLogger(__name__)
@@ -137,20 +137,23 @@ class CycloneDXProcessor:
         Returns:
             Tuple of (bom-ref, (Project, Version)).
         """
+        component = metadata_json['component']
+
         application = Project()
         application.application_id = app_id
         application.public_app_id = public_app_id
-        application.name = metadata_json['component'].get('name')
-        application.group = metadata_json['component'].get('group')
-        application.type = metadata_json['component'].get('type')
-        application.purl = metadata_json['component'].get('purl')
+        application.name = component.get('name')
+        application.group = component.get('group')
+        application.type = component.get('type')
+        application.purl = component.get('purl')
         application.repo = gitlab_project_url
+        application.licenses = CycloneDXProcessor.parse_licenses_from_component(component)
 
         version = Version()
         version.scan_id = scan_id
         version.project = application
-        version.version = metadata_json['component'].get('version', "UNKNOWN")
-        ref = metadata_json['component'].get('bom-ref')
+        version.version = component.get('version', "UNKNOWN")
+        ref = component.get('bom-ref')
 
         return ref, (application, version)
 
@@ -175,6 +178,7 @@ class CycloneDXProcessor:
         project.group = json_component.get('group')
         project.type = json_component.get('type')
         project.purl = json_component.get('purl')
+        project.licenses = CycloneDXProcessor.parse_licenses_from_component(json_component)
 
         version = Version()
         version.project = project
@@ -182,6 +186,49 @@ class CycloneDXProcessor:
         version.scan_id = scan_id
 
         return project, version
+
+    @staticmethod
+    def parse_licenses_from_component(component: dict) -> list[License]:
+        """Extract license information from a CycloneDX component.
+
+        Handles both SPDX-identified licenses (``license.id``) and
+        freetext license names (``license.name``).
+
+        Args:
+            component: A CycloneDX component dictionary.
+
+        Returns:
+            List of License objects extracted from the component.
+        """
+        licenses: list[License] = []
+        license_entries = component.get("licenses", [])
+        if not isinstance(license_entries, list):
+            return licenses
+
+        for entry in license_entries:
+            if not isinstance(entry, dict):
+                continue
+            lic_obj = entry.get("license")
+            if not isinstance(lic_obj, dict):
+                continue
+
+            lic = License()
+            spdx_id = lic_obj.get("id")
+            if spdx_id:
+                lic.spdx_id = spdx_id
+                lic.name = spdx_id
+            else:
+                name = lic_obj.get("name", "")
+                if name:
+                    lic.spdx_id = name
+                    lic.name = name
+                else:
+                    continue
+
+            lic.url = lic_obj.get("url")
+            licenses.append(lic)
+
+        return licenses
 
     @staticmethod
     def parse_defect_from_cyclone_dx(cyclone_dx_json: dict) -> Defect:
@@ -333,6 +380,9 @@ class CycloneDXProcessor:
     ) -> None:
         """Persist all projects and their versions to the database.
 
+        Also persists license nodes and HAS_LICENSE edges extracted
+        from CycloneDX component data.
+
         Args:
             projects: Dictionary mapping bom-ref to (Project, Version) tuples.
         """
@@ -342,6 +392,22 @@ class CycloneDXProcessor:
                 logger.warning(f"Skipping project {project}: version is None")
                 continue
             self.persistence.create_project_version(version=version)
+
+            for lic in getattr(project, "licenses", []):
+                if not lic or not lic.spdx_id:
+                    continue
+                self.persistence.create_license(
+                    spdx_id=lic.spdx_id,
+                    name=lic.name,
+                    url=lic.url,
+                    risk_category=lic.risk_category,
+                )
+                self.persistence.create_version_license_by_name(
+                    project_name=project.name or "",
+                    project_group=project.group,
+                    version_name=version.version or "",
+                    spdx_id=lic.spdx_id,
+                )
 
     def _persist_dependencies(
         self,
