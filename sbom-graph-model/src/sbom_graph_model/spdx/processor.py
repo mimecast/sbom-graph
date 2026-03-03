@@ -187,13 +187,25 @@ class SPDXProcessor:
         path = parsed.path.lstrip("/")
         if path.endswith(".git"):
             path = path[:-4]
+        host = parsed.hostname.lower() if parsed.hostname else ""
+        is_git_host = bool(
+            host
+            and (
+                host == "github.com"
+                or host.endswith(".github.com")
+                or host == "gitlab.com"
+                or host.endswith(".gitlab.com")
+                or host == "bitbucket.org"
+                or host.endswith(".bitbucket.org")
+            )
+        )
+        vcs_type: Optional[str] = "git" if (
+            url.endswith(".git") or path.endswith(".git") or is_git_host
+        ) else None
         return {
             "namespace": namespace,
             "name": path or None,
-            "vcs_type": "git" if (
-                url.endswith(".git") or "github.com" in url
-                or "gitlab.com" in url or "bitbucket.org" in url
-            ) else None,
+            "vcs_type": vcs_type,
         }
 
     def _find_root_spdx_id(
