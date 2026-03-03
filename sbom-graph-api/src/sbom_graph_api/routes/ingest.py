@@ -367,8 +367,9 @@ def upload_sbom() -> tuple[Response, int]:
                 "dependencies_count": sum(len(d) for d in dep_v.values()),
                 "defects_count": len(defects),
             }), 201
-        except CycloneDXValidationError as e:
-            return jsonify({"error": "CycloneDX validation failed", "detail": str(e)}), 422
+        except CycloneDXValidationError:
+            logger.exception("CycloneDX SBOM validation error")
+            return jsonify({"error": "CycloneDX validation failed"}), 422
         except Exception:
             logger.exception("Unexpected error processing CycloneDX SBOM")
             return jsonify({"error": "An unexpected error occurred"}), 500
