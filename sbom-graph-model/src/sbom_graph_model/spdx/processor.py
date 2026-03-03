@@ -131,8 +131,23 @@ class SPDXProcessor:
                 cat = ref.get("referenceCategory", "")
                 if cat in ("PERSISTENT_ID", "SECURITY", "OTHER"):
                     locator = ref.get("referenceLocator", "")
-                    if locator and ("github.com" in locator or "gitlab.com" in locator
-                                    or "bitbucket.org" in locator or ".git" in locator):
+                    if not locator or not isinstance(locator, str):
+                        continue
+                    parsed = urlparse(locator)
+                    host = parsed.hostname.lower() if parsed.hostname else ""
+                    # Accept well-known VCS hosts (including their subdomains).
+                    if host and (
+                        host == "github.com"
+                        or host.endswith(".github.com")
+                        or host == "gitlab.com"
+                        or host.endswith(".gitlab.com")
+                        or host == "bitbucket.org"
+                        or host.endswith(".bitbucket.org")
+                    ):
+                        return locator
+                    # As a fallback, treat URLs whose path ends with ".git" as VCS URLs,
+                    # but only if they have a valid scheme and host.
+                    if parsed.scheme and host and parsed.path.endswith(".git"):
                         return locator
 
         download = package.get("downloadLocation", "")
