@@ -6,6 +6,12 @@
 # ============================================================================
 FROM python:3.14-slim AS builder
 
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install uv for dependency management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
@@ -13,17 +19,15 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 
 # Copy dependency files first for better layer caching
+COPY ./sbom-graph-model/dist/*.whl ./deps/
 COPY ./sbom-graph-api/pyproject.toml ./sbom-graph-api/uv.lock ./sbom-graph-api/README.md ./
-
-RUN uv pip install --target=/app/dependencies --no-cache --no-sources .
-
 # Copy application source code
 COPY ./sbom-graph-api/src/ ./src/
+COPY ./sbom-graph-api/gunicorn.conf.py ./
 
+RUN uv pip install --target=/app/dependencies --no-cache --no-sources ./deps/*.whl .
+RUN ls -al /app/dependencies
 
-# Install the application itself
-RUN uv venv /app/.venv
-RUN uv pip install --target=/app/dependencies --no-cache ./
 
 # ============================================================================
 # Stage 2: Runtime - Distroless Python image
@@ -32,19 +36,19 @@ FROM gcr.io/distroless/python3-debian13:nonroot
 
 # Set working directory
 WORKDIR /app
-# RUN mkdir -p /app/.venv
-# Copy virtual environment from builder
-COPY --from=builder /app/.venv /app/.venv
+
+# Copy installed dependencies from builder
+COPY --from=builder /app/dependencies /app/dependencies
 
 # Copy application source (needed for imports)
 COPY --from=builder /app/src /app/src
 
 # Copy gunicorn configuration file
-COPY ./sbom-graph-api/gunicorn.conf.py /app/gunicorn.conf.py
+COPY --from=builder /app/gunicorn.conf.py /app/gunicorn.conf.py
 
-# Set Python path to include the virtual environment
-ENV PYTHONPATH="/app/.venv/lib/python3.12/site-packages:/app/src"
-ENV PATH="/app/.venv/bin:$PATH"
+# Set Python path to include our dependencies and source
+ENV PYTHONPATH=/app/dependencies:/app/src
+ENV PYTHONUNBUFFERED=1
 
 # Environment variables with defaults (can be overridden)
 # Flask configuration
@@ -118,8 +122,4 @@ USER 65532
 #
 # TLS is automatically enabled when TLS_ENABLED=true and cert/key files are set
 # The gunicorn_config.py reads environment variables for TLS configuration
-ENTRYPOINT ["python", "-m", "gunicorn"]
-# Use gthread worker for better handling of concurrent requests
-# -c: Use the gunicorn config file for TLS and other settings from environment
-# The config file handles TLS, worker settings, and timeouts from environment variables
-CMD ["-c", "/app/gunicorn.conf.py", "sbom_graph_api.wsgi:app"]
+ENTRYPOINT ["/usr/bin/python3", "-m", "gunicorn", "-c", "/app/gunicorn.conf.py", "sbom_graph_api.wsgi:app"]

@@ -50,7 +50,7 @@ USER daemon
 
 # Run with gunicorn
 # Note: distroless doesn't have shell, so we use the exec form
-ENTRYPOINT ["python", "-m", "gunicorn", "-c", "/app/gunicorn.conf.py", "sonatype_lifecycle_release_listener.app:app"]
+ENTRYPOINT ["/usr/bin/python3", "-m", "gunicorn", "-c", "/app/gunicorn.conf.py", "sonatype_lifecycle_release_listener.app:app"]
 
 
 

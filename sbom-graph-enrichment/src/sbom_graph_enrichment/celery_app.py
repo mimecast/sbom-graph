@@ -14,6 +14,7 @@ the ``celery`` and ``kombu`` loggers as defence-in-depth.
 import logging
 import os
 import re
+import ssl
 
 from celery import Celery
 from celery.signals import worker_process_init
@@ -48,6 +49,16 @@ app.conf.update(
     worker_prefetch_multiplier=1,
     task_default_queue="enrichment",
 )
+
+if _REDIS_SSL:
+    _ssl_opts: dict[str, object] = {"ssl_cert_reqs": ssl.CERT_REQUIRED}
+    _ca_certs = os.environ.get("FALKORDB_CACERTS")
+    if _ca_certs:
+        _ssl_opts["ssl_ca_certs"] = _ca_certs
+    app.conf.update(
+        broker_use_ssl=_ssl_opts,
+        redis_backend_use_ssl=_ssl_opts,
+    )
 
 _ENRICHMENT_INTERVAL = int(os.environ.get("ENRICHMENT_INTERVAL", "3600"))
 _TRUST_SCORE_INTERVAL = int(os.environ.get("TRUST_SCORE_INTERVAL", "7200"))

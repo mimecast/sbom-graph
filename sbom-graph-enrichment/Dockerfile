@@ -46,7 +46,7 @@ ENV INTERNAL_PREFIXES=""
 
 USER 65532
 
-ENTRYPOINT ["python", "-m", "celery"]
+ENTRYPOINT ["/usr/bin/python3", "-m", "celery"]
 CMD ["-A", "sbom_graph_enrichment.celery_app", "worker", "--loglevel=info", "--concurrency=2", "-Q", "enrichment"]
 # To run beat instead: override CMD with:
 #   ["-A", "sbom_graph_enrichment.celery_app", "beat", "--loglevel=info"]

@@ -8,7 +8,7 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.14,<4"
 dependencies = [
-    "sbom-graph-model>=0.1.1,<2",
+    "sbom-graph-model>=0.1.0,<2",
     "flask>=3.1.2,<4.0.0",
     "flask-jwt-extended>=4.7.1,<5.0.0",
     "gunicorn>=23.0.0,<24.0.0",
