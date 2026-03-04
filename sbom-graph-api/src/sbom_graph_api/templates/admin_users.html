@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>User Management - AppSec Data Views</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+    <style>
+        .container { max-width: 1200px; }
+        .btn { padding: 10px 20px; }
+        .users-table {
+            width: 100%; background: white; border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-collapse: collapse;
+        }
+        .users-table th { background-color: #366092; color: white; padding: 12px 15px; text-align: left; }
+        .users-table td { padding: 12px 15px; border-bottom: 1px solid #e0e0e0; }
+        .users-table tr:hover { background-color: #f8f9fa; }
+        .badge {
+            display: inline-block; padding: 4px 10px; border-radius: 4px;
+            font-size: 11px; font-weight: 600; text-transform: uppercase;
+        }
+        .badge-admin { background: #e3f2fd; color: #1565c0; }
+        .badge-active { background: #e8f5e9; color: #2e7d32; }
+        .badge-inactive { background: #ffebee; color: #c62828; }
+        .badge-password { background: #fff3e0; color: #e65100; }
+        .user-info { font-size: 12px; color: #888; }
+        .actions-cell .btn { margin-right: 5px; }
+        .current-user { font-weight: 600; color: #366092; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav-links">
+            <a href="/">&larr; Back to API</a>
+            <a href="/auth/tokens">API Tokens</a>
+            <a href="/auth/change-password">Change Password</a>
+            <a href="/auth/logout">Logout</a>
+        </div>
+
+        <div class="header-actions">
+            <h1>User Management</h1>
+            <a href="/auth/admin/users/create" class="btn">Create New User</a>
+        </div>
+
+        <table class="users-table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Display Name</th>
+                    <th>Email</th>
+                    <th>Status</th>
+                    <th>Created</th>
+                    <th>Last Login</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>
+                        {% if user.username == current_user %}
+                        <span class="current-user">{{ user.username }} (you)</span>
+                        {% else %}
+                        {{ user.username }}
+                        {% endif %}
+                    </td>
+                    <td>{{ user.display_name or '-' }}</td>
+                    <td>{{ user.email or '-' }}</td>
+                    <td>
+                        {% if user.is_admin %}
+                        <span class="badge badge-admin">Admin</span>
+                        {% endif %}
+                        {% if user.is_active %}
+                        <span class="badge badge-active">Active</span>
+                        {% else %}
+                        <span class="badge badge-inactive">Disabled</span>
+                        {% endif %}
+                        {% if user.must_change_password %}
+                        <span class="badge badge-password">Temp Password</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div>{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else '-' }}</div>
+                        {% if user.created_by %}
+                        <div class="user-info">by {{ user.created_by }}</div>
+                        {% endif %}
+                    </td>
+                    <td>{{ user.last_login_at.strftime('%Y-%m-%d %H:%M') if user.last_login_at else 'Never' }}</td>
+                    <td class="actions-cell">
+                        {% if user.username != current_user %}
+                        <form action="/auth/admin/users/{{ user.username }}/toggle-admin" method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm {% if user.is_admin %}btn-warning{% endif %}"
+                                    title="{% if user.is_admin %}Remove admin{% else %}Make admin{% endif %}">
+                                {% if user.is_admin %}Remove Admin{% else %}Make Admin{% endif %}
+                            </button>
+                        </form>
+                        <form action="/auth/admin/users/{{ user.username }}/toggle-active" method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm {% if user.is_active %}btn-warning{% endif %}"
+                                    title="{% if user.is_active %}Disable account{% else %}Enable account{% endif %}">
+                                {% if user.is_active %}Disable{% else %}Enable{% endif %}
+                            </button>
+                        </form>
+                        <form action="/auth/admin/users/{{ user.username }}/reset-password" method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm" title="Reset password">Reset Password</button>
+                        </form>
+                        <form action="/auth/admin/users/{{ user.username }}/delete" method="POST"
+                              onsubmit="return confirm('Are you sure you want to delete user {{ user.username }}?')">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-danger" title="Delete user">Delete</button>
+                        </form>
+                        {% else %}
+                        <span class="user-info">Cannot modify own account</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

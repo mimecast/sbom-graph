@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Create API Token - AppSec Data Views</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+    <style>
+        .success-card { padding: 20px; }
+        .token-display {
+            background: #f5f5f5; padding: 15px; border-radius: 5px;
+            font-family: monospace; font-size: 12px; word-break: break-all;
+            margin: 15px 0; border: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav-links">
+            <a href="/auth/tokens">&larr; Back to Tokens</a>
+            <a href="/">API Home</a>
+            <a href="/auth/logout">Logout</a>
+        </div>
+
+        <h1>Create API Token</h1>
+
+        {% if created_token %}
+        <div class="success-card">
+            <h3>Token Created Successfully!</h3>
+            <p>Your new API token has been created. Copy it now - you won't be able to see it again.</p>
+            <div class="token-display" id="tokenValue">{{ created_token }}</div>
+            <button class="btn" onclick="copyToken()">Copy to Clipboard</button>
+            <div class="warning">
+                <strong>Important:</strong> Store this token securely. It cannot be retrieved again after you leave this page.
+            </div>
+        </div>
+        <div class="btn-group">
+            <a href="/auth/tokens" class="btn btn-secondary">View All Tokens</a>
+            <a href="/auth/tokens/create" class="btn">Create Another Token</a>
+        </div>
+        {% else %}
+        <div class="card">
+            {% if error %}
+            <div class="error-message">
+                {{ error }}
+            </div>
+            {% endif %}
+
+            <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="form-group">
+                    <label for="token_name">Token Name *</label>
+                    <input type="text" id="token_name" name="token_name" required
+                           placeholder="e.g., CI/CD Pipeline Token"
+                           maxlength="255">
+                    <div class="help-text">A descriptive name to identify this token</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="description">Description</label>
+                    <textarea id="description" name="description" rows="3"
+                              placeholder="What will this token be used for?"></textarea>
+                    <div class="help-text">Optional notes about the token's purpose</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="expires_days">Expiration</label>
+                    <select id="expires_days" name="expires_days">
+                        <option value="30">30 days</option>
+                        <option value="60">60 days</option>
+                        <option value="90" selected>90 days</option>
+                        <option value="180">180 days</option>
+                        <option value="365">1 year</option>
+                        <option value="">Never (not recommended)</option>
+                    </select>
+                    <div class="help-text">Tokens should expire for security. Default: 90 days</div>
+                </div>
+
+                <div class="btn-group">
+                    <button type="submit" class="btn">Create Token</button>
+                    <a href="/auth/tokens" class="btn btn-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+        {% endif %}
+    </div>
+
+    <script>
+        function copyToken() {
+            const token = document.getElementById('tokenValue').textContent;
+            navigator.clipboard.writeText(token).then(() => {
+                alert('Token copied to clipboard!');
+            }).catch(err => {
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = token;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                alert('Token copied to clipboard!');
+            });
+        }
+    </script>
+</body>
+</html>

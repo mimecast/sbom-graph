@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sbom-graph.falkordb.fullname" . }}
+  labels:
+    {{- include "sbom-graph.falkordb.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "sbom-graph.falkordb.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sbom-graph.falkordb.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: falkordb
+          image: "{{ .Values.falkordb.image.repository }}:{{ .Values.falkordb.image.tag }}"
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          {{- /* Wrapper: pass --requirepass from secret and explicitly load the FalkorDB module (path changed to /var/lib/falkordb/bin/ in v4+) */}}
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              exec /usr/local/bin/docker-entrypoint.sh redis-server \
+                --loadmodule /var/lib/falkordb/bin/falkordb.so \
+                --requirepass "${FALKORDB_PASSWORD}" \
+                --save "" \
+                --stop-writes-on-bgsave-error no{{ if .Values.falkordb.tls.enabled }} \
+                --tls-port 6379 --port 0 \
+                --tls-auth-clients no \
+                --tls-cert-file /tls/tls.crt --tls-key-file /tls/tls.key --tls-ca-cert-file /tls/ca.crt{{ end }}
+          env:
+            - name: FALKORDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sbom-graph.falkordb.secretName" . }}
+                  key: password
+          readinessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.falkordb.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            {{- if .Values.falkordb.tls.enabled }}
+            - name: tls
+              mountPath: /tls
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.falkordb.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "sbom-graph.falkordb.fullname" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.falkordb.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ include "sbom-graph.tls.secretName" . }}
+        {{- end }}

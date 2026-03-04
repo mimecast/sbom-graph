@@ -1,0 +1,20 @@
+[report]
+exclude_also =
+    no cover: start(.|\n)*?no cover: stop
+    def __repr__
+    if __name__ == .__main__.:
+
+omit =
+    # omit anything in a .local directory anywhere
+    */.local/*
+    # omit everything in /tests
+    /**/test_*.py
+    /data_ingestion/*
+
+[run]
+source = sbom_graph_api
+omit =
+    # omit anything in a .local directory anywhere
+    */.local/*
+    # omit everything in /tests
+    /**/test_*.py

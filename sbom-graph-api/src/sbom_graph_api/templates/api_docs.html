@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AppSec Data Views API</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <style>
+        body { max-width: 950px; margin: 50px auto; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .user-menu { display: flex; align-items: center; gap: 15px; }
+        .user-menu .username { color: #666; font-size: 14px; }
+        .user-menu a { color: #366092; text-decoration: none; font-size: 14px; }
+        .user-menu a:hover { text-decoration: underline; }
+        h1 { color: #366092; margin: 0; border-bottom: none; }
+        h2 { color: #254a73; margin-top: 30px; }
+        .endpoint {
+            background: white; padding: 15px; margin: 10px 0;
+            border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .method {
+            display: inline-block; padding: 3px 8px; background: #4CAF50;
+            color: white; border-radius: 3px; font-size: 12px; margin-right: 10px;
+        }
+        .path { font-family: monospace; color: #366092; font-weight: bold; }
+        .path a { color: #366092; text-decoration: none; }
+        .path a:hover { text-decoration: underline; }
+        .description { color: #666; margin-top: 8px; }
+        .params { font-size: 14px; color: #888; margin-top: 5px; }
+        code { background: #e8e8e8; padding: 2px 6px; border-radius: 3px; }
+        .format-note {
+            background: #e8f4fc; padding: 10px 15px; border-radius: 5px;
+            margin: 15px 0; font-size: 14px;
+        }
+        .format-note strong { color: #366092; }
+        .param-table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 14px; }
+        .param-table th { background: #366092; color: white; padding: 8px 12px; text-align: left; }
+        .param-table td { padding: 8px 12px; border-bottom: 1px solid #ddd; }
+        .param-table tr:nth-child(even) { background: #f9f9f9; }
+        .try-form {
+            margin-top: 12px; padding: 12px; background: #f8f9fa;
+            border-radius: 4px; border: 1px solid #e0e0e0;
+        }
+        .try-form label { display: inline-block; min-width: 100px; font-size: 13px; color: #555; }
+        .try-form input[type="text"],
+        .try-form input[type="number"],
+        .try-form select {
+            padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px;
+            font-size: 13px; margin-right: 10px; margin-bottom: 8px;
+        }
+        .try-form input[type="text"] { width: 180px; }
+        .try-form input[type="number"] { width: 80px; }
+        .try-form select { min-width: 100px; }
+        .try-form input[type="checkbox"] { margin-right: 5px; }
+        .try-form button {
+            padding: 8px 16px; background: #366092; color: white;
+            border: none; border-radius: 4px; cursor: pointer; font-size: 13px;
+        }
+        .try-form button:hover { background: #254a73; }
+        .form-row { margin-bottom: 8px; }
+        .checkbox-label { font-size: 13px; color: #555; margin-right: 15px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>AppSec Data Views API</h1>
+            <p style="margin: 5px 0 0 0; color: #666;">Graph data visualization service for FalkorDB dependency data.</p>
+        </div>
+        {% if username %}
+        <div class="user-menu">
+            <span class="username">{{ username }}</span>
+            {% if is_admin %}
+            <a href="/auth/admin/users">Manage Users</a>
+            {% endif %}
+            <a href="/auth/tokens">API Tokens</a>
+            {% if not ldap_enabled %}
+            <a href="/auth/change-password">Change Password</a>
+            {% endif %}
+            <a href="/auth/logout">Logout</a>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="format-note">
+        <strong>Output Formats:</strong> Reports and exports support multiple formats via the <code>format</code> query parameter:
+        <code>html</code> (default), <code>excel</code>, or <code>json</code>.
+        JSON Schema definitions are available at <a href="/schemas/">/schemas/</a>.
+    </div>
+
+    <h2>Query Parameters Reference</h2>
+    <table class="param-table">
+        <tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr>
+        <tr><td><code>format</code></td><td>string</td><td>html</td><td>Output format: <code>html</code>, <code>excel</code>, or <code>json</code></td></tr>
+        <tr><td><code>internal_only</code></td><td>boolean</td><td>false</td><td>Set to <code>true</code> to show only internal-labeled nodes</td></tr>
+        <tr><td><code>latest_only</code></td><td>boolean</td><td>false</td><td>For <code>/reports/applications</code>: show only the latest version per application</td></tr>
+        <tr><td><code>longest_only</code></td><td>boolean</td><td>true</td><td>For <code>/reports/dependants</code>: show only the longest paths (for vulnerability prioritization)</td></tr>
+        <tr><td><code>layout</code></td><td>string</td><td>spring/radial</td><td>Visualization layout: <code>spring</code>, <code>radial</code>, <code>shell</code>, <code>bfs</code>, <code>circular</code></td></tr>
+        <tr><td><code>sort_by</code></td><td>string</td><td>inDegree</td><td>For <code>/reports/centrality</code>: <code>inDegree</code>, <code>outDegree</code>, <code>project_name</code>, <code>version_name</code></td></tr>
+        <tr><td><code>sort_order</code></td><td>string</td><td>desc</td><td>For <code>/reports/centrality</code>: <code>asc</code> or <code>desc</code></td></tr>
+        <tr><td><code>max_depth</code></td><td>integer</td><td>15</td><td>Maximum traversal depth (1-100)</td></tr>
+        <tr><td><code>limit</code></td><td>integer</td><td>10000</td><td>Maximum number of results (max: 100000)</td></tr>
+        <tr><td><code>height</code></td><td>string</td><td>100vh</td><td>Visualization height (CSS dimension)</td></tr>
+        <tr><td><code>width</code></td><td>string</td><td>100vw</td><td>Visualization width (CSS dimension)</td></tr>
+    </table>
+
+    <h2>Visualization Endpoints</h2>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/visualizations/kpartite/{project_name}/{version}</span>
+        <div class="description">K-partite visualization of transitive dependencies with color-coded partition levels</div>
+        <div class="params">Params: <code>max_depth</code>, <code>internal_only</code>, <code>height</code>, <code>width</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Project:</label><input type="text" id="kp_project" placeholder="e.g., my-library">
+                <label>Version:</label><input type="text" id="kp_version" placeholder="e.g., 1.0.0">
+            </div>
+            <div class="form-row">
+                <label>Max Depth:</label><input type="number" id="kp_depth" placeholder="15" min="1" max="100">
+                <label class="checkbox-label"><input type="checkbox" id="kp_internal">Internal Only</label>
+            </div>
+            <button onclick="goToKpartite()">View Visualization</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/visualizations/bipartite/{project_name}</span>
+        <div class="description">Bi-partite graph of project versions and their direct dependants</div>
+        <div class="params">Params: <code>internal_only</code>, <code>height</code>, <code>width</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Project:</label><input type="text" id="bp_project" placeholder="e.g., my-library">
+                <label class="checkbox-label"><input type="checkbox" id="bp_internal">Internal Only</label>
+            </div>
+            <button onclick="goToBipartite()">View Visualization</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/visualizations/dependants/{project_name}/{version}</span>
+        <div class="description">Full dependants graph showing all projects that depend on this version</div>
+        <div class="params">Params: <code>max_depth</code>, <code>internal_only</code>, <code>height</code>, <code>width</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Project:</label><input type="text" id="dv_project" placeholder="e.g., my-library">
+                <label>Version:</label><input type="text" id="dv_version" placeholder="e.g., 1.0.0">
+            </div>
+            <div class="form-row">
+                <label>Max Depth:</label><input type="number" id="dv_depth" placeholder="15" min="1" max="100">
+                <label class="checkbox-label"><input type="checkbox" id="dv_internal">Internal Only</label>
+            </div>
+            <button onclick="goToDependantsViz()">View Visualization</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/visualizations/dependencies/{project_name}/{version}</span>
+        <div class="description">Dependencies graph with multiple layout options and cycle detection. Cycle edges are highlighted in red with dashed lines. Includes interactive layout switcher.</div>
+        <div class="params">Params: <code>layout</code>, <code>max_depth</code>, <code>internal_only</code>, <code>height</code>, <code>width</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Project:</label><input type="text" id="depgraph_project" placeholder="e.g., extensible-platform">
+                <label>Version:</label><input type="text" id="depgraph_version" placeholder="e.g., 1.0.0">
+            </div>
+            <div class="form-row">
+                <label>Layout:</label>
+                <select id="depgraph_layout">
+                    <option value="spring" selected>Spring (Force-Directed)</option>
+                    <option value="radial">Radial Tree</option>
+                    <option value="shell">Shell</option>
+                    <option value="bfs">BFS Tree (Hierarchical)</option>
+                    <option value="circular">Circular</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label>Max Depth:</label><input type="number" id="depgraph_depth" placeholder="15" min="1" max="100">
+                <label class="checkbox-label"><input type="checkbox" id="depgraph_internal">Internal Only</label>
+            </div>
+            <button onclick="goToDependenciesGraph()">View Visualization</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/visualizations/dependants-multi/{project_name}/{version}</span>
+        <div class="description">Dependants graph with multiple layout options and cycle detection. Shows all projects that depend on this library. Includes interactive layout switcher.</div>
+        <div class="params">Params: <code>layout</code>, <code>max_depth</code>, <code>internal_only</code>, <code>height</code>, <code>width</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Project:</label><input type="text" id="depmulti_project" placeholder="e.g., acme-common">
+                <label>Version:</label><input type="text" id="depmulti_version" placeholder="e.g., 2.0.0">
+            </div>
+            <div class="form-row">
+                <label>Layout:</label>
+                <select id="depmulti_layout">
+                    <option value="spring">Spring (Force-Directed)</option>
+                    <option value="radial" selected>Radial Tree</option>
+                    <option value="shell">Shell</option>
+                    <option value="bfs">BFS Tree (Hierarchical)</option>
+                    <option value="circular">Circular</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label>Max Depth:</label><input type="number" id="depmulti_depth" placeholder="15" min="1" max="100">
+                <label class="checkbox-label"><input type="checkbox" id="depmulti_internal">Internal Only</label>
+            </div>
+            <button onclick="goToDependantsMulti()">View Visualization</button>
+        </div>
+    </div>
+
+    <h2>Export Endpoints (Deprecated)</h2>
+
+    <div class="endpoint" style="opacity: 0.7;">
+        <span class="method">GET</span>
+        <span class="path">/exports/dependencies/{project_name}</span>
+        <div class="description"><strong>DEPRECATED:</strong> Redirects to <code>/reports/version-dependencies/{project_name}</code></div>
+    </div>
+
+    <h2>Report Endpoints</h2>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/reports/version-dependencies/{project_name}/{version}</span>
+        <div class="description">Shows all transitive dependencies for a version (what it depends ON). Use <code>latest</code> for the latest SemVer version (only if ALL project versions are SemVer compliant).</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code>, <code>max_depth</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Project:</label><input type="text" id="vdep_project" placeholder="e.g., my-library">
+                <label>Version:</label><input type="text" id="vdep_version" placeholder="e.g., 1.0.0 or latest" required>
+            </div>
+            <div class="form-row">
+                <label>Max Depth:</label><input type="number" id="vdep_maxdepth" placeholder="10" min="1" max="100">
+                <label class="checkbox-label"><input type="checkbox" id="vdep_internal">Internal Only</label>
+            </div>
+            <button onclick="goToVersionDeps()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/projects">/reports/projects</a></span>
+        <div class="description">Table view of all projects with versions</div>
+        <div class="params">Params: <code>format</code>, <code>limit</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Limit:</label><input type="number" id="proj_limit" placeholder="10000" min="1" max="100000">
+                <label class="checkbox-label"><input type="checkbox" id="proj_internal">Internal Only</label>
+            </div>
+            <button onclick="goToProjects()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/applications">/reports/applications</a></span>
+        <div class="description">Table view of all applications (root nodes) with versions and metadata</div>
+        <div class="params">Params: <code>format</code>, <code>limit</code>, <code>internal_only</code>, <code>latest_only</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Limit:</label><input type="number" id="app_limit" placeholder="10000" min="1" max="100000">
+                <label class="checkbox-label"><input type="checkbox" id="app_internal">Internal Only</label>
+                <label class="checkbox-label"><input type="checkbox" id="app_latest">Latest Only</label>
+            </div>
+            <button onclick="goToApplications()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/snapshots">/reports/snapshots</a></span>
+        <div class="description">Report of applications with SNAPSHOT dependencies</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <label class="checkbox-label"><input type="checkbox" id="snap_internal">Internal Only</label>
+            <button onclick="goToSnapshots()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/self-dependencies">/reports/self-dependencies</a></span>
+        <div class="description">Report of nodes that depend on themselves</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <label class="checkbox-label"><input type="checkbox" id="self_internal">Internal Only</label>
+            <button onclick="goToSelfDeps()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/reports/multi-version-deps/{project_name}</span>
+        <div class="description">Library version adoption report - shows all versions of a library and who uses each. Use for vulnerability remediation planning.</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Library:</label><input type="text" id="mvd_project" placeholder="e.g., jackson-databind">
+            </div>
+            <label class="checkbox-label"><input type="checkbox" id="mvd_internal">Internal Dependants Only</label>
+            <button onclick="goToMultiVersionDeps()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/reports/multi-version-sources/{project_name}/{version}</span>
+        <div class="description">Diamond dependency analysis - shows version conflicts within a project's dependency tree. Use to find runtime conflict risks.</div>
+        <div class="params">Params: <code>format</code>, <code>max_depth</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Project:</label><input type="text" id="mvs_project" placeholder="e.g., my-app">
+                <label>Version:</label><input type="text" id="mvs_version" placeholder="e.g., 1.0.0">
+            </div>
+            <div class="form-row">
+                <label>Max Depth:</label><input type="number" id="mvs_depth" placeholder="15" min="1" max="100">
+                <label class="checkbox-label"><input type="checkbox" id="mvs_internal">Internal Only</label>
+            </div>
+            <button onclick="goToMultiVersionSources()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/non-semver-versions">/reports/non-semver-versions</a></span>
+        <div class="description">Report of versions not following SemVer naming convention</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <label class="checkbox-label"><input type="checkbox" id="nsv_internal">Internal Only</label>
+            <button onclick="goToNonSemver()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/reports/dependants/{project_name}/{version}</span>
+        <div class="description">Report of all dependants with partition levels and dependency paths (longest paths for vulnerability prioritization)</div>
+        <div class="params">Params: <code>format</code>, <code>max_depth</code>, <code>internal_only</code>, <code>longest_only</code> (default: true)</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Project:</label><input type="text" id="dep_project" placeholder="e.g., my-library">
+                <label>Version:</label><input type="text" id="dep_version" placeholder="e.g., 1.0.0">
+            </div>
+            <div class="form-row">
+                <label>Max Depth:</label><input type="number" id="dep_depth" placeholder="50" min="1" max="100">
+                <label class="checkbox-label"><input type="checkbox" id="dep_internal">Internal Only</label>
+                <label class="checkbox-label"><input type="checkbox" id="dep_longest" checked>Longest Paths Only</label>
+            </div>
+            <button onclick="goToDependantsReport()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/vulnerabilities">/reports/vulnerabilities</a></span>
+        <div class="description">Report of all vulnerabilities ordered by severity with affected versions. Links to dependant visualizations and impact reports.</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <label class="checkbox-label"><input type="checkbox" id="vuln_internal">Internal Only</label>
+            <button onclick="goToVulnerabilities()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/reports/vulnerability-dependants/{defect_id}</span>
+        <div class="description">Report of all dependants affected by a specific vulnerability, ordered by partition (distance from vulnerable library)</div>
+        <div class="params">Params: <code>format</code>, <code>max_depth</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>CVE ID:</label><input type="text" id="vulndep_id" placeholder="e.g., CVE-2021-44228">
+            </div>
+            <div class="form-row">
+                <label>Max Depth:</label><input type="number" id="vulndep_depth" placeholder="50" min="1" max="100">
+                <label class="checkbox-label"><input type="checkbox" id="vulndep_internal">Internal Only</label>
+            </div>
+            <button onclick="goToVulnDependants()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/centrality">/reports/centrality</a></span>
+        <div class="description">Centrality metrics (inDegree/outDegree) for internal libraries. inDegree = projects depending on this, outDegree = dependencies. Includes drill-down links to visualizations.</div>
+        <div class="params">Params: <code>format</code>, <code>sort_by</code>, <code>sort_order</code>, <code>limit</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Sort By:</label>
+                <select id="cent_sortby">
+                    <option value="inDegree" selected>inDegree (Most Dependants)</option>
+                    <option value="outDegree">outDegree (Most Dependencies)</option>
+                    <option value="project_name">Project Name</option>
+                    <option value="version_name">Version</option>
+                </select>
+                <label>Order:</label>
+                <select id="cent_order">
+                    <option value="desc" selected>Descending</option>
+                    <option value="asc">Ascending</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label>Limit:</label><input type="number" id="cent_limit" placeholder="1000" min="1" max="100000">
+            </div>
+            <button onclick="goToCentrality()">View Report</button>
+        </div>
+    </div>
+
+    <h2>JSON Schema Endpoints</h2>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/schemas/">/schemas/</a></span>
+        <div class="description">List all available JSON schemas</div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/schemas/{schema_name}</span>
+        <div class="description">Get a specific JSON schema</div>
+        <div class="try-form">
+            <label>Schema:</label>
+            <select id="schema_name">
+                <option value="projects">projects</option>
+                <option value="applications">applications</option>
+                <option value="snapshots">snapshots</option>
+                <option value="self-dependencies">self-dependencies</option>
+                <option value="multi-version-deps">multi-version-deps</option>
+                <option value="multi-version-sources">multi-version-sources</option>
+                <option value="non-semver-versions">non-semver-versions</option>
+                <option value="version-dependencies">version-dependencies</option>
+                <option value="dependants">dependants</option>
+                <option value="vulnerabilities">vulnerabilities</option>
+                <option value="vulnerability-dependants">vulnerability-dependants</option>
+                <option value="centrality">centrality</option>
+            </select>
+            <button onclick="goToSchema()">View Schema</button>
+        </div>
+    </div>
+
+    <h2>Health Endpoints</h2>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/health">/health</a></span>
+        <div class="description">Health check for liveness probe</div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/ready">/ready</a></span>
+        <div class="description">Readiness check (checks FalkorDB connectivity)</div>
+    </div>
+
+    <script>
+        function buildUrl(base, params) {
+            const url = new URL(base, window.location.origin);
+            for (const [key, value] of Object.entries(params)) {
+                if (value !== null && value !== '' && value !== false) {
+                    url.searchParams.set(key, value);
+                }
+            }
+            return url.toString();
+        }
+
+        function goToKpartite() {
+            const project = document.getElementById('kp_project').value;
+            const version = document.getElementById('kp_version').value;
+            if (!project || !version) { alert('Please enter project and version'); return; }
+            const params = {
+                max_depth: document.getElementById('kp_depth').value || null,
+                internal_only: document.getElementById('kp_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/visualizations/kpartite/' + encodeURIComponent(project) + '/' + encodeURIComponent(version), params);
+        }
+
+        function goToBipartite() {
+            const project = document.getElementById('bp_project').value;
+            if (!project) { alert('Please enter a project name'); return; }
+            const params = { internal_only: document.getElementById('bp_internal').checked ? 'true' : null };
+            window.location.href = buildUrl('/visualizations/bipartite/' + encodeURIComponent(project), params);
+        }
+
+        function goToDependantsViz() {
+            const project = document.getElementById('dv_project').value;
+            const version = document.getElementById('dv_version').value;
+            if (!project || !version) { alert('Please enter project and version'); return; }
+            const params = {
+                max_depth: document.getElementById('dv_depth').value || null,
+                internal_only: document.getElementById('dv_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/visualizations/dependants/' + encodeURIComponent(project) + '/' + encodeURIComponent(version), params);
+        }
+
+        function goToDependenciesGraph() {
+            const project = document.getElementById('depgraph_project').value;
+            const version = document.getElementById('depgraph_version').value;
+            if (!project || !version) { alert('Please enter project and version'); return; }
+            const layout = document.getElementById('depgraph_layout').value;
+            const params = {
+                layout: layout !== 'spring' ? layout : null,
+                max_depth: document.getElementById('depgraph_depth').value || null,
+                internal_only: document.getElementById('depgraph_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/visualizations/dependencies/' + encodeURIComponent(project) + '/' + encodeURIComponent(version), params);
+        }
+
+        function goToDependantsMulti() {
+            const project = document.getElementById('depmulti_project').value;
+            const version = document.getElementById('depmulti_version').value;
+            if (!project || !version) { alert('Please enter project and version'); return; }
+            const layout = document.getElementById('depmulti_layout').value;
+            const params = {
+                layout: layout !== 'radial' ? layout : null,
+                max_depth: document.getElementById('depmulti_depth').value || null,
+                internal_only: document.getElementById('depmulti_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/visualizations/dependants-multi/' + encodeURIComponent(project) + '/' + encodeURIComponent(version), params);
+        }
+
+        function goToCentrality() {
+            const params = {
+                sort_by: document.getElementById('cent_sortby').value || null,
+                sort_order: document.getElementById('cent_order').value || null,
+                limit: document.getElementById('cent_limit').value || null
+            };
+            window.location.href = buildUrl('/reports/centrality', params);
+        }
+
+        function goToVersionDeps() {
+            const project = document.getElementById('vdep_project').value;
+            if (!project) { alert('Please enter a project name'); return; }
+            const version = document.getElementById('vdep_version').value;
+            if (!version) { alert('Please enter a version (or "latest")'); return; }
+            const params = {
+                internal_only: document.getElementById('vdep_internal').checked ? 'true' : null,
+                max_depth: document.getElementById('vdep_maxdepth').value || null
+            };
+            const url = '/reports/version-dependencies/' + encodeURIComponent(project) + '/' + encodeURIComponent(version);
+            window.location.href = buildUrl(url, params);
+        }
+
+        function goToProjects() {
+            const params = {
+                limit: document.getElementById('proj_limit').value || null,
+                internal_only: document.getElementById('proj_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/reports/projects', params);
+        }
+
+        function goToApplications() {
+            const params = {
+                limit: document.getElementById('app_limit').value || null,
+                internal_only: document.getElementById('app_internal').checked ? 'true' : null,
+                latest_only: document.getElementById('app_latest').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/reports/applications', params);
+        }
+
+        function goToSnapshots() {
+            const params = { internal_only: document.getElementById('snap_internal').checked ? 'true' : null };
+            window.location.href = buildUrl('/reports/snapshots', params);
+        }
+
+        function goToSelfDeps() {
+            const params = { internal_only: document.getElementById('self_internal').checked ? 'true' : null };
+            window.location.href = buildUrl('/reports/self-dependencies', params);
+        }
+
+        function goToMultiVersionDeps() {
+            const project = document.getElementById('mvd_project').value;
+            if (!project) { alert('Please enter a library name'); return; }
+            const params = {
+                internal_only: document.getElementById('mvd_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/reports/multi-version-deps/' + encodeURIComponent(project), params);
+        }
+
+        function goToMultiVersionSources() {
+            const project = document.getElementById('mvs_project').value;
+            const version = document.getElementById('mvs_version').value;
+            if (!project || !version) { alert('Please enter project and version'); return; }
+            const params = {
+                max_depth: document.getElementById('mvs_depth').value || null,
+                internal_only: document.getElementById('mvs_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/reports/multi-version-sources/' + encodeURIComponent(project) + '/' + encodeURIComponent(version), params);
+        }
+
+        function goToNonSemver() {
+            const params = { internal_only: document.getElementById('nsv_internal').checked ? 'true' : null };
+            window.location.href = buildUrl('/reports/non-semver-versions', params);
+        }
+
+        function goToDependantsReport() {
+            const project = document.getElementById('dep_project').value;
+            const version = document.getElementById('dep_version').value;
+            if (!project || !version) { alert('Please enter project and version'); return; }
+            const longestOnly = document.getElementById('dep_longest').checked;
+            const params = {
+                max_depth: document.getElementById('dep_depth').value || null,
+                internal_only: document.getElementById('dep_internal').checked ? 'true' : null,
+                longest_only: longestOnly ? null : 'false'  // Only set if false (true is default)
+            };
+            window.location.href = buildUrl('/reports/dependants/' + encodeURIComponent(project) + '/' + encodeURIComponent(version), params);
+        }
+
+        function goToVulnerabilities() {
+            const params = { internal_only: document.getElementById('vuln_internal').checked ? 'true' : null };
+            window.location.href = buildUrl('/reports/vulnerabilities', params);
+        }
+
+        function goToVulnDependants() {
+            const defectId = document.getElementById('vulndep_id').value;
+            if (!defectId) { alert('Please enter a CVE ID'); return; }
+            const params = {
+                max_depth: document.getElementById('vulndep_depth').value || null,
+                internal_only: document.getElementById('vulndep_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/reports/vulnerability-dependants/' + encodeURIComponent(defectId), params);
+        }
+
+        function goToSchema() {
+            const schema = document.getElementById('schema_name').value;
+            window.location.href = '/schemas/' + schema;
+        }
+    </script>
+</body>
+</html>

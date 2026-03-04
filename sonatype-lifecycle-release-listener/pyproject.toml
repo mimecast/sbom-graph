@@ -1,0 +1,52 @@
+[project]
+name = "sonatype-lifecycle-release-listener"
+version = "0.1.0"
+description = "Flask microservice to listen for SonaType release scan webhooks"
+authors = [
+    {name = "Brett Crawley"}
+]
+readme = "README.md"
+requires-python = ">=3.14,<4"
+dependencies = [
+    "sbom-graph-model>=0.1.0,<2",
+    "flask>=3.1.2,<4.0.0",
+    "flask-jwt-extended>=4.7.1,<5.0.0",
+    "gunicorn>=23.0.0,<24.0.0",
+    "requests>=2.32.5",
+    "types-requests>=2.32.4.20260107",
+]
+
+[dependency-groups]
+dev = [
+    "bandit>=1.7.9",
+    "pytest>=8.2.2,<9.0.0",
+    "pytest-cov>=6.0.0",
+    "pytest-html>=4.1.1"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short -m 'not integration'"
+markers = [
+    "integration: tests requiring external services (FalkorDB, etc.) — skipped by default, run with: pytest -m integration",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sonatype_lifecycle_release_listener"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [".coveragerc", "tests/**", "coverage-reports/**", "AGENTS.md", "renovate.json", "inventory.yaml", "Jenkinsfile", "sonar-project.properties"]
+
+[tool.uv.sources]
+sbom-graph-model = { path = "../sbom-graph-model" }
+

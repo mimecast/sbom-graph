@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dependants Report: {{ project_name }}@{{ version_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/report.css') }}">
+    <style>
+        td { vertical-align: top; }
+        .paths-container { max-width: 500px; }
+        .paths-preview { font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+        .paths-full {
+            display: none; font-family: monospace; font-size: 12px;
+            white-space: pre-wrap; word-break: break-all;
+            background: #f8f8f8; padding: 10px; border-radius: 4px;
+            margin-top: 5px; max-height: 300px; overflow-y: auto;
+        }
+        .paths-full.expanded { display: block; }
+        .expand-btn {
+            background: #366092; color: white; border: none; padding: 3px 8px;
+            border-radius: 3px; cursor: pointer; font-size: 11px; margin-top: 5px;
+        }
+        .expand-btn:hover { background: #254a73; }
+        .path-item { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #eee; }
+        .path-item:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+    </style>
+</head>
+<body>
+    <h1>Dependants Report: {{ project_name }}@{{ version_name }}</h1>
+
+    <div class="controls">
+        <div class="toggle-container">
+            <span class="toggle-label">Filter:</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="internalOnlyToggle" {{ 'checked' if internal_only else '' }}>
+                <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-status" id="toggleStatus">{{ 'Internal Only' if internal_only else 'All projects' }}</span>
+        </div>
+        <div class="toggle-container">
+            <span class="toggle-label">Paths:</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="longestOnlyToggle" {{ 'checked' if longest_only else '' }}>
+                <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-status" id="pathToggleStatus">{{ 'Longest only' if longest_only else 'All paths' }}</span>
+        </div>
+        <div class="download-links">
+            <a href="{{ excel_url }}" class="download-link" id="excelLink">Download as Excel</a>
+            <a href="{{ json_url }}" class="download-link" id="jsonLink">Download as JSON</a>
+            <a href="/schemas/dependants" class="download-link secondary">View JSON Schema</a>
+        </div>
+    </div>
+
+    <div class="stats">
+        <span>Total Dependants: {{ total_dependants }}</span>
+        <span title="Longest path from target to any dependant (number of edges)" class="tooltip">Max Partition: {{ max_partition }}</span>
+        <span>Unique Projects: {{ unique_projects }}</span>
+    </div>
+
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Dependant Project</th>
+                    <th>Version</th>
+                    <th title="Longest path from target to this dependant (number of edges)">Partition</th>
+                    <th title="Number of edges in the longest path from this dependant to the target">Max Path Edges</th>
+                    <th title="Number of alternative paths found (up to 50, longest first)">Path Count</th>
+                    <th>Dependency Paths</th>
+                    <th>Labels</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for dep in dependants %}
+                <tr>
+                    <td>{{ dep.project_name }}</td>
+                    <td>{{ dep.version }}</td>
+                    <td>{{ dep.partition }}</td>
+                    <td>{{ dep.max_path_edges }}</td>
+                    <td>{{ dep.paths|length }}</td>
+                    <td class="paths-container">
+                        {% if dep.paths %}
+                            <div class="paths-preview">
+                                {% for path in dep.paths[:3] %}{{ path|join(' → ') }}{% if not loop.last %}; {% endif %}{% endfor %}
+                                {% if dep.paths|length > 3 %} ...{% endif %}
+                            </div>
+                            {% if dep.paths|length > 3 %}
+                            <button class="expand-btn" onclick="togglePaths(this)">Show all {{ dep.paths|length }} paths</button>
+                            <div class="paths-full">
+                                {% for path in dep.paths %}
+                                <div class="path-item"><strong>Path {{ loop.index }}:</strong> {{ path|join(' → ') }}</div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        {% else %}
+                            (direct)
+                        {% endif %}
+                    </td>
+                    <td>{{ dep.labels|join(', ') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        function togglePaths(btn) {
+            const container = btn.parentElement;
+            const fullPaths = container.querySelector('.paths-full');
+            if (fullPaths.classList.contains('expanded')) {
+                fullPaths.classList.remove('expanded');
+                btn.textContent = 'Show all ' + container.querySelectorAll('.path-item').length + ' paths';
+            } else {
+                fullPaths.classList.add('expanded');
+                btn.textContent = 'Hide paths';
+            }
+        }
+
+        document.getElementById('internalOnlyToggle').addEventListener('change', function() {
+            const url = new URL(window.location.href);
+            if (this.checked) {
+                url.searchParams.set('internal_only', 'true');
+            } else {
+                url.searchParams.delete('internal_only');
+            }
+            window.location.href = url.toString();
+        });
+
+        document.getElementById('longestOnlyToggle').addEventListener('change', function() {
+            const url = new URL(window.location.href);
+            if (this.checked) {
+                url.searchParams.delete('longest_only');  // true is default
+            } else {
+                url.searchParams.set('longest_only', 'false');
+            }
+            window.location.href = url.toString();
+        });
+    </script>
+</body>
+</html>

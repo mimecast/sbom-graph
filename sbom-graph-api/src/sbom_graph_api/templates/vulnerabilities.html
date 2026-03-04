@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/report.css') }}">
+    <style>
+        td { vertical-align: top; }
+        .severity-critical { color: #d32f2f; }
+        .severity-high { color: #f57c00; }
+        .severity-medium { color: #fbc02d; }
+        .severity-low { color: #388e3c; }
+        .affected-versions { list-style: none; padding: 0; margin: 0; }
+        .affected-versions li { margin: 3px 0; }
+        .affected-versions a { color: #366092; text-decoration: none; }
+        .affected-versions a:hover { text-decoration: underline; }
+        .vuln-link { color: #366092; text-decoration: none; }
+        .vuln-link:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <h1>{{ title }}</h1>
+
+    <div class="controls">
+        <div class="toggle-container">
+            <span class="toggle-label">Filter:</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="internalOnlyToggle" {{ 'checked' if internal_only else '' }}>
+                <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-status" id="toggleStatus">{{ 'Internal Only' if internal_only else 'All projects' }}</span>
+        </div>
+
+        <div class="download-links">
+            {% if excel_url %}
+            <a href="{{ excel_url }}" class="download-link" id="excelLink">Download as Excel</a>
+            {% endif %}
+            {% if json_url %}
+            <a href="{{ json_url }}" class="download-link" id="jsonLink">Download as JSON</a>
+            {% endif %}
+            {% if schema_url %}
+            <a href="{{ schema_url }}" class="download-link secondary">View JSON Schema</a>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if stats %}
+    <div class="stats">
+        {% for key, value in stats.items() %}
+        <span>{{ key }}: {{ value }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if vulnerabilities %}
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Severity</th>
+                    <th>CVSS</th>
+                    <th>Title</th>
+                    <th>CWE</th>
+                    <th>Published</th>
+                    <th>Last Scanned</th>
+                    <th>Affected Versions</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for vuln in vulnerabilities %}
+                <tr>
+                    <td>
+                        <a href="/reports/vulnerability-dependants/{{ vuln.defect_id }}{% if internal_only %}?internal_only=true{% endif %}" class="vuln-link">
+                            {{ vuln.defect_id }}
+                        </a>
+                    </td>
+                    <td>
+                        <span class="severity-badge {{ vuln.severity|lower }}">{{ vuln.severity }}</span>
+                    </td>
+                    <td>{{ vuln.cvss_score }}</td>
+                    <td>{{ vuln.title }}</td>
+                    <td>{{ vuln.cwe_id }}</td>
+                    <td>{{ vuln.published_date }}</td>
+                    <td>{{ vuln.last_enriched_at or '' }}</td>
+                    <td>
+                        <ul class="affected-versions">
+                            {% for affected in vuln.affected_versions %}
+                            <li>
+                                <a href="/visualizations/dependants/{{ affected.project_name }}/{{ affected.version }}{% if internal_only %}?internal_only=true{% endif %}" title="View dependants graph">
+                                    {{ affected.project_name }}:{{ affected.version }}
+                                </a>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </td>
+                    <td>
+                        <a href="/reports/vulnerability-dependants/{{ vuln.defect_id }}{% if internal_only %}?internal_only=true{% endif %}" class="download-link" style="padding: 5px 10px; font-size: 12px;">
+                            View Affected
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-message">No vulnerabilities found</div>
+    {% endif %}
+
+    <script>
+        document.getElementById('internalOnlyToggle').addEventListener('change', function() {
+            const isChecked = this.checked;
+            const currentUrl = new URL(window.location.href);
+
+            if (isChecked) {
+                currentUrl.searchParams.set('internal_only', 'true');
+            } else {
+                currentUrl.searchParams.delete('internal_only');
+            }
+
+            window.location.href = currentUrl.toString();
+        });
+    </script>
+</body>
+</html>

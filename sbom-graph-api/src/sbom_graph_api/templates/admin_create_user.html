@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Create User - AppSec Data Views</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+    <style>
+        .container { max-width: 500px; }
+        .checkbox-group { display: flex; align-items: center; gap: 10px; }
+        .checkbox-group input[type="checkbox"] { width: 18px; height: 18px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav-links">
+            <a href="/auth/admin/users">&larr; Back to Users</a>
+        </div>
+
+        <h1>Create New User</h1>
+
+        <div class="card">
+            {% if error %}
+            <div class="error-message">
+                {{ error }}
+            </div>
+            {% endif %}
+
+            <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="form-group">
+                    <label for="username">Username *</label>
+                    <input type="text" id="username" name="username" required
+                           placeholder="Enter username" maxlength="255"
+                           pattern="[a-zA-Z0-9._-]+" title="Letters, numbers, dots, underscores, hyphens only">
+                    <div class="help-text">Letters, numbers, dots, underscores, and hyphens only</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="display_name">Display Name</label>
+                    <input type="text" id="display_name" name="display_name"
+                           placeholder="Enter display name (optional)">
+                </div>
+
+                <div class="form-group">
+                    <label for="email">Email</label>
+                    <input type="email" id="email" name="email"
+                           placeholder="Enter email (optional)">
+                </div>
+
+                <div class="form-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="is_admin" name="is_admin" value="true">
+                        <label for="is_admin" style="margin-bottom: 0;">Make this user an administrator</label>
+                    </div>
+                    <div class="help-text">Administrators can manage other users</div>
+                </div>
+
+                <div class="btn-group">
+                    <button type="submit" class="btn">Create User</button>
+                    <a href="/auth/admin/users" class="btn btn-secondary">Cancel</a>
+                </div>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
