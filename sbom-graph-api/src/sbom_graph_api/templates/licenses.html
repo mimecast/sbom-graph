@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/report.css') }}">
+    <style>
+        td { vertical-align: top; }
+        .risk-permissive { color: #388e3c; }
+        .risk-weak_copyleft { color: #f57c00; }
+        .risk-strong_copyleft { color: #d32f2f; }
+        .risk-proprietary { color: #7b1fa2; }
+        .risk-unknown { color: #757575; }
+    </style>
+</head>
+<body>
+    <h1>{{ title }}</h1>
+
+    <div class="controls">
+        <div class="toggle-container">
+            <span class="toggle-label">Filter:</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="internalOnlyToggle" {{ 'checked' if internal_only else '' }}>
+                <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-status" id="toggleStatus">{{ 'Internal Only' if internal_only else 'All projects' }}</span>
+        </div>
+
+        <div class="download-links">
+            <a href="{{ url_for('reports.licenses_report', format='excel', internal_only=internal_only) }}" class="download-link">Download as Excel</a>
+            <a href="{{ url_for('reports.licenses_report', format='json', internal_only=internal_only) }}" class="download-link">Download as JSON</a>
+        </div>
+    </div>
+
+    <p>Generated at: {{ generated_at }}</p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>SPDX ID</th>
+                <th>Name</th>
+                <th>Risk Category</th>
+                <th>Usage Count</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for lic in licenses %}
+            <tr>
+                <td>{{ lic.spdx_id }}</td>
+                <td>{{ lic.name }}</td>
+                <td class="risk-{{ lic.risk_category }}">{{ lic.risk_category | replace('_', ' ') | title }}</td>
+                <td>{{ lic.usage_count }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4">No licenses found.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <script>
+        document.getElementById('internalOnlyToggle').addEventListener('change', function() {
+            const internal = this.checked;
+            window.location.href = '{{ url_for("reports.licenses_report") }}?internal_only=' + internal;
+        });
+    </script>
+</body>
+</html>

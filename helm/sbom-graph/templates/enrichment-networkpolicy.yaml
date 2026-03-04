@@ -1,0 +1,80 @@
+{{- if .Values.enrichment.enabled }}
+{{- if .Values.enrichment.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sbom-graph.enrichment.fullname" . }}
+  labels:
+    {{- include "sbom-graph.enrichment.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "sbom-graph.enrichment.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    # Allow DNS resolution (kube-dns / CoreDNS)
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow traffic to FalkorDB (Redis) within the namespace
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "sbom-graph.falkordb.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Allow HTTPS egress to external enrichment APIs
+    # (api.osv.dev, api.clearlydefined.io, api.scorecard.dev, ossindex.sonatype.org,
+    # api.deps.dev, and any future certifiers)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "sbom-graph.enrichmentBeat.fullname" . }}
+  labels:
+    {{- include "sbom-graph.enrichmentBeat.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "sbom-graph.enrichmentBeat.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow traffic to FalkorDB (Redis) for Celery beat scheduler
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "sbom-graph.falkordb.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 6379
+{{- end }}
+{{- end }}

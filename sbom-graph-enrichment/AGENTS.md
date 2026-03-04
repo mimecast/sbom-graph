@@ -1,0 +1,72 @@
+# sbom-graph-enrichment Agent Guidance
+
+## Project Overview
+Celery-based asynchronous enrichment pipeline that queries external APIs to enrich package metadata stored in FalkorDB.
+
+## Project Structure
+```
+src/sbom_graph_enrichment/
+├── celery_app.py          # Celery configuration, beat schedule, log redaction
+├── tasks.py               # Celery shared tasks (enrich_package, compute_trust_score, propagate_effective_scores)
+├── persistence_helpers.py # Per-worker Persistence and httpx.Client caching
+└── certifiers/
+    ├── base.py            # Abstract Certifier base, Finding dataclass, FindingKind enum
+    ├── osv.py             # OSV.dev vulnerability certifier
+    ├── license.py         # ClearlyDefined license certifier
+    ├── scorecard.py       # OpenSSF Scorecard certifier
+    ├── ossindex.py        # Sonatype OSS Index certifier
+    ├── depsdev.py         # deps.dev project health certifier
+    └── trust_score.py     # Trust score calculator (compositor, not a Certifier)
+tests/
+├── conftest.py
+├── test_certifiers.py
+├── test_scorecard_certifier.py
+├── test_ossindex_certifier.py
+├── test_depsdev_certifier.py
+├── test_trust_score_calculator.py
+├── test_trust_score_tasks.py
+├── test_tasks.py
+├── test_celery_app.py
+└── test_persistence_helpers.py
+```
+
+## Certifier Interface Pattern
+Every certifier extends `Certifier` (from `base.py`) and implements:
+- `name` property: short string identifier
+- `enrich(purl, *, client)`: queries an external API, returns `list[Finding]`
+
+A shared `httpx.Client` is passed in for connection pooling. Rate limiting is internal to each certifier using `_TokenBucket`.
+
+## Adding a New Certifier
+1. Create `certifiers/new_source.py` implementing the `Certifier` interface
+2. Add a new `FindingKind` enum value in `base.py`
+3. Register the certifier in `tasks.py` `_CERTIFIERS` dict
+4. If the certifier contributes to trust scores, update `trust_score.py` category scoring
+5. Add unit tests using `httpx.Response` mocking (see existing test files for pattern)
+
+## Testing Patterns
+- Mock `httpx.Client` with `MagicMock(spec=httpx.Client)`
+- Mock `_bucket.acquire` to skip rate limiting in tests
+- Use `_mock_response(status_code, json_data)` helper for building responses
+- Propagation algorithm tests use pure-function `_propagate()` directly
+
+## Trust Score Architecture
+- `TrustScoreCalculator.compute()` is a compositor that consumes findings from all certifiers
+- 4 categories with configurable weights sum to direct_score (0-10 scale)
+- `propagate_effective_scores` task runs periodically to compute inherited risk
+- Bottom-up graph traversal with alpha blending and decay attenuation
+
+## Environment Variables
+| Variable | Default | Description |
+|----------|---------|-------------|
+| FALKORDB_HOST | localhost | FalkorDB host |
+| FALKORDB_PORT | 6379 | FalkorDB port |
+| FALKORDB_PASSWORD | "" | FalkorDB password |
+| ENRICHMENT_INTERVAL | 3600 | Seconds between enrichment cycles |
+| TRUST_SCORE_ENABLED | true | Enable trust score computation |
+| TRUST_SCORE_INTERVAL | 7200 | Seconds between propagation runs |
+| TRUST_SCORE_ALPHA | 0.4 | Blend weight (own vs inherited) |
+| TRUST_SCORE_DECAY | 0.8 | Depth attenuation factor |
+| TRUST_SCORE_MAX_DEPTH | 20 | Maximum traversal depth |
+| OSSINDEX_USER | "" | Optional OSS Index username |
+| OSSINDEX_TOKEN | "" | Optional OSS Index API token |

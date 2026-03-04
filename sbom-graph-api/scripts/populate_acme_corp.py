@@ -170,6 +170,9 @@ SPECIAL CASES
 
 import os
 import random
+import ssl
+import sys
+import traceback
 import uuid
 from dataclasses import dataclass, field
 
@@ -1880,25 +1883,53 @@ def calculate_degrees(
             to_version.in_degree += 1
 
 
-def create_graph(host: str, port: int, password: str | None = None) -> None:
-    """Create and populate the acme_corp graph."""
-    print(f"Connecting to FalkorDB at {host}:{port}...")
+def _log(msg: str) -> None:
+    """Print and flush immediately so output appears before potential crash."""
+    print(msg, flush=True)
 
-    connection_kwargs: dict[str, any] = {"host": host, "port": port}
+
+def create_graph(
+    host: str,
+    port: int,
+    password: str | None = None,
+    graph_name: str = "acme_corp",
+    ssl_enabled: bool = False,
+    ssl_ca_certs: str | None = None,
+) -> None:
+    """Create and populate the FalkorDB graph with acme-corp demo data."""
+    _log(f"Connecting to FalkorDB at {host}:{port} (ssl={ssl_enabled}, ca={ssl_ca_certs})...")
+
+    socket_timeout = float(os.environ.get("FALKORDB_SOCKET_TIMEOUT", "60.0"))
+    connect_timeout = float(os.environ.get("FALKORDB_CONNECT_TIMEOUT", "30.0"))
+
+    connection_kwargs: dict[str, object] = {
+        "host": host,
+        "port": port,
+        "socket_timeout": socket_timeout,
+        "socket_connect_timeout": connect_timeout,
+    }
     if password:
         connection_kwargs["password"] = password
+    if ssl_enabled:
+        connection_kwargs["ssl"] = True
+        connection_kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
+        if ssl_ca_certs:
+            connection_kwargs["ssl_ca_certs"] = ssl_ca_certs
 
+    _log("Creating FalkorDB client...")
     db = FalkorDB(**connection_kwargs)
-    graph = db.select_graph("acme_corp")
+    _log("Selecting graph...")
+    graph = db.select_graph(graph_name)
 
-    print("Creating acme_corp graph...")
+    _log(f"Creating {graph_name} graph...")
 
-    # Clear existing data if any
+    # Clear existing data if any (first query triggers actual connection)
     try:
+        _log("Testing connection (MATCH/DETACH DELETE)...")
         graph.query("MATCH (n) DETACH DELETE n")
-        print("Cleared existing data")
+        _log("Cleared existing data")
     except Exception as e:
-        print(f"Note: {e}")
+        _log(f"Note: {e}")
 
     # Create versions and dependencies
     versions = create_versions()
@@ -1910,7 +1941,7 @@ def create_graph(host: str, port: int, password: str | None = None) -> None:
     # Calculate degrees
     calculate_degrees(versions, dependencies)
 
-    print(f"Creating {len(versions)} version nodes...")
+    _log(f"Creating {len(versions)} version nodes...")
 
     # Create nodes
     for v in versions:
@@ -1991,7 +2022,7 @@ def create_graph(host: str, port: int, password: str | None = None) -> None:
                 "out_degree": v.out_degree,
             })
 
-    print(f"Creating {len(dependencies)} DEPENDENCY_VERSION relationships...")
+    _log(f"Creating {len(dependencies)} DEPENDENCY_VERSION relationships...")
 
     # Create relationships
     for from_g, from_n, from_v, to_g, to_n, to_v in dependencies:
@@ -2006,10 +2037,10 @@ def create_graph(host: str, port: int, password: str | None = None) -> None:
                 "to_g": to_g, "to_n": to_n, "to_v": to_v,
             })
         except Exception as e:
-            print(f"Warning: Failed to create edge {from_g}:{from_n}:{from_v} -> {to_g}:{to_n}:{to_v}: {e}")
+            _log(f"Warning: Failed to create edge {from_g}:{from_n}:{from_v} -> {to_g}:{to_n}:{to_v}: {e}")
 
     # Create Defect nodes and VERSION_DEFECT relationships
-    print(f"Creating {len(DEFECTS)} defect nodes and relationships...")
+    _log(f"Creating {len(DEFECTS)} defect nodes and relationships...")
 
     for defect in DEFECTS:
         # Create defect node
@@ -2069,7 +2100,7 @@ def create_graph(host: str, port: int, password: str | None = None) -> None:
                             pass  # Ignore if relationship already exists
 
     # Create indexes for performance
-    print("Creating indexes...")
+    _log("Creating indexes...")
     try:
         graph.query("CREATE INDEX FOR (v:Version) ON (v.project_name)")
     except Exception:
@@ -2088,36 +2119,36 @@ def create_graph(host: str, port: int, password: str | None = None) -> None:
         pass
 
     # Print summary statistics
-    print("\n" + "=" * 60)
-    print("GRAPH STATISTICS")
-    print("=" * 60)
+    _log("\n" + "=" * 60)
+    _log("GRAPH STATISTICS")
+    _log("=" * 60)
 
     result = graph.query("MATCH (n:Version) RETURN count(n) as count")
-    print(f"Total Version nodes: {result.result_set[0][0]}")
+    _log(f"Total Version nodes: {result.result_set[0][0]}")
 
     result = graph.query("MATCH (n:Version:INTERNAL) RETURN count(n) as count")
-    print(f"Internal (INTERNAL) nodes: {result.result_set[0][0]}")
+    _log(f"Internal (INTERNAL) nodes: {result.result_set[0][0]}")
 
     result = graph.query("MATCH (n:Version) WHERE NOT n:INTERNAL RETURN count(n) as count")
-    print(f"Third-party nodes: {result.result_set[0][0]}")
+    _log(f"Third-party nodes: {result.result_set[0][0]}")
 
     result = graph.query("MATCH (n:Version:Application) RETURN count(n) as count")
-    print(f"Application nodes: {result.result_set[0][0]}")
+    _log(f"Application nodes: {result.result_set[0][0]}")
 
     result = graph.query("MATCH (n:Version:Library) RETURN count(n) as count")
-    print(f"Library nodes: {result.result_set[0][0]}")
+    _log(f"Library nodes: {result.result_set[0][0]}")
 
     result = graph.query("MATCH (n:Defect) RETURN count(n) as count")
-    print(f"Defect nodes: {result.result_set[0][0]}")
+    _log(f"Defect nodes: {result.result_set[0][0]}")
 
     result = graph.query("MATCH ()-[r:DEPENDENCY_VERSION]->() RETURN count(r) as count")
-    print(f"DEPENDENCY_VERSION relationships: {result.result_set[0][0]}")
+    _log(f"DEPENDENCY_VERSION relationships: {result.result_set[0][0]}")
 
     result = graph.query("MATCH ()-[r:VERSION_DEFECT]->() RETURN count(r) as count")
-    print(f"VERSION_DEFECT relationships: {result.result_set[0][0]}")
+    _log(f"VERSION_DEFECT relationships: {result.result_set[0][0]}")
 
     # Show high centrality nodes
-    print("\n--- High Inward Centrality (most depended upon) ---")
+    _log("\n--- High Inward Centrality (most depended upon) ---")
     result = graph.query("""
         MATCH (v:Version:INTERNAL)
         WHERE v.inDegree > 0
@@ -2126,9 +2157,9 @@ def create_graph(host: str, port: int, password: str | None = None) -> None:
         LIMIT 10
     """)
     for row in result.result_set:
-        print(f"  {row[0]}:{row[1]}:{row[2]} - {row[3]} dependants")
+        _log(f"  {row[0]}:{row[1]}:{row[2]} - {row[3]} dependants")
 
-    print("\n--- High Outward Centrality (most dependencies) ---")
+    _log("\n--- High Outward Centrality (most dependencies) ---")
     result = graph.query("""
         MATCH (v:Version:INTERNAL)
         WHERE v.outDegree > 0
@@ -2137,30 +2168,44 @@ def create_graph(host: str, port: int, password: str | None = None) -> None:
         LIMIT 10
     """)
     for row in result.result_set:
-        print(f"  {row[0]}:{row[1]}:{row[2]} - {row[3]} dependencies")
+        _log(f"  {row[0]}:{row[1]}:{row[2]} - {row[3]} dependencies")
 
-    print("\n--- Vulnerabilities by Severity ---")
+    _log("\n--- Vulnerabilities by Severity ---")
     result = graph.query("""
         MATCH (d:Defect)
         RETURN d.severity, count(d) as count
         ORDER BY count DESC
     """)
     for row in result.result_set:
-        print(f"  {row[0]}: {row[1]}")
+        _log(f"  {row[0]}: {row[1]}")
 
-    print("\n" + "=" * 60)
-    print("Graph 'acme_corp' created successfully!")
-    print("=" * 60)
+    _log("\n" + "=" * 60)
+    _log(f"Graph '{graph_name}' created successfully!")
+    _log("=" * 60)
 
 
 def main():
     """Main entry point."""
-    # Get connection details from environment or defaults
-    host = os.environ.get("FALKORDB_HOST", "localhost")
-    port = int(os.environ.get("FALKORDB_PORT", "6379"))
-    password = os.environ.get("FALKORDB_PASSWORD")
+    try:
+        host = os.environ.get("FALKORDB_HOST", "localhost")
+        port = int(os.environ.get("FALKORDB_PORT", "6379"))
+        password = os.environ.get("FALKORDB_PASSWORD")
+        graph_name = os.environ.get("FALKORDB_GRAPH_NAME", "acme_corp")
+        ssl_enabled = os.environ.get("FALKORDB_SSL", "false").lower() == "true"
+        ssl_ca_certs = os.environ.get("FALKORDB_CA_FILE") or os.environ.get("FALKORDB_CACERTS")
 
-    create_graph(host, port, password)
+        create_graph(
+            host=host,
+            port=port,
+            password=password,
+            graph_name=graph_name,
+            ssl_enabled=ssl_enabled,
+            ssl_ca_certs=ssl_ca_certs,
+        )
+    except Exception as e:
+        _log(f"FATAL: {e}")
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

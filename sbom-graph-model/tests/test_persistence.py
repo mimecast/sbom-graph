@@ -615,6 +615,363 @@ class TestRetrieveAllProjectNodesWithRepoUrl:
         assert result == []
 
 
+class TestGetVersionsByPurl:
+    """Tests for Persistence.get_versions_by_purl."""
+
+    def test_returns_structured_rows(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(
+            result_set=[
+                {"name": "1.0.0", "project_name": "my-lib", "project_group": "com.example"},
+                {"name": "2.0.0", "project_name": "my-lib", "project_group": "com.example"},
+            ]
+        )
+        result = mock_persistence.get_versions_by_purl("pkg:maven/com.example/my-lib@1.0.0")
+        assert len(result) == 2
+        assert result[0] == {"name": "1.0.0", "project_name": "my-lib", "project_group": "com.example"}
+        assert result[1] == {"name": "2.0.0", "project_name": "my-lib", "project_group": "com.example"}
+
+        query_str = mock_graph.query.call_args.kwargs["q"]
+        assert "package_url" in query_str
+        assert mock_graph.query.call_args.kwargs["params"]["purl"] == "pkg:maven/com.example/my-lib@1.0.0"
+
+    def test_returns_empty_for_no_matches(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(result_set=[])
+        result = mock_persistence.get_versions_by_purl("pkg:npm/-/nonexistent@0.0.0")
+        assert result == []
+
+    def test_handles_none_fields(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(
+            result_set=[
+                {"name": "1.0.0", "project_name": "my-lib", "project_group": None},
+            ]
+        )
+        result = mock_persistence.get_versions_by_purl("pkg:npm/-/my-lib@1.0.0")
+        assert result[0]["project_group"] is None
+
+
+# ---------------------------------------------------------------------------
+# update_defect_enrichment
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateDefectEnrichment:
+    """Tests for Persistence.update_defect_enrichment."""
+
+    def test_updates_enrichment(self, mock_persistence, mock_graph):
+        mock_persistence.update_defect_enrichment(
+            defect_id="CVE-2024-1",
+            source="osv",
+            aliases=["GHSA-xxx"],
+            timestamp="2024-06-01T00:00:00Z",
+        )
+        mock_graph.query.assert_called_once()
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["defect_id"] == "CVE-2024-1"
+        assert params["enrichment_source"] == "osv"
+        assert params["aliases"] == ["GHSA-xxx"]
+
+    def test_empty_id_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.update_defect_enrichment(defect_id="", source="osv")
+        mock_graph.query.assert_not_called()
+
+    def test_without_aliases(self, mock_persistence, mock_graph):
+        mock_persistence.update_defect_enrichment(
+            defect_id="CVE-2024-1", source="osv"
+        )
+        mock_graph.query.assert_called_once()
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert "aliases" not in params
+
+
+# ---------------------------------------------------------------------------
+# get_packages_needing_enrichment
+# ---------------------------------------------------------------------------
+
+
+class TestGetPackagesNeedingEnrichment:
+    """Tests for Persistence.get_packages_needing_enrichment."""
+
+    def test_returns_purls(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(
+            result_set=[
+                {"purl": "pkg:maven/a/b@1.0"},
+                {"purl": "pkg:npm/c/d@2.0"},
+            ]
+        )
+        result = mock_persistence.get_packages_needing_enrichment()
+        assert result == ["pkg:maven/a/b@1.0", "pkg:npm/c/d@2.0"]
+
+    def test_empty_graph(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(result_set=[])
+        result = mock_persistence.get_packages_needing_enrichment()
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# create_policy_annotation
+# ---------------------------------------------------------------------------
+
+
+class TestCreatePolicyAnnotation:
+    """Tests for Persistence.create_policy_annotation."""
+
+    def test_creates_annotation(self, mock_persistence, mock_graph):
+        mock_persistence.create_policy_annotation(
+            annotation_id="uuid-1",
+            policy_type="bad",
+            justification="CVE",
+            created_by="admin",
+            created_at="2024-06-01",
+        )
+        mock_graph.query.assert_called_once()
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["annotation_id"] == "uuid-1"
+        assert params["policy_type"] == "bad"
+
+    def test_empty_id_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.create_policy_annotation(
+            annotation_id="",
+            policy_type="bad",
+            justification="x",
+            created_by="admin",
+            created_at="2024-06-01",
+        )
+        mock_graph.query.assert_not_called()
+
+    def test_invalid_type_raises(self, mock_persistence):
+        with pytest.raises(ValueError):
+            mock_persistence.create_policy_annotation(
+                annotation_id="uuid-1",
+                policy_type="invalid",
+                justification="x",
+                created_by="admin",
+                created_at="2024-06-01",
+            )
+
+    def test_with_expires_at(self, mock_persistence, mock_graph):
+        mock_persistence.create_policy_annotation(
+            annotation_id="uuid-1",
+            policy_type="hold",
+            justification="Under review",
+            created_by="admin",
+            created_at="2024-06-01",
+            expires_at="2025-01-01",
+        )
+        mock_graph.query.assert_called_once()
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["expires_at"] == "2025-01-01"
+
+
+# ---------------------------------------------------------------------------
+# link_policy_to_version
+# ---------------------------------------------------------------------------
+
+
+class TestLinkPolicyToVersion:
+    """Tests for Persistence.link_policy_to_version."""
+
+    def test_creates_edge(self, mock_persistence, mock_graph):
+        mock_persistence.link_policy_to_version(
+            purl="pkg:maven/a/b@1.0", annotation_id="uuid-1"
+        )
+        mock_graph.query.assert_called_once()
+        q = mock_graph.query.call_args.kwargs["q"]
+        assert "HAS_POLICY" in q
+
+    def test_empty_purl_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.link_policy_to_version(purl="", annotation_id="uuid-1")
+        mock_graph.query.assert_not_called()
+
+    def test_empty_annotation_id_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.link_policy_to_version(purl="pkg:a/b@1", annotation_id="")
+        mock_graph.query.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# create_point_of_contact
+# ---------------------------------------------------------------------------
+
+
+class TestCreatePointOfContact:
+    """Tests for Persistence.create_point_of_contact."""
+
+    def test_creates_contact(self, mock_persistence, mock_graph):
+        mock_persistence.create_point_of_contact(
+            email="team@example.com",
+            team="security",
+            slack_channel="#patches",
+        )
+        mock_graph.query.assert_called_once()
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["email"] == "team@example.com"
+        assert params["team"] == "security"
+        assert params["slack_channel"] == "#patches"
+
+    def test_empty_email_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.create_point_of_contact(email="")
+        mock_graph.query.assert_not_called()
+
+    def test_email_only(self, mock_persistence, mock_graph):
+        mock_persistence.create_point_of_contact(email="owner@example.com")
+        mock_graph.query.assert_called_once()
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["email"] == "owner@example.com"
+
+
+# ---------------------------------------------------------------------------
+# link_contact_to_version
+# ---------------------------------------------------------------------------
+
+
+class TestLinkContactToVersion:
+    """Tests for Persistence.link_contact_to_version."""
+
+    def test_creates_edge(self, mock_persistence, mock_graph):
+        mock_persistence.link_contact_to_version(
+            email="team@example.com",
+            purl="pkg:maven/com.example/lib@1.0",
+        )
+        mock_graph.query.assert_called_once()
+        q = mock_graph.query.call_args.kwargs["q"]
+        assert "CONTACT_FOR" in q
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["email"] == "team@example.com"
+        assert params["purl"] == "pkg:maven/com.example/lib@1.0"
+
+    def test_empty_email_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.link_contact_to_version(email="", purl="pkg:a@1")
+        mock_graph.query.assert_not_called()
+
+    def test_empty_purl_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.link_contact_to_version(email="a@b.com", purl="")
+        mock_graph.query.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# create_vex_statement
+# ---------------------------------------------------------------------------
+
+
+class TestCreateVexStatement:
+    """Tests for Persistence.create_vex_statement."""
+
+    def test_creates_statement(self, mock_persistence, mock_graph):
+        mock_persistence.create_vex_statement(
+            statement_id="vex-uuid-1",
+            status="not_affected",
+            justification="Component not in use",
+        )
+        mock_graph.query.assert_called_once()
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["statement_id"] == "vex-uuid-1"
+        assert params["status"] == "not_affected"
+
+    def test_empty_statement_id_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.create_vex_statement(
+            statement_id="",
+            status="not_affected",
+        )
+        mock_graph.query.assert_not_called()
+
+    def test_invalid_status_raises(self, mock_persistence):
+        with pytest.raises(ValueError, match="Invalid VEX status"):
+            mock_persistence.create_vex_statement(
+                statement_id="vex-1",
+                status="invalid_status",
+            )
+
+
+# ---------------------------------------------------------------------------
+# link_vex_to_version
+# ---------------------------------------------------------------------------
+
+
+class TestLinkVexToVersion:
+    """Tests for Persistence.link_vex_to_version."""
+
+    def test_creates_edge(self, mock_persistence, mock_graph):
+        mock_persistence.link_vex_to_version(
+            statement_id="vex-uuid-1",
+            purl="pkg:maven/com.example/lib@1.0",
+        )
+        mock_graph.query.assert_called_once()
+        q = mock_graph.query.call_args.kwargs["q"]
+        assert "HAS_VEX" in q
+
+    def test_empty_statement_id_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.link_vex_to_version(
+            statement_id="",
+            purl="pkg:a@1",
+        )
+        mock_graph.query.assert_not_called()
+
+    def test_empty_purl_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.link_vex_to_version(
+            statement_id="vex-1",
+            purl="",
+        )
+        mock_graph.query.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# link_vex_to_defect
+# ---------------------------------------------------------------------------
+
+
+class TestLinkVexToDefect:
+    """Tests for Persistence.link_vex_to_defect."""
+
+    def test_creates_edge(self, mock_persistence, mock_graph):
+        mock_persistence.link_vex_to_defect(
+            statement_id="vex-uuid-1",
+            defect_id="CVE-2024-12345",
+        )
+        mock_graph.query.assert_called_once()
+        q = mock_graph.query.call_args.kwargs["q"]
+        assert "REFERS_TO" in q
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["statement_id"] == "vex-uuid-1"
+        assert params["defect_id"] == "CVE-2024-12345"
+
+    def test_empty_statement_id_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.link_vex_to_defect(
+            statement_id="",
+            defect_id="CVE-1",
+        )
+        mock_graph.query.assert_not_called()
+
+    def test_empty_defect_id_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.link_vex_to_defect(
+            statement_id="vex-1",
+            defect_id="",
+        )
+        mock_graph.query.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# delete_policy_annotation
+# ---------------------------------------------------------------------------
+
+
+class TestDeletePolicyAnnotation:
+    """Tests for Persistence.delete_policy_annotation."""
+
+    def test_deletes_existing(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(result_set=[[1]])
+        result = mock_persistence.delete_policy_annotation("uuid-1")
+        assert result is True
+
+    def test_not_found(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(result_set=[])
+        result = mock_persistence.delete_policy_annotation("nonexistent")
+        assert result is False
+
+    def test_empty_id(self, mock_persistence, mock_graph):
+        result = mock_persistence.delete_policy_annotation("")
+        assert result is False
+        mock_graph.query.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Centrality methods
 # ---------------------------------------------------------------------------
@@ -642,19 +999,19 @@ class TestCentralityScores:
 class TestCreateIndexes:
     """Tests for Persistence.create_indexes."""
 
-    def test_creates_four_indexes(self, mock_persistence, mock_graph):
+    def test_creates_thirteen_indexes(self, mock_persistence, mock_graph):
         mock_persistence.create_indexes()
-        assert mock_graph.query.call_count == 4
+        assert mock_graph.query.call_count == 13
 
     def test_handles_already_exists_gracefully(self, mock_persistence, mock_graph):
         mock_graph.query.side_effect = Exception("Index already exists")
         mock_persistence.create_indexes()
-        assert mock_graph.query.call_count == 4
+        assert mock_graph.query.call_count == 13
 
     def test_handles_equivalent_index_gracefully(self, mock_persistence, mock_graph):
         mock_graph.query.side_effect = Exception("An equivalent index already exists")
         mock_persistence.create_indexes()
-        assert mock_graph.query.call_count == 4
+        assert mock_graph.query.call_count == 13
 
     def test_logs_warning_on_unexpected_error(
         self, mock_persistence, mock_graph, caplog
@@ -672,9 +1029,172 @@ class TestCreateIndexes:
             Exception("Index already exists"),
             None,
             Exception("Timeout"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         ]
         mock_persistence.create_indexes()
-        assert mock_graph.query.call_count == 4
+        assert mock_graph.query.call_count == 13
+
+
+# ---------------------------------------------------------------------------
+# Trust Score persistence
+# ---------------------------------------------------------------------------
+
+
+class TestCreateTrustScore:
+    """Tests for Persistence.create_trust_score."""
+
+    def test_creates_trust_score(self, mock_persistence, mock_graph):
+        mock_persistence.create_trust_score(
+            purl="pkg:maven/com.example/lib@1.0",
+            direct_score=7.5,
+            confidence=0.75,
+            security_practices_score=8.0,
+            vulnerability_profile_score=7.0,
+            maintenance_health_score=6.5,
+            supply_chain_hygiene_score=8.5,
+            sources_used=["scorecard", "osv", "depsdev"],
+            scored_at="2026-02-28T12:00:00Z",
+        )
+        mock_graph.query.assert_called_once()
+        q = mock_graph.query.call_args.kwargs["q"]
+        assert "MERGE" in q
+        assert "TrustScore" in q
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["purl"] == "pkg:maven/com.example/lib@1.0"
+        assert params["direct_score"] == 7.5
+        assert params["confidence"] == 0.75
+
+    def test_with_optional_raw_data(self, mock_persistence, mock_graph):
+        mock_persistence.create_trust_score(
+            purl="pkg:npm/foo@2.0",
+            direct_score=6.0,
+            confidence=1.0,
+            security_practices_score=6.0,
+            vulnerability_profile_score=6.0,
+            maintenance_health_score=6.0,
+            supply_chain_hygiene_score=6.0,
+            sources_used=["scorecard", "osv", "ossindex", "depsdev"],
+            scored_at="2026-02-28T12:00:00Z",
+            scorecard_raw='{"score":6}',
+            depsdev_raw='{"advisories":0}',
+        )
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["scorecard_raw"] == '{"score":6}'
+        assert params["depsdev_raw"] == '{"advisories":0}'
+
+    def test_empty_purl_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.create_trust_score(
+            purl="",
+            direct_score=5.0,
+            confidence=0.5,
+            security_practices_score=5.0,
+            vulnerability_profile_score=5.0,
+            maintenance_health_score=5.0,
+            supply_chain_hygiene_score=5.0,
+            sources_used=[],
+            scored_at="2026-02-28T12:00:00Z",
+        )
+        mock_graph.query.assert_not_called()
+
+
+class TestLinkVersionToTrustScore:
+    """Tests for Persistence.link_version_to_trust_score."""
+
+    def test_creates_edge(self, mock_persistence, mock_graph):
+        mock_persistence.link_version_to_trust_score("pkg:maven/a/b@1.0")
+        mock_graph.query.assert_called_once()
+        q = mock_graph.query.call_args.kwargs["q"]
+        assert "HAS_TRUST_SCORE" in q
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["purl"] == "pkg:maven/a/b@1.0"
+
+    def test_empty_purl_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.link_version_to_trust_score("")
+        mock_graph.query.assert_not_called()
+
+
+class TestUpdateTrustScorePropagation:
+    """Tests for Persistence.update_trust_score_propagation."""
+
+    def test_updates_fields(self, mock_persistence, mock_graph):
+        mock_persistence.update_trust_score_propagation(
+            purl="pkg:maven/a/b@1.0",
+            effective_score=6.5,
+            inherited_score=5.8,
+            min_path_score=3.2,
+            dep_count=42,
+        )
+        mock_graph.query.assert_called_once()
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["effective_score"] == 6.5
+        assert params["inherited_score"] == 5.8
+        assert params["min_path_score"] == 3.2
+        assert params["dep_count"] == 42
+
+    def test_empty_purl_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.update_trust_score_propagation(
+            purl="",
+            effective_score=0.0,
+            inherited_score=0.0,
+            min_path_score=0.0,
+            dep_count=0,
+        )
+        mock_graph.query.assert_not_called()
+
+
+class TestGetAllTrustScores:
+    """Tests for Persistence.get_all_trust_scores."""
+
+    def test_returns_rows(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(
+            result_set=[
+                {
+                    "purl": "pkg:maven/a/b@1.0",
+                    "direct_score": 7.5,
+                    "effective_score": 6.5,
+                    "inherited_score": 5.8,
+                    "min_path_score": 3.2,
+                    "confidence": 0.75,
+                    "dep_count": 42,
+                },
+            ]
+        )
+        result = mock_persistence.get_all_trust_scores()
+        assert len(result) == 1
+        assert result[0]["purl"] == "pkg:maven/a/b@1.0"
+        assert result[0]["direct_score"] == 7.5
+
+    def test_empty_graph(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(result_set=[])
+        assert mock_persistence.get_all_trust_scores() == []
+
+
+class TestGetDependencyGraphForPropagation:
+    """Tests for Persistence.get_dependency_graph_for_propagation."""
+
+    def test_returns_edges(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(
+            result_set=[
+                {"parent_purl": "pkg:maven/a/b@1.0", "child_purl": "pkg:maven/c/d@2.0"},
+                {"parent_purl": "pkg:maven/a/b@1.0", "child_purl": "pkg:npm/e@3.0"},
+            ]
+        )
+        result = mock_persistence.get_dependency_graph_for_propagation()
+        assert len(result) == 2
+        assert result[0]["parent_purl"] == "pkg:maven/a/b@1.0"
+        assert result[1]["child_purl"] == "pkg:npm/e@3.0"
+
+    def test_empty_graph(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(result_set=[])
+        assert mock_persistence.get_dependency_graph_for_propagation() == []
 
 
 # ---------------------------------------------------------------------------

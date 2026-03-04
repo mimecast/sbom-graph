@@ -10,7 +10,7 @@ import re
 from typing import Any, LiteralString, Optional, cast
 from falkordb import FalkorDB, Graph
 
-from .model import Project, Version, Defect, VersionDefect
+from .model import LicenseRiskCategory, Project, Version, Defect, VersionDefect
 
 logger = logging.getLogger(__name__)
 
@@ -351,6 +351,7 @@ class Persistence:
             ('type', version.project.type if version.project else None),
             ('package_url', version.project.purl if version.project else None),
             ('repo', version.project.repo if version.project else None),
+            ('sbom_format', version.sbom_format),
         ]
 
         if version.project and version.project.type == 'application':
@@ -434,6 +435,10 @@ class Persistence:
             ('cwes', defect.cwes),
             ('cvss', defect.cvss),
             ('cvss_string', defect.cvss_string),
+            ('description', defect.description),
+            ('last_enriched_at', defect.last_enriched_at),
+            ('enrichment_source', defect.enrichment_source),
+            ('aliases', defect.aliases if defect.aliases else None),
         ]
 
         extended_query, params = self._create_extended_query(
@@ -455,6 +460,432 @@ class Persistence:
         logger.info("Creating Defect node id=%s severity=%s", defect.id, defect.severity)
         logger.debug("Defect MERGE query: %s | params: %s", query, params)
         self.run_query(query=cast(LiteralString, query), params=params)
+
+    def update_defect_enrichment(
+        self,
+        defect_id: str,
+        source: str,
+        aliases: list[str] | None = None,
+        timestamp: str | None = None,
+    ) -> None:
+        """Update enrichment metadata on an existing Defect node.
+
+        Args:
+            defect_id: The defect identifier.
+            source: The enrichment source (e.g. "osv").
+            aliases: List of cross-reference IDs.
+            timestamp: ISO timestamp of enrichment.
+        """
+        if not defect_id:
+            return
+
+        params: dict[str, Any] = {
+            "defect_id": defect_id,
+            "enrichment_source": source,
+            "last_enriched_at": timestamp,
+        }
+        alias_clause = ""
+        if aliases:
+            params["aliases"] = aliases
+            alias_clause = ",\n                d.aliases = $aliases"
+
+        query = f"""
+            MATCH (d:Defect {{id: $defect_id}})
+            SET d.enrichment_source = $enrichment_source,
+                d.last_enriched_at = $last_enriched_at
+                {alias_clause}
+        """
+        logger.info("Updating enrichment on defect %s source=%s", defect_id, source)
+        self.run_query(query=cast(LiteralString, query), params=params)
+
+    def get_packages_needing_enrichment(self, older_than_hours: int = 24) -> list[str]:
+        """Return purls that have never been enriched or are stale.
+
+        A package needs enrichment if either:
+        - No Defect linked to it has ``last_enriched_at`` set, or
+        - All linked Defects have ``last_enriched_at`` older than the threshold.
+
+        For packages with no linked defects, they are always included
+        (they may have undiscovered vulnerabilities).
+
+        Args:
+            older_than_hours: Hours after which enrichment is considered stale.
+
+        Returns:
+            List of package URL strings.
+        """
+        result = self.run_query(
+            query=(
+                "MATCH (v:Version) WHERE v.package_url IS NOT NULL "
+                "RETURN DISTINCT v.package_url AS purl"
+            ),
+        )
+        return [row["purl"] for row in result.result_set if row.get("purl")]
+
+    def create_policy_annotation(
+        self,
+        annotation_id: str,
+        policy_type: str,
+        justification: str,
+        created_by: str,
+        created_at: str,
+        expires_at: str | None = None,
+    ) -> None:
+        """Create a PolicyAnnotation node.
+
+        Args:
+            annotation_id: Unique ID (UUID).
+            policy_type: One of "bad", "good", "hold".
+            justification: Reason for the annotation.
+            created_by: Username of the creator.
+            created_at: ISO timestamp.
+            expires_at: Optional expiry ISO timestamp.
+        """
+        if not annotation_id:
+            logger.warning("Cannot create policy annotation: annotation_id is empty")
+            return
+
+        from .model import PolicyType
+        safe_type = PolicyType.from_str(policy_type)
+
+        params: dict[str, Any] = {
+            "annotation_id": annotation_id,
+            "policy_type": safe_type,
+            "justification": justification,
+            "created_by": created_by,
+            "created_at": created_at,
+        }
+
+        expires_clause = ""
+        if expires_at:
+            params["expires_at"] = expires_at
+            expires_clause = ", n.expires_at = $expires_at"
+
+        query = f"""
+            MERGE (n:PolicyAnnotation {{annotation_id: $annotation_id}})
+            ON CREATE SET
+                n.type = $policy_type,
+                n.justification = $justification,
+                n.created_by = $created_by,
+                n.created_at = $created_at
+                {expires_clause}
+            ON MATCH SET
+                n.type = $policy_type,
+                n.justification = $justification
+                {expires_clause}
+        """
+        logger.info("Creating PolicyAnnotation id=%s type=%s", annotation_id, safe_type)
+        self.run_query(query=cast(LiteralString, query), params=params)
+
+    def link_policy_to_version(self, purl: str, annotation_id: str) -> None:
+        """Create a HAS_POLICY edge between a Version and a PolicyAnnotation.
+
+        Args:
+            purl: The package URL of the version.
+            annotation_id: The annotation ID.
+        """
+        if not purl or not annotation_id:
+            logger.warning(
+                "Cannot create HAS_POLICY edge: purl=%s annotation_id=%s",
+                purl, annotation_id,
+            )
+            return
+
+        query = """
+            MATCH (v:Version {package_url: $purl})
+            MATCH (a:PolicyAnnotation {annotation_id: $annotation_id})
+            MERGE (v)-[:HAS_POLICY]->(a)
+        """
+        logger.info("Creating HAS_POLICY edge purl=%s -> annotation=%s", purl, annotation_id)
+        self.run_query(query=query, params={"purl": purl, "annotation_id": annotation_id})
+
+    def delete_policy_annotation(self, annotation_id: str) -> bool:
+        """Delete a PolicyAnnotation and its edges.
+
+        Args:
+            annotation_id: The annotation ID to delete.
+
+        Returns:
+            True if a node was deleted, False if not found.
+        """
+        if not annotation_id:
+            return False
+
+        result = self.run_query(
+            query="""
+                MATCH (a:PolicyAnnotation {annotation_id: $annotation_id})
+                DETACH DELETE a
+                RETURN 1 AS deleted
+            """,
+            params={"annotation_id": annotation_id},
+        )
+        deleted = bool(result.result_set)
+        if deleted:
+            logger.info("Deleted PolicyAnnotation id=%s", annotation_id)
+        return deleted
+
+    def create_point_of_contact(
+        self,
+        email: str,
+        team: str | None = None,
+        slack_channel: str | None = None,
+    ) -> None:
+        """Create or update a PointOfContact node.
+
+        Uses ``email`` as the MERGE key.
+
+        Args:
+            email: Contact email address.
+            team: Team name.
+            slack_channel: Slack channel.
+        """
+        if not email:
+            logger.warning("Cannot create point of contact: email is empty")
+            return
+
+        params: dict[str, Any] = {"email": email}
+        name_value_pairs: list[tuple[str, Any]] = [
+            ("team", team),
+            ("slack_channel", slack_channel),
+        ]
+
+        extended_query, params = self._create_extended_query(
+            name_value_pairs=name_value_pairs,
+            params=params,
+        )
+
+        query = f"""
+            MERGE (n:PointOfContact {{email: $email}})
+            {extended_query}
+        """
+        logger.info("Creating PointOfContact email=%s", email)
+        self.run_query(query=cast(LiteralString, query), params=params)
+
+    def link_contact_to_version(self, email: str, purl: str) -> None:
+        """Create a CONTACT_FOR edge between a PointOfContact and a Version.
+
+        Args:
+            email: The contact email.
+            purl: The package URL of the version.
+        """
+        if not email or not purl:
+            logger.warning(
+                "Cannot create CONTACT_FOR edge: email=%s purl=%s", email, purl,
+            )
+            return
+
+        query = """
+            MATCH (c:PointOfContact {email: $email})
+            MATCH (v:Version {package_url: $purl})
+            MERGE (c)-[:CONTACT_FOR]->(v)
+        """
+        logger.info("Creating CONTACT_FOR edge email=%s -> purl=%s", email, purl)
+        self.run_query(query=query, params={"email": email, "purl": purl})
+
+    def create_vex_statement(
+        self,
+        statement_id: str,
+        status: str,
+        justification: str | None = None,
+        impact_statement: str | None = None,
+        action_statement: str | None = None,
+        source_document: str | None = None,
+        timestamp: str | None = None,
+    ) -> None:
+        """Create or update a VexStatement node.
+
+        Args:
+            statement_id: Unique ID (UUID).
+            status: One of not_affected, affected, fixed, under_investigation.
+            justification: Reason for the status.
+            impact_statement: Impact description.
+            action_statement: Recommended action.
+            source_document: Source document URI.
+            timestamp: ISO timestamp.
+        """
+        if not statement_id:
+            logger.warning("Cannot create VEX statement: statement_id is empty")
+            return
+
+        from .model import VexStatus
+        safe_status = VexStatus.from_str(status)
+
+        params: dict[str, Any] = {"statement_id": statement_id}
+        name_value_pairs: list[tuple[str, Any]] = [
+            ("status", safe_status),
+            ("justification", justification),
+            ("impact_statement", impact_statement),
+            ("action_statement", action_statement),
+            ("source_document", source_document),
+            ("timestamp", timestamp),
+        ]
+
+        extended_query, params = self._create_extended_query(
+            name_value_pairs=name_value_pairs,
+            params=params,
+        )
+
+        query = f"""
+            MERGE (n:VexStatement {{statement_id: $statement_id}})
+            {extended_query}
+        """
+        logger.info("Creating VexStatement id=%s status=%s", statement_id, safe_status)
+        self.run_query(query=cast(LiteralString, query), params=params)
+
+    def link_vex_to_version(self, statement_id: str, purl: str) -> None:
+        """Create a HAS_VEX edge between a Version and a VexStatement.
+
+        Args:
+            statement_id: The VEX statement ID.
+            purl: The package URL of the version.
+        """
+        if not statement_id or not purl:
+            return
+
+        query = """
+            MATCH (v:Version {package_url: $purl})
+            MATCH (s:VexStatement {statement_id: $statement_id})
+            MERGE (v)-[:HAS_VEX]->(s)
+        """
+        logger.info("Creating HAS_VEX edge purl=%s -> statement=%s", purl, statement_id)
+        self.run_query(query=query, params={"purl": purl, "statement_id": statement_id})
+
+    def link_vex_to_defect(self, statement_id: str, defect_id: str) -> None:
+        """Create a REFERS_TO edge between a VexStatement and a Defect.
+
+        Args:
+            statement_id: The VEX statement ID.
+            defect_id: The defect/vulnerability ID.
+        """
+        if not statement_id or not defect_id:
+            return
+
+        query = """
+            MATCH (s:VexStatement {statement_id: $statement_id})
+            MATCH (d:Defect {id: $defect_id})
+            MERGE (s)-[:REFERS_TO]->(d)
+        """
+        logger.info("Creating REFERS_TO edge statement=%s -> defect=%s", statement_id, defect_id)
+        self.run_query(
+            query=query,
+            params={"statement_id": statement_id, "defect_id": defect_id},
+        )
+
+    # Source repository methods
+
+    def create_source_repository(
+        self,
+        url: str,
+        vcs_type: str | None = None,
+        namespace: str | None = None,
+        name: str | None = None,
+        tag: str | None = None,
+        commit: str | None = None,
+    ) -> None:
+        """Create or update a SourceRepository node.
+
+        Uses ``url`` as the MERGE key.
+
+        Args:
+            url: Canonical repository URL.
+            vcs_type: Version control type (e.g. "git", "svn").
+            namespace: Hosting platform (e.g. "github.com").
+            name: Repository path (e.g. "org/repo").
+            tag: Tag for the linked version.
+            commit: Commit hash for the linked version.
+        """
+        if not url:
+            logger.warning("Cannot create source repository: url is empty")
+            return
+
+        params: dict[str, Any] = {"url": url}
+        name_value_pairs: list[tuple[str, Any]] = [
+            ("vcs_type", vcs_type),
+            ("namespace", namespace),
+            ("name", name),
+            ("tag", tag),
+            ("commit_hash", commit),
+        ]
+
+        extended_query, params = self._create_extended_query(
+            name_value_pairs=name_value_pairs,
+            params=params,
+        )
+
+        query = f"""
+            MERGE (n:SourceRepository {{url: $url}})
+            {extended_query}
+        """
+        logger.info("Creating SourceRepository url=%s", url)
+        self.run_query(query=cast(LiteralString, query), params=params)
+
+    def link_version_to_source(self, purl: str, repo_url: str) -> None:
+        """Create a HAS_SOURCE edge between a Version and a SourceRepository.
+
+        Args:
+            purl: The package URL of the version.
+            repo_url: The repository URL.
+        """
+        if not purl or not repo_url:
+            logger.warning(
+                "Cannot create HAS_SOURCE edge: purl=%s repo_url=%s",
+                purl, repo_url,
+            )
+            return
+
+        query = """
+            MATCH (v:Version {package_url: $purl})
+            MATCH (r:SourceRepository {url: $repo_url})
+            MERGE (v)-[:HAS_SOURCE]->(r)
+        """
+        logger.info("Creating HAS_SOURCE edge purl=%s -> repo=%s", purl, repo_url)
+        self.run_query(query=query, params={"purl": purl, "repo_url": repo_url})
+
+    def link_version_to_source_by_name(
+        self,
+        project_name: str,
+        project_group: str | None,
+        version_name: str,
+        repo_url: str,
+    ) -> None:
+        """Create a HAS_SOURCE edge using version identity fields.
+
+        Useful during SBOM ingestion when the purl may not yet be set.
+
+        Args:
+            project_name: The project name.
+            project_group: The project group (may be None).
+            version_name: The version string.
+            repo_url: The repository URL.
+        """
+        if not repo_url:
+            return
+
+        params: dict[str, Any] = {
+            "project_name": project_name,
+            "version_name": version_name,
+            "repo_url": repo_url,
+        }
+
+        if project_group is not None:
+            query = """
+                MATCH (v:Version {name: $version_name, project_name: $project_name, project_group: $project_group})
+                MATCH (r:SourceRepository {url: $repo_url})
+                MERGE (v)-[:HAS_SOURCE]->(r)
+            """
+            params["project_group"] = project_group
+        else:
+            query = """
+                MATCH (v:Version {name: $version_name, project_name: $project_name})
+                MATCH (r:SourceRepository {url: $repo_url})
+                MERGE (v)-[:HAS_SOURCE]->(r)
+            """
+
+        logger.info(
+            "Creating HAS_SOURCE edge %s/%s -> %s",
+            project_name, version_name, repo_url,
+        )
+        self.run_query(query=query, params=params)
 
     # Edge creation methods
 
@@ -610,6 +1041,125 @@ class Persistence:
         logger.debug("VersionDefect MERGE query: %s | params: %s", query, params)
         self.run_query(query=cast(LiteralString, query), params=params)
 
+    # License methods
+
+    def create_license(
+        self,
+        spdx_id: str,
+        name: str | None = None,
+        url: str | None = None,
+        risk_category: str | None = None,
+    ) -> None:
+        """Create or update a License node.
+
+        Uses ``spdx_id`` as the MERGE key so duplicate licenses are
+        deduplicated automatically.
+
+        Args:
+            spdx_id: The SPDX identifier (e.g. ``"MIT"``).
+            name: Human-readable license name. Defaults to *spdx_id*.
+            url: URL to the license text.
+            risk_category: A :class:`LicenseRiskCategory` value.
+                Unrecognised strings are normalised to ``"unknown"``.
+        """
+        if not spdx_id:
+            logger.warning("Cannot create license: spdx_id is empty")
+            return
+
+        safe_category = LicenseRiskCategory.from_str(risk_category)
+
+        params: dict[str, Any] = {"spdx_id": spdx_id}
+        name_value_pairs: list[tuple[str, Any]] = [
+            ("name", name or spdx_id),
+            ("url", url),
+            ("risk_category", safe_category),
+        ]
+
+        extended_query, params = self._create_extended_query(
+            name_value_pairs=name_value_pairs,
+            params=params,
+        )
+
+        query = f"""
+            MERGE (n:License {{spdx_id: $spdx_id}})
+            {extended_query}
+        """
+        logger.info("Creating License node spdx_id=%s", spdx_id)
+        self.run_query(query=cast(LiteralString, query), params=params)
+
+    def create_version_license(self, purl: str, spdx_id: str) -> None:
+        """Create a HAS_LICENSE edge between a Version and a License.
+
+        Matches the Version by ``package_url`` and the License by
+        ``spdx_id``.
+
+        Args:
+            purl: The package URL of the version.
+            spdx_id: The SPDX identifier of the license.
+        """
+        if not purl or not spdx_id:
+            logger.warning(
+                "Cannot create version-license edge: purl=%s spdx_id=%s",
+                purl, spdx_id,
+            )
+            return
+
+        query = """
+            MATCH (v:Version {package_url: $purl})
+            MATCH (l:License {spdx_id: $spdx_id})
+            MERGE (v)-[:HAS_LICENSE]->(l)
+        """
+        params = {"purl": purl, "spdx_id": spdx_id}
+        logger.info("Creating HAS_LICENSE edge purl=%s -> spdx_id=%s", purl, spdx_id)
+        self.run_query(query=query, params=params)
+
+    def create_version_license_by_name(
+        self,
+        project_name: str,
+        project_group: str | None,
+        version_name: str,
+        spdx_id: str,
+    ) -> None:
+        """Create a HAS_LICENSE edge using version identity fields.
+
+        Useful during CycloneDX ingestion when the purl may not yet be
+        set on the Version node.
+
+        Args:
+            project_name: The project name.
+            project_group: The project group (may be None).
+            version_name: The version string.
+            spdx_id: The SPDX identifier of the license.
+        """
+        if not spdx_id:
+            return
+
+        params: dict[str, Any] = {
+            "project_name": project_name,
+            "version_name": version_name,
+            "spdx_id": spdx_id,
+        }
+
+        if project_group is not None:
+            query = """
+                MATCH (v:Version {name: $version_name, project_name: $project_name, project_group: $project_group})
+                MATCH (l:License {spdx_id: $spdx_id})
+                MERGE (v)-[:HAS_LICENSE]->(l)
+            """
+            params["project_group"] = project_group
+        else:
+            query = """
+                MATCH (v:Version {name: $version_name, project_name: $project_name})
+                MATCH (l:License {spdx_id: $spdx_id})
+                MERGE (v)-[:HAS_LICENSE]->(l)
+            """
+
+        logger.info(
+            "Creating HAS_LICENSE edge %s/%s -> %s",
+            project_name, version_name, spdx_id,
+        )
+        self.run_query(query=query, params=params)
+
     # Labeling methods
 
     def label_projects_with_type_information(self) -> None:
@@ -651,6 +1201,37 @@ class Persistence:
 
     # Query methods
 
+    def get_versions_by_purl(self, purl: str) -> list[dict[str, str | None]]:
+        """Return lightweight version/project info for a given package URL.
+
+        Used by the enrichment pipeline to link newly discovered defects
+        or licenses to the correct Version nodes without leaking raw
+        Cypher into task code.
+
+        Args:
+            purl: The package URL to look up.
+
+        Returns:
+            List of dicts with keys ``name``, ``project_name``, and
+            ``project_group`` (any of which may be ``None``).
+        """
+        result = self.run_query(
+            query=(
+                "MATCH (v:Version) WHERE v.package_url = $purl "
+                "RETURN v.name AS name, v.project_name AS project_name, "
+                "v.project_group AS project_group"
+            ),
+            params={"purl": purl},
+        )
+        return [
+            {
+                "name": row.get("name"),
+                "project_name": row.get("project_name"),
+                "project_group": row.get("project_group"),
+            }
+            for row in result.result_set
+        ]
+
     def retrieve_all_project_nodes_with_repo_url(self, project_repo: str) -> list[dict[str, Any]]:
         """Retrieve all project nodes with a specific repo URL.
 
@@ -689,6 +1270,207 @@ class Persistence:
             """
         )
 
+    # Trust Score methods
+
+    def create_trust_score(
+        self,
+        purl: str,
+        direct_score: float,
+        confidence: float,
+        security_practices_score: float,
+        vulnerability_profile_score: float,
+        maintenance_health_score: float,
+        supply_chain_hygiene_score: float,
+        sources_used: list[str],
+        scored_at: str,
+        scorecard_raw: str | None = None,
+        depsdev_raw: str | None = None,
+    ) -> None:
+        """Create or update a TrustScore node and link it to Version nodes.
+
+        Uses ``purl`` as the MERGE key so each package version has at most
+        one TrustScore.
+
+        Args:
+            purl: Package URL identifying the package version.
+            direct_score: Composite direct score (0--10).
+            confidence: Data source coverage (0--1).
+            security_practices_score: Category score (0--10).
+            vulnerability_profile_score: Category score (0--10).
+            maintenance_health_score: Category score (0--10).
+            supply_chain_hygiene_score: Category score (0--10).
+            sources_used: List of data source names.
+            scored_at: ISO timestamp of scoring.
+            scorecard_raw: Optional raw Scorecard JSON.
+            depsdev_raw: Optional raw deps.dev JSON.
+        """
+        if not purl:
+            logger.warning("Cannot create TrustScore: purl is empty")
+            return
+
+        params: dict[str, Any] = {
+            "purl": purl,
+            "direct_score": direct_score,
+            "confidence": confidence,
+            "security_practices_score": security_practices_score,
+            "vulnerability_profile_score": vulnerability_profile_score,
+            "maintenance_health_score": maintenance_health_score,
+            "supply_chain_hygiene_score": supply_chain_hygiene_score,
+            "sources_used": sources_used,
+            "scored_at": scored_at,
+        }
+
+        optional_sets: list[str] = []
+        if scorecard_raw is not None:
+            params["scorecard_raw"] = scorecard_raw
+            optional_sets.append("n.scorecard_raw = $scorecard_raw")
+        if depsdev_raw is not None:
+            params["depsdev_raw"] = depsdev_raw
+            optional_sets.append("n.depsdev_raw = $depsdev_raw")
+
+        extra_set = ", " + ", ".join(optional_sets) if optional_sets else ""
+
+        query = f"""
+            MERGE (n:TrustScore {{purl: $purl}})
+            ON CREATE SET
+                n.direct_score = $direct_score,
+                n.confidence = $confidence,
+                n.security_practices_score = $security_practices_score,
+                n.vulnerability_profile_score = $vulnerability_profile_score,
+                n.maintenance_health_score = $maintenance_health_score,
+                n.supply_chain_hygiene_score = $supply_chain_hygiene_score,
+                n.sources_used = $sources_used,
+                n.scored_at = $scored_at{extra_set}
+            ON MATCH SET
+                n.direct_score = $direct_score,
+                n.confidence = $confidence,
+                n.security_practices_score = $security_practices_score,
+                n.vulnerability_profile_score = $vulnerability_profile_score,
+                n.maintenance_health_score = $maintenance_health_score,
+                n.supply_chain_hygiene_score = $supply_chain_hygiene_score,
+                n.sources_used = $sources_used,
+                n.scored_at = $scored_at{extra_set}
+        """
+        logger.info("Creating TrustScore purl=%s direct_score=%.2f", purl, direct_score)
+        self.run_query(query=cast(LiteralString, query), params=params)
+
+    def link_version_to_trust_score(self, purl: str) -> None:
+        """Create a HAS_TRUST_SCORE edge between matching Version nodes and the TrustScore.
+
+        Args:
+            purl: The package URL shared by the Version and TrustScore nodes.
+        """
+        if not purl:
+            return
+
+        query = """
+            MATCH (v:Version {package_url: $purl})
+            MATCH (t:TrustScore {purl: $purl})
+            MERGE (v)-[:HAS_TRUST_SCORE]->(t)
+        """
+        logger.info("Creating HAS_TRUST_SCORE edge for purl=%s", purl)
+        self.run_query(query=query, params={"purl": purl})
+
+    def update_trust_score_propagation(
+        self,
+        purl: str,
+        effective_score: float,
+        inherited_score: float,
+        min_path_score: float,
+        dep_count: int,
+    ) -> None:
+        """Update propagation fields on an existing TrustScore node.
+
+        Called by the periodic propagation task after computing inherited
+        risk through the dependency graph.
+
+        Args:
+            purl: Package URL identifying the TrustScore.
+            effective_score: Blended own + inherited score (0--10).
+            inherited_score: Weighted aggregate from deps (0--10).
+            min_path_score: Weakest direct_score on any dependency path (0--10).
+            dep_count: Number of deps used in the calculation.
+        """
+        if not purl:
+            return
+
+        query = """
+            MATCH (n:TrustScore {purl: $purl})
+            SET n.effective_score = $effective_score,
+                n.inherited_score = $inherited_score,
+                n.min_path_score = $min_path_score,
+                n.dep_count = $dep_count
+        """
+        self.run_query(
+            query=query,
+            params={
+                "purl": purl,
+                "effective_score": effective_score,
+                "inherited_score": inherited_score,
+                "min_path_score": min_path_score,
+                "dep_count": dep_count,
+            },
+        )
+
+    def get_all_trust_scores(self) -> list[dict[str, Any]]:
+        """Return all TrustScore nodes as dictionaries.
+
+        Used by the propagation task to read current direct_scores.
+
+        Returns:
+            List of dictionaries with purl, direct_score, effective_score,
+            inherited_score, min_path_score, confidence, and dep_count.
+        """
+        result = self.run_query(
+            query=(
+                "MATCH (t:TrustScore) "
+                "RETURN t.purl AS purl, t.direct_score AS direct_score, "
+                "t.effective_score AS effective_score, "
+                "t.inherited_score AS inherited_score, "
+                "t.min_path_score AS min_path_score, "
+                "t.confidence AS confidence, "
+                "t.dep_count AS dep_count"
+            ),
+        )
+        return [
+            {
+                "purl": row.get("purl"),
+                "direct_score": row.get("direct_score"),
+                "effective_score": row.get("effective_score"),
+                "inherited_score": row.get("inherited_score"),
+                "min_path_score": row.get("min_path_score"),
+                "confidence": row.get("confidence"),
+                "dep_count": row.get("dep_count"),
+            }
+            for row in result.result_set
+        ]
+
+    def get_dependency_graph_for_propagation(self) -> list[dict[str, str]]:
+        """Return the dependency adjacency list for trust score propagation.
+
+        Returns pairs of (parent_purl, child_purl) from the
+        DEPENDENCY_VERSION edges, only for versions that have package_url set.
+
+        Returns:
+            List of dicts with ``parent_purl`` and ``child_purl`` keys.
+        """
+        result = self.run_query(
+            query=(
+                "MATCH (parent:Version)-[:DEPENDENCY_VERSION]->(child:Version) "
+                "WHERE parent.package_url IS NOT NULL "
+                "AND child.package_url IS NOT NULL "
+                "RETURN DISTINCT parent.package_url AS parent_purl, "
+                "child.package_url AS child_purl"
+            ),
+        )
+        return [
+            {
+                "parent_purl": row.get("parent_purl"),
+                "child_purl": row.get("child_purl"),
+            }
+            for row in result.result_set
+        ]
+
     # Index management
 
     def create_indexes(self) -> None:
@@ -704,6 +1486,15 @@ class Persistence:
             ("Version", "project_group"),
             ("Version", "name"),
             ("Defect", "id"),
+            ("License", "spdx_id"),
+            ("PolicyAnnotation", "annotation_id"),
+            ("PolicyAnnotation", "type"),
+            ("PointOfContact", "email"),
+            ("VexStatement", "statement_id"),
+            ("SourceRepository", "url"),
+            ("TrustScore", "purl"),
+            ("TrustScore", "effective_score"),
+            ("TrustScore", "min_path_score"),
         ]
 
         for label, property_name in index_definitions:

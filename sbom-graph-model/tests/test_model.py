@@ -10,16 +10,25 @@ from datetime import datetime
 import pytest
 
 from sbom_graph_model.model import (
+    ContactFor,
     Defect,
     DefectType,
     DependencyVersion,
     HasVersion,
     License,
+    PointOfContact,
+    PolicyAnnotation,
+    PolicyType,
     Project,
     ProjectType,
     RiskStatus,
     Version,
     VersionDefect,
+    VersionPolicy,
+    VexRefersTo,
+    VexStatement,
+    VexStatus,
+    VersionVex,
 )
 
 
@@ -201,17 +210,215 @@ class TestDefect:
         assert d.discovered.year == 2024
 
 
+class TestPolicyType:
+    """Tests for the PolicyType string enum."""
+
+    def test_from_str_bad(self):
+        assert PolicyType.from_str("bad") == "bad"
+
+    def test_from_str_good(self):
+        assert PolicyType.from_str("good") == "good"
+
+    def test_from_str_hold(self):
+        assert PolicyType.from_str("hold") == "hold"
+
+    def test_from_str_invalid_raises(self):
+        with pytest.raises(ValueError):
+            PolicyType.from_str("invalid")
+
+    def test_from_str_none_raises(self):
+        with pytest.raises(ValueError):
+            PolicyType.from_str(None)
+
+
+class TestPolicyAnnotation:
+    """Tests for the PolicyAnnotation node class."""
+
+    def test_default_init(self):
+        pa = PolicyAnnotation()
+        assert pa.annotation_id is None
+        assert pa.type is None
+        assert pa.justification is None
+        assert pa.created_by is None
+        assert pa.created_at is None
+        assert pa.expires_at is None
+
+    def test_set_fields(self):
+        pa = PolicyAnnotation()
+        pa.annotation_id = "uuid-123"
+        pa.type = PolicyType.BAD
+        pa.justification = "reason"
+        pa.created_by = "admin"
+        pa.created_at = "2024-06-01T00:00:00Z"
+        pa.expires_at = "2025-01-01T00:00:00Z"
+        assert pa.annotation_id == "uuid-123"
+        assert pa.type == "bad"
+
+
+class TestVersionPolicy:
+    """Tests for the VersionPolicy edge class."""
+
+    def test_default_init(self):
+        vp = VersionPolicy()
+        assert vp.version is None
+        assert vp.annotation is None
+
+
+class TestPointOfContact:
+    """Tests for the PointOfContact node class."""
+
+    def test_default_init(self):
+        poc = PointOfContact()
+        assert poc.email is None
+        assert poc.team is None
+        assert poc.slack_channel is None
+
+    def test_set_fields(self):
+        poc = PointOfContact()
+        poc.email = "team@example.com"
+        poc.team = "security-team"
+        poc.slack_channel = "#patches"
+        assert poc.email == "team@example.com"
+        assert poc.team == "security-team"
+        assert poc.slack_channel == "#patches"
+
+
+class TestContactFor:
+    """Tests for the ContactFor edge class."""
+
+    def test_default_init(self):
+        cf = ContactFor()
+        assert cf.contact is None
+        assert cf.version is None
+
+    def test_set_attributes(self, sample_version):
+        cf = ContactFor()
+        poc = PointOfContact()
+        poc.email = "owner@example.com"
+        cf.contact = poc
+        cf.version = sample_version
+        assert cf.contact.email == "owner@example.com"
+        assert cf.version.version == "1.0.0"
+
+
+class TestVexStatus:
+    """Tests for the VexStatus string enum."""
+
+    def test_from_str_not_affected(self):
+        assert VexStatus.from_str("not_affected") == "not_affected"
+
+    def test_from_str_affected(self):
+        assert VexStatus.from_str("affected") == "affected"
+
+    def test_from_str_fixed(self):
+        assert VexStatus.from_str("fixed") == "fixed"
+
+    def test_from_str_under_investigation(self):
+        assert VexStatus.from_str("under_investigation") == "under_investigation"
+
+    def test_from_str_invalid_raises(self):
+        with pytest.raises(ValueError, match="Invalid VEX status"):
+            VexStatus.from_str("invalid")
+
+    def test_from_str_none_raises(self):
+        with pytest.raises(ValueError):
+            VexStatus.from_str(None)
+
+
+class TestVexStatement:
+    """Tests for the VexStatement node class."""
+
+    def test_default_init(self):
+        vs = VexStatement()
+        assert vs.statement_id is None
+        assert vs.status is None
+        assert vs.justification is None
+        assert vs.impact_statement is None
+        assert vs.action_statement is None
+        assert vs.source_document is None
+        assert vs.timestamp is None
+
+    def test_set_fields(self):
+        vs = VexStatement()
+        vs.statement_id = "uuid-vex-1"
+        vs.status = VexStatus.NOT_AFFECTED
+        vs.justification = "Component not in use"
+        vs.impact_statement = "No impact"
+        vs.action_statement = "None required"
+        vs.source_document = "vex://doc-1"
+        vs.timestamp = "2024-06-01T00:00:00Z"
+        assert vs.statement_id == "uuid-vex-1"
+        assert vs.status == "not_affected"
+
+
+class TestVersionVex:
+    """Tests for the VersionVex edge class."""
+
+    def test_default_init(self):
+        vv = VersionVex()
+        assert vv.version is None
+        assert vv.statement is None
+
+    def test_set_attributes(self, sample_version):
+        vv = VersionVex()
+        vs = VexStatement()
+        vs.statement_id = "stmt-1"
+        vv.version = sample_version
+        vv.statement = vs
+        assert vv.version.version == "1.0.0"
+        assert vv.statement.statement_id == "stmt-1"
+
+
+class TestVexRefersTo:
+    """Tests for the VexRefersTo edge class."""
+
+    def test_default_init(self):
+        vrt = VexRefersTo()
+        assert vrt.statement is None
+        assert vrt.defect is None
+
+    def test_set_attributes(self, sample_defect):
+        vrt = VexRefersTo()
+        vs = VexStatement()
+        vs.statement_id = "stmt-1"
+        vrt.statement = vs
+        vrt.defect = sample_defect
+        assert vrt.statement.statement_id == "stmt-1"
+        assert vrt.defect.id == "CVE-2024-12345"
+
+
+class TestDefectEnrichmentFields:
+    """Tests for Defect enrichment metadata fields."""
+
+    def test_new_fields_default(self):
+        d = Defect()
+        assert d.last_enriched_at is None
+        assert d.enrichment_source is None
+        assert d.aliases == []
+
+    def test_set_enrichment_fields(self):
+        d = Defect()
+        d.last_enriched_at = "2024-06-01T00:00:00Z"
+        d.enrichment_source = "osv"
+        d.aliases = ["CVE-2024-1", "GHSA-xxx"]
+        assert d.last_enriched_at == "2024-06-01T00:00:00Z"
+        assert len(d.aliases) == 2
+
+
 class TestLicense:
     """Tests for the License node class."""
 
     def test_default_init(self):
         lic = License()
-        assert lic.id is None
+        assert lic.spdx_id is None
+        assert lic.name is None
+        assert lic.url is None
+        assert lic.risk_category == "unknown"
 
-    def test_set_id(self):
+    def test_set_spdx_id(self):
         lic = License()
-        lic.id = "Apache-2.0"
-        assert lic.id == "Apache-2.0"
+        lic.spdx_id = "Apache-2.0"
+        assert lic.spdx_id == "Apache-2.0"
 
 
 class TestVersionDefect:
@@ -280,3 +487,146 @@ class TestHasVersion:
         hv.version = sample_version
         assert hv.project.name == "test-project"
         assert hv.version.version == "1.0.0"
+
+
+class TestTrustScore:
+    """Tests for the TrustScore node class."""
+
+    def test_default_init(self):
+        from sbom_graph_model.model import TrustScore
+        ts = TrustScore()
+        assert ts.purl is None
+        assert ts.direct_score is None
+        assert ts.effective_score is None
+        assert ts.inherited_score is None
+        assert ts.min_path_score is None
+        assert ts.confidence is None
+        assert ts.dep_count is None
+        assert ts.security_practices_score is None
+        assert ts.vulnerability_profile_score is None
+        assert ts.maintenance_health_score is None
+        assert ts.supply_chain_hygiene_score is None
+        assert ts.sources_used == []
+        assert ts.scored_at is None
+        assert ts.scorecard_raw is None
+        assert ts.depsdev_raw is None
+
+    def test_set_all_attributes(self):
+        from sbom_graph_model.model import TrustScore
+        ts = TrustScore()
+        ts.purl = "pkg:maven/com.example/lib@1.0"
+        ts.direct_score = 7.5
+        ts.effective_score = 6.5
+        ts.inherited_score = 5.8
+        ts.min_path_score = 3.2
+        ts.confidence = 0.75
+        ts.dep_count = 42
+        ts.security_practices_score = 8.0
+        ts.vulnerability_profile_score = 7.0
+        ts.maintenance_health_score = 6.5
+        ts.supply_chain_hygiene_score = 8.5
+        ts.sources_used = ["scorecard", "osv", "depsdev"]
+        ts.scored_at = "2026-02-28T12:00:00Z"
+        ts.scorecard_raw = '{"score":7.5}'
+        ts.depsdev_raw = '{"advisories":0}'
+
+        assert ts.purl == "pkg:maven/com.example/lib@1.0"
+        assert ts.direct_score == 7.5
+        assert ts.effective_score == 6.5
+        assert ts.sources_used == ["scorecard", "osv", "depsdev"]
+
+    def test_sources_used_not_shared_across_instances(self):
+        from sbom_graph_model.model import TrustScore
+        ts1 = TrustScore()
+        ts2 = TrustScore()
+        ts1.sources_used.append("scorecard")
+        assert len(ts2.sources_used) == 0
+
+
+class TestHasTrustScore:
+    """Tests for the HasTrustScore edge class."""
+
+    def test_default_init(self):
+        from sbom_graph_model.model import HasTrustScore
+        hts = HasTrustScore()
+        assert hts.version is None
+        assert hts.trust_score is None
+
+    def test_set_attributes(self, sample_version):
+        from sbom_graph_model.model import HasTrustScore, TrustScore
+        ts = TrustScore()
+        ts.purl = "pkg:maven/com.example/lib@1.0"
+        hts = HasTrustScore()
+        hts.version = sample_version
+        hts.trust_score = ts
+        assert hts.version.version == "1.0.0"
+        assert hts.trust_score.purl == "pkg:maven/com.example/lib@1.0"
+
+
+class TestSourceRepository:
+    """Tests for the SourceRepository node class."""
+
+    def test_default_init(self):
+        from sbom_graph_model.model import SourceRepository
+        sr = SourceRepository()
+        assert sr.url is None
+        assert sr.vcs_type is None
+        assert sr.namespace is None
+        assert sr.name is None
+        assert sr.tag is None
+        assert sr.commit is None
+
+    def test_set_all_attributes(self):
+        from sbom_graph_model.model import SourceRepository
+        sr = SourceRepository()
+        sr.url = "https://github.com/org/repo"
+        sr.vcs_type = "git"
+        sr.namespace = "github.com"
+        sr.name = "org/repo"
+        sr.tag = "v1.0.0"
+        sr.commit = "abc123"
+
+        assert sr.url == "https://github.com/org/repo"
+        assert sr.vcs_type == "git"
+        assert sr.namespace == "github.com"
+        assert sr.name == "org/repo"
+        assert sr.tag == "v1.0.0"
+        assert sr.commit == "abc123"
+
+
+class TestVersionSource:
+    """Tests for the VersionSource edge class."""
+
+    def test_default_init(self):
+        from sbom_graph_model.model import VersionSource
+        vs = VersionSource()
+        assert vs.version is None
+        assert vs.repository is None
+
+    def test_set_all_attributes(self, sample_version):
+        from sbom_graph_model.model import VersionSource, SourceRepository
+        sr = SourceRepository()
+        sr.url = "https://github.com/org/repo"
+        vs = VersionSource()
+        vs.version = sample_version
+        vs.repository = sr
+        assert vs.version.version == "1.0.0"
+        assert vs.repository.url == "https://github.com/org/repo"
+
+
+class TestVersionSbomFormat:
+    """Tests for the sbom_format property on Version."""
+
+    def test_default_is_none(self):
+        v = Version()
+        assert v.sbom_format is None
+
+    def test_set_cyclonedx(self):
+        v = Version()
+        v.sbom_format = "cyclonedx"
+        assert v.sbom_format == "cyclonedx"
+
+    def test_set_spdx(self):
+        v = Version()
+        v.sbom_format = "spdx"
+        assert v.sbom_format == "spdx"

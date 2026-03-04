@@ -293,12 +293,15 @@ class TestGetAllVulnerabilities:
     def test_get_all_vulnerabilities(self, service):
         with patch.object(service, "execute_query", return_value=[
             ["CVE-2024-001", "XSS Vuln", "desc", "HIGH", 7.5, "CWE-79", "2024-01-01",
+             "2024-06-01T00:00:00Z", ["CVE-2024-001"], "osv",
              [{"project_name": "lib", "version": "1.0", "project_group": "com.example"}]],
         ]):
             result = service.get_all_vulnerabilities()
             assert len(result) == 1
             assert result[0]["defect_id"] == "CVE-2024-001"
             assert result[0]["severity"] == "HIGH"
+            assert result[0]["last_enriched_at"] == "2024-06-01T00:00:00Z"
+            assert result[0]["aliases"] == ["CVE-2024-001"]
 
     def test_get_vulnerability_by_id(self, service):
         with patch.object(service, "execute_query", return_value=[

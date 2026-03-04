@@ -1181,3 +1181,45 @@ def create_centrality_excel(
     wb.save(buffer)
     buffer.seek(0)
     return buffer
+
+
+def create_generic_excel(
+    data: list[dict[str, Any]],
+    columns: list[str],
+    sheet_name: str = "Sheet1",
+    filename: str = "export.xlsx",
+) -> Any:
+    """Create a styled Excel workbook from a list of dicts.
+
+    Args:
+        data: List of row dictionaries.
+        columns: Column keys to include (in order).
+        sheet_name: Name of the worksheet.
+        filename: Suggested download filename.
+
+    Returns:
+        A Flask ``Response`` with the Excel file attached.
+    """
+    from flask import Response as FlaskResponse
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_name
+
+    ws.append(columns)
+    style_header_row(ws, len(columns))
+
+    for row in data:
+        ws.append([row.get(col, "") for col in columns])
+
+    auto_adjust_column_widths(ws)
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return FlaskResponse(
+        buf.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )

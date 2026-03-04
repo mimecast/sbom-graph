@@ -1591,3 +1591,411 @@ def dependants_report_by_purl(purl: str) -> Response | tuple[str, int]:
     return _purl_redirect(
         "reports.dependants_report", coords, version_key="version_name"
     )
+
+
+# ---- License reports ----
+
+
+@bp.route("/licenses")
+@auth_required
+def licenses_report() -> Response | tuple[str | Response, int]:
+    """All licenses grouped by risk category.
+
+    Supports ``format=json``, ``format=excel``, and ``format=html`` (default).
+    """
+    fmt = validate_format(request.args.get("format", "html"))
+    internal_only = validate_boolean(request.args.get("internal_only", "true"))
+    service = get_falkordb_service()
+    licenses = service.get_all_licenses(internal_only=internal_only)
+
+    if fmt == "json":
+        return _build_json_response(
+            {"licenses": licenses, "total": len(licenses)},
+            "licenses.json",
+        )
+
+    if fmt == "excel":
+        from sbom_graph_api.exports.excel import create_generic_excel
+        return create_generic_excel(
+            data=licenses,
+            columns=["spdx_id", "name", "risk_category", "usage_count"],
+            sheet_name="Licenses",
+            filename="licenses.xlsx",
+        )
+
+    return render_template(
+        "licenses.html",
+        title=_get_internal_title("Licenses", internal_only),
+        licenses=licenses,
+        internal_only=internal_only,
+        generated_at=_get_current_timestamp(),
+    )
+
+
+@bp.route("/license-summary")
+@auth_required
+def license_summary_report() -> Response | tuple[str | Response, int]:
+    """License BOM for a specific project version (including transitives).
+
+    Query params: ``project_name``, ``version_name``, ``project_group``.
+    """
+    project_name = validate_project_name(request.args.get("project_name", ""))
+    version_name = validate_version_name(request.args.get("version_name", ""))
+    project_group = validate_project_group(request.args.get("project_group"))
+    fmt = validate_format(request.args.get("format", "html"))
+
+    if not project_name or not version_name:
+        return jsonify({"error": "project_name and version_name are required"}), 400
+
+    service = get_falkordb_service()
+    summary = service.get_license_summary(
+        project_name=project_name,
+        version_name=version_name,
+        project_group=project_group,
+    )
+
+    if fmt == "json":
+        return _build_json_response(
+            {
+                "project_name": project_name,
+                "version_name": version_name,
+                "licenses": summary,
+                "total": len(summary),
+            },
+            "license-summary.json",
+        )
+
+    if fmt == "excel":
+        from sbom_graph_api.exports.excel import create_generic_excel
+        return create_generic_excel(
+            data=summary,
+            columns=["project_group", "project_name", "version", "purl", "spdx_id", "license_name", "risk_category"],
+            sheet_name="License Summary",
+            filename="license-summary.xlsx",
+        )
+
+    return render_template(
+        "license_summary.html",
+        title=f"License Summary: {project_name} {version_name}",
+        project_name=project_name,
+        version_name=version_name,
+        summary=summary,
+        generated_at=_get_current_timestamp(),
+    )
+
+
+@bp.route("/vulnerability-freshness")
+@auth_required
+def vulnerability_freshness() -> Response | tuple[str | Response, int]:
+    """Report showing enrichment freshness for all packages."""
+    internal_only = validate_boolean(request.args.get("internal_only"))
+    output_format = validate_format(request.args.get("format", "html"))
+
+    service = get_falkordb_service()
+    data = service.get_vulnerability_freshness(internal_only=internal_only)
+
+    if output_format == "json":
+        never_enriched = sum(1 for d in data if not d.get("last_enriched_at"))
+        return _build_json_response(
+            {
+                "report_type": "vulnerability-freshness",
+                "generated_at": _get_current_timestamp(),
+                "filter": "internal_only" if internal_only else "all",
+                "stats": {"total_packages": len(data), "never_enriched": never_enriched},
+                "data": data,
+            },
+            "vulnerability_freshness.json",
+        )
+
+    if output_format == "excel":
+        from sbom_graph_api.exports.excel import create_generic_excel
+
+        return create_generic_excel(
+            data=data,
+            columns=["project_group", "project_name", "version_name", "purl", "last_enriched_at"],
+            sheet_name="Vulnerability Freshness",
+            filename="vulnerability_freshness.xlsx",
+        )
+
+    return Response(
+        render_template(
+            TABLE_TEMPLATE,
+            title=_get_internal_title("Vulnerability Enrichment Freshness", internal_only),
+            internal_only=internal_only,
+            headers=[
+                "Project Group",
+                "Project Name",
+                "Version",
+                "PURL",
+                "Last Enriched At",
+            ],
+            data=[
+                [
+                    d.get("project_group", ""),
+                    d.get("project_name", ""),
+                    d.get("version_name", ""),
+                    d.get("purl", ""),
+                    d.get("last_enriched_at") or "Never",
+                ]
+                for d in data
+            ],
+            stats={
+                "Total Packages": len(data),
+                "Never Enriched": sum(1 for d in data if not d.get("last_enriched_at")),
+            },
+            excel_url=build_url_with_params(
+                url_for("reports.vulnerability_freshness"),
+                format="excel",
+                internal_only=internal_only,
+            ),
+            json_url=build_url_with_params(
+                url_for("reports.vulnerability_freshness"),
+                format="json",
+                internal_only=internal_only,
+            ),
+            schema_url=None,
+        ),
+        mimetype="text/html",
+    )
+
+
+@bp.route("/policy-violations")
+@auth_required
+def policy_violations() -> Response | tuple[str | Response, int]:
+    """Report showing all 'bad'-annotated packages still in use."""
+    internal_only = validate_boolean(request.args.get("internal_only"))
+    output_format = validate_format(request.args.get("format", "html"))
+
+    service = get_falkordb_service()
+    data = service.get_policy_violations(internal_only=internal_only)
+
+    if output_format == "json":
+        total_affected = sum(v.get("dependant_count", 0) for v in data)
+        return _build_json_response(
+            {
+                "report_type": "policy-violations",
+                "generated_at": _get_current_timestamp(),
+                "filter": "internal_only" if internal_only else "all",
+                "stats": {
+                    "total_violations": len(data),
+                    "total_affected_dependants": total_affected,
+                },
+                "data": data,
+            },
+            "policy_violations.json",
+        )
+
+    if output_format == "excel":
+        from sbom_graph_api.exports.excel import create_generic_excel
+
+        return create_generic_excel(
+            data=data,
+            columns=[
+                "purl",
+                "project_name",
+                "version_name",
+                "justification",
+                "created_by",
+                "created_at",
+                "dependant_count",
+            ],
+            sheet_name="Policy Violations",
+            filename="policy_violations.xlsx",
+        )
+
+    return Response(
+        render_template(
+            TABLE_TEMPLATE,
+            title=_get_internal_title("Policy Violations", internal_only),
+            internal_only=internal_only,
+            headers=[
+                "PURL",
+                "Project Name",
+                "Version",
+                "Justification",
+                "Created By",
+                "Created At",
+                "Dependant Count",
+            ],
+            data=[
+                [
+                    d.get("purl", ""),
+                    d.get("project_name", ""),
+                    d.get("version_name", ""),
+                    d.get("justification", ""),
+                    d.get("created_by", ""),
+                    d.get("created_at") or "",
+                    d.get("dependant_count", 0),
+                ]
+                for d in data
+            ],
+            stats={
+                "Total Violations": len(data),
+                "Total Affected Dependants": sum(
+                    v.get("dependant_count", 0) for v in data
+                ),
+            },
+            excel_url=build_url_with_params(
+                url_for("reports.policy_violations"),
+                format="excel",
+                internal_only=internal_only,
+            ),
+            json_url=build_url_with_params(
+                url_for("reports.policy_violations"),
+                format="json",
+                internal_only=internal_only,
+            ),
+            schema_url=None,
+        ),
+        mimetype="text/html",
+    )
+
+
+@bp.route("/vex-coverage")
+@auth_required
+def vex_coverage() -> Response | tuple[str | Response, int]:
+    """Report showing VEX coverage statistics."""
+    internal_only = validate_boolean(request.args.get("internal_only"))
+    output_format = validate_format(request.args.get("format", "html"))
+
+    service = get_falkordb_service()
+    coverage = service.get_vex_coverage(internal_only=internal_only)
+    vulns = service.get_vulnerabilities_with_vex(internal_only=internal_only)
+
+    if output_format == "json":
+        return _build_json_response(
+            {
+                "report_type": "vex-coverage",
+                "generated_at": _get_current_timestamp(),
+                "filter": "internal_only" if internal_only else "all",
+                "stats": coverage,
+                "data": vulns,
+            },
+            "vex_coverage.json",
+        )
+
+    if output_format == "excel":
+        from sbom_graph_api.exports.excel import create_generic_excel
+
+        return create_generic_excel(
+            data=vulns,
+            columns=["defect_id", "severity", "description", "vex_status", "vex_count"],
+            sheet_name="VEX Coverage",
+            filename="vex_coverage.xlsx",
+        )
+
+    return Response(
+        render_template(
+            TABLE_TEMPLATE,
+            title=_get_internal_title("VEX Coverage", internal_only),
+            internal_only=internal_only,
+            headers=["Vulnerability", "Severity", "Description", "VEX Status", "VEX Statements"],
+            data=[
+                [
+                    v.get("defect_id", ""),
+                    v.get("severity", ""),
+                    v.get("description", "")[:100] if v.get("description") else "",
+                    v.get("vex_status") or "No VEX",
+                    v.get("vex_count", 0),
+                ]
+                for v in vulns
+            ],
+            stats={
+                "Total Vulnerabilities": coverage.get("total_vulnerabilities", 0),
+                "With VEX": coverage.get("with_vex", 0),
+                "Without VEX": coverage.get("without_vex", 0),
+                "Coverage": f"{coverage.get('coverage_percent', 0)}%",
+            },
+            excel_url=build_url_with_params(
+                url_for("reports.vex_coverage"),
+                format="excel",
+                internal_only=internal_only,
+            ),
+            json_url=build_url_with_params(
+                url_for("reports.vex_coverage"),
+                format="json",
+                internal_only=internal_only,
+            ),
+            schema_url=None,
+        ),
+        mimetype="text/html",
+    )
+
+
+@bp.route("/license-conflicts")
+@auth_required
+def license_conflicts_report() -> Response | tuple[str | Response, int]:
+    """Projects mixing incompatible license categories."""
+    fmt = validate_format(request.args.get("format", "html"))
+    internal_only = validate_boolean(request.args.get("internal_only", "true"))
+    service = get_falkordb_service()
+    conflicts = service.get_license_conflicts(internal_only=internal_only)
+
+    if fmt == "json":
+        return _build_json_response(
+            {"conflicts": conflicts, "total": len(conflicts)},
+            "license-conflicts.json",
+        )
+
+    return render_template(
+        "license_conflicts.html",
+        title=_get_internal_title("License Conflicts", internal_only),
+        conflicts=conflicts,
+        internal_only=internal_only,
+        generated_at=_get_current_timestamp(),
+    )
+
+
+@bp.route("/source-repos")
+@auth_required
+def source_repos() -> Response:
+    """List all tracked source repositories with linked package counts.
+
+    Query Parameters:
+        format: 'json' to download (default: html)
+        internal_only: Set to 'true' to show only internal-labeled nodes (default: false)
+    """
+    output_format = validate_format(request.args.get("format"))
+    internal_only = validate_boolean(request.args.get("internal_only"))
+
+    service = get_falkordb_service()
+    repos = service.get_all_source_repos(internal_only=internal_only)
+
+    if output_format == "json":
+        return _build_json_response(
+            {
+                "report_type": "source-repos",
+                "generated_at": _get_current_timestamp(),
+                "filter": "internal_only" if internal_only else "all",
+                "data": repos,
+                "total": len(repos),
+            },
+            "source_repos.json",
+        )
+
+    return Response(
+        render_template(
+            TABLE_TEMPLATE,
+            title=_get_internal_title("Source Repositories", internal_only),
+            internal_only=internal_only,
+            headers=["URL", "VCS Type", "Namespace", "Name", "Packages"],
+            data=[
+                [
+                    r.get("url", ""),
+                    r.get("vcs_type", ""),
+                    r.get("namespace", ""),
+                    r.get("name", ""),
+                    r.get("package_count", 0),
+                ]
+                for r in repos
+            ],
+            stats={"Total Repositories": len(repos)},
+            json_url=build_url_with_params(
+                url_for("reports.source_repos"),
+                format="json",
+                internal_only=internal_only,
+            ),
+            schema_url=None,
+        ),
+        mimetype="text/html",
+    )

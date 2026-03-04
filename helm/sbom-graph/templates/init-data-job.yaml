@@ -27,41 +27,7 @@ spec:
         runAsGroup: 65532
         fsGroup: 65532
       initContainers:
-        - name: wait-for-falkordb
-          image: "{{ .Values.sbomGraphApi.image.repository }}:{{ .Values.sbomGraphApi.image.tag }}"
-          imagePullPolicy: {{ .Values.sbomGraphApi.image.pullPolicy }}
-          command:
-            - python
-            - -c
-            - |
-              import socket, time, sys
-              host, port = sys.argv[1], int(sys.argv[2])
-              print(f"Waiting for {host}:{port}...")
-              while True:
-                  try:
-                      socket.create_connection((host, port), timeout=2).close()
-                      print(f"{host}:{port} is ready.")
-                      break
-                  except OSError:
-                      print("  Not ready, retrying in 2s...")
-                      time.sleep(2)
-            - {{ include "sbom-graph.falkordb.fullname" . }}
-            - "6379"
-          resources:
-            limits:
-              cpu: 50m
-              memory: 64Mi
-            requests:
-              cpu: 25m
-              memory: 32Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            runAsUser: 65532
-            capabilities:
-              drop:
-                - ALL
+        {{- include "sbom-graph.falkordb.waitContainer" (dict "ctx" . "tlsVolume" "tls-ca") | nindent 8 }}
       containers:
         - name: populate
           image: "{{ .Values.sbomGraphApi.image.repository }}:{{ .Values.sbomGraphApi.image.tag }}"
@@ -74,15 +40,27 @@ spec:
               value: {{ include "sbom-graph.falkordb.fullname" . | quote }}
             - name: FALKORDB_PORT
               value: "6379"
+            - name: FALKORDB_GRAPH_NAME
+              value: {{ .Values.graphName | quote }}
+            - name: FALKORDB_SOCKET_TIMEOUT
+              value: "60.0"
+            - name: FALKORDB_CONNECT_TIMEOUT
+              value: "30.0"
             - name: FALKORDB_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "sbom-graph.falkordb.secretName" . }}
                   key: password
+            {{- if .Values.falkordb.tls.enabled }}
+            - name: FALKORDB_SSL
+              value: "true"
+            - name: FALKORDB_CA_FILE
+              value: /tls/ca.crt
+            {{- end }}
           resources:
             limits:
-              cpu: 250m
-              memory: 256Mi
+              cpu: 500m
+              memory: 512Mi
             requests:
               cpu: 100m
               memory: 128Mi
