@@ -17,6 +17,7 @@ OPTIMIZATION NOTES:
 """
 
 import re
+import ssl
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
@@ -79,6 +80,7 @@ class FalkorDBService:
                 connection_kwargs["password"] = self.config.password
             if self.config.ssl:
                 connection_kwargs["ssl"] = True
+                connection_kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
                 if self.config.ssl_ca_certs:
                     connection_kwargs["ssl_ca_certs"] = self.config.ssl_ca_certs
             self._db = FalkorDB(**connection_kwargs)
@@ -2002,7 +2004,7 @@ class FalkorDBService:
                            project_group: v.project_group
                        }}) as affected_versions
                 ORDER BY
-                    CASE d.severity
+                    CASE severity
                         WHEN 'CRITICAL' THEN 1
                         WHEN 'critical' THEN 1
                         WHEN 'HIGH' THEN 2
@@ -2013,7 +2015,7 @@ class FalkorDBService:
                         WHEN 'low' THEN 4
                         ELSE 5
                     END,
-                    COALESCE(d.cvss_score, d.cvss, 0) DESC
+                    COALESCE(cvss_score, 0) DESC
             """
         else:
             query = """
@@ -2034,7 +2036,7 @@ class FalkorDBService:
                            project_group: v.project_group
                        }) as affected_versions
                 ORDER BY
-                    CASE d.severity
+                    CASE severity
                         WHEN 'CRITICAL' THEN 1
                         WHEN 'critical' THEN 1
                         WHEN 'HIGH' THEN 2
@@ -2045,7 +2047,7 @@ class FalkorDBService:
                         WHEN 'low' THEN 4
                         ELSE 5
                     END,
-                    COALESCE(d.cvss_score, d.cvss, 0) DESC
+                    COALESCE(cvss_score, 0) DESC
             """
 
         result = self.execute_query(query, {})
@@ -3240,7 +3242,7 @@ class FalkorDBService:
                    v.project_name AS affected_project,
                    v.name AS affected_version
             ORDER BY
-                CASE d.severity
+                CASE severity
                     WHEN 'CRITICAL' THEN 1 WHEN 'critical' THEN 1
                     WHEN 'HIGH' THEN 2 WHEN 'high' THEN 2
                     WHEN 'MEDIUM' THEN 3 WHEN 'medium' THEN 3
@@ -3287,7 +3289,7 @@ class FalkorDBService:
                    size(statements) AS vex_count,
                    affected
             ORDER BY
-                CASE d.severity
+                CASE severity
                     WHEN 'CRITICAL' THEN 1 WHEN 'critical' THEN 1
                     WHEN 'HIGH' THEN 2 WHEN 'high' THEN 2
                     WHEN 'MEDIUM' THEN 3 WHEN 'medium' THEN 3

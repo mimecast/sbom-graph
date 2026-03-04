@@ -454,11 +454,13 @@ def create_multi_layout_visualization(
     for u, _ in self_loops:
         nodes_in_cycles.add(u)
 
-    # Remove cycles for layout calculation if using hierarchical layout
+    # Always remove cycles for depth/partition calculation.
+    # calculate_partitions_longest_path has no visited tracking and will loop
+    # infinitely on cyclic graphs. Cycle information is already captured in
+    # cycle_edges/nodes_in_cycles above and used for edge/node styling.
     G_acyclic = G.copy()
-    if layout in ("bfs", "radial", "shell"):
-        G_acyclic.remove_edges_from(self_loops)
-        G_acyclic.remove_edges_from(cycle_edges)
+    G_acyclic.remove_edges_from(self_loops)
+    G_acyclic.remove_edges_from(cycle_edges)
 
     # Calculate depths
     if direction == "dependants":

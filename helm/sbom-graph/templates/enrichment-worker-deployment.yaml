@@ -20,6 +20,8 @@ spec:
         runAsUser: 65532
         runAsGroup: 65532
         fsGroup: 65532
+      initContainers:
+        {{- include "sbom-graph.falkordb.waitContainer" (dict "ctx" . "tlsVolume" "tls-ca") | nindent 8 }}
       containers:
         - name: enrichment-worker
           image: "{{ .Values.enrichment.image.repository }}:{{ .Values.enrichment.image.tag }}"

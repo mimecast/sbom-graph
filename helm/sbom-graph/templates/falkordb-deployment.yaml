@@ -23,27 +23,19 @@ spec:
             - name: redis
               containerPort: 6379
               protocol: TCP
-          {{- $args := list }}
-          {{- $args = append $args "--requirepass" }}
-          {{- $args = append $args "$(FALKORDB_PASSWORD)" }}
-          {{- if .Values.falkordb.tls.enabled }}
-          {{- $args = append $args "--tls-port" }}
-          {{- $args = append $args "6379" }}
-          {{- $args = append $args "--port" }}
-          {{- $args = append $args "0" }}
-          {{- $args = append $args "--tls-cert-file" }}
-          {{- $args = append $args "/tls/tls.crt" }}
-          {{- $args = append $args "--tls-key-file" }}
-          {{- $args = append $args "/tls/tls.key" }}
-          {{- $args = append $args "--tls-ca-cert-file" }}
-          {{- $args = append $args "/tls/ca.crt" }}
-          {{- end }}
-          {{- if $args }}
+          {{- /* Wrapper: pass --requirepass from secret and explicitly load the FalkorDB module (path changed to /var/lib/falkordb/bin/ in v4+) */}}
+          command: ["sh", "-c"]
           args:
-            {{- range $args }}
-            - {{ . | quote }}
-            {{- end }}
-          {{- end }}
+            - |
+              set -e
+              exec /usr/local/bin/docker-entrypoint.sh redis-server \
+                --loadmodule /var/lib/falkordb/bin/falkordb.so \
+                --requirepass "${FALKORDB_PASSWORD}" \
+                --save "" \
+                --stop-writes-on-bgsave-error no{{ if .Values.falkordb.tls.enabled }} \
+                --tls-port 6379 --port 0 \
+                --tls-auth-clients no \
+                --tls-cert-file /tls/tls.crt --tls-key-file /tls/tls.key --tls-ca-cert-file /tls/ca.crt{{ end }}
           env:
             - name: FALKORDB_PASSWORD
               valueFrom:

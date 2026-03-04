@@ -54,5 +54,10 @@ loglevel = os.environ.get("GUNICORN_LOG_LEVEL", "info")
 # Process naming
 proc_name = "sbom-graph-api"
 
+# Read-only filesystem: use writable /tmp for control socket and worker temp files
+# (Kubernetes mounts emptyDir at /tmp when readOnlyRootFilesystem: true)
+worker_tmp_dir = "/tmp"
+control_socket = "/tmp/gunicorn.ctl"
+
 # Server mechanics
 preload_app = False  # Don't preload to allow config changes per worker

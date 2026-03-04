@@ -180,6 +180,8 @@ Deployments.  Include via: {{- include "sbom-graph.enrichment.env" . | nindent N
   value: {{ .Values.global.internalPrefixes | quote }}
 {{- end }}
 {{- if .Values.falkordb.tls.enabled }}
+- name: FALKORDB_SSL
+  value: "true"
 - name: FALKORDB_CACERTS
   value: /tls/ca.crt
 - name: CELERY_REDIS_SSL
@@ -217,6 +219,88 @@ Deployments.  Include via: {{- include "sbom-graph.enrichment.env" . | nindent N
       key: OSSINDEX_TOKEN
 {{- end }}
 {{- end }}
+{{- end }}
+
+{{/*
+Shared init container that waits for FalkorDB and verifies its graph module is
+ready. Uses the falkordb Python client so it catches both "port not open" and
+"module not loaded" failures. Handles TLS when falkordb.tls.enabled is true.
+
+Usage:
+  {{- include "sbom-graph.falkordb.waitContainer" (dict "ctx" . "tlsVolume" "tls-ca") | nindent 8 }}
+
+Parameters:
+  ctx:       The Helm rendering context (.)
+  tlsVolume: Name of the pod volume that contains ca.crt (default: "tls-ca")
+*/}}
+{{- define "sbom-graph.falkordb.waitContainer" -}}
+{{- $ctx := .ctx -}}
+{{- $tlsVolume := .tlsVolume | default "tls-ca" -}}
+- name: wait-for-falkordb
+  image: "{{ $ctx.Values.sbomGraphApi.image.repository }}:{{ $ctx.Values.sbomGraphApi.image.tag }}"
+  imagePullPolicy: {{ $ctx.Values.sbomGraphApi.image.pullPolicy }}
+  command:
+    - python
+    - -c
+    - |
+      import sys, time, os
+      from falkordb import FalkorDB
+      import ssl as ssl_lib
+      host, port = sys.argv[1], int(sys.argv[2])
+      password = os.environ.get("FALKORDB_PASSWORD")
+      ssl_enabled = os.environ.get("FALKORDB_SSL", "false").lower() == "true"
+      ssl_ca_certs = os.environ.get("FALKORDB_CA_FILE")
+      kwargs = {"host": host, "port": port, "password": password}
+      if ssl_enabled:
+          kwargs["ssl"] = True
+          kwargs["ssl_cert_reqs"] = ssl_lib.CERT_REQUIRED
+          if ssl_ca_certs:
+              kwargs["ssl_ca_certs"] = ssl_ca_certs
+      print(f"Waiting for FalkorDB graph module at {host}:{port} (ssl={ssl_enabled})...")
+      while True:
+          try:
+              db = FalkorDB(**kwargs)
+              db.list_graphs()
+              print("FalkorDB graph module ready.")
+              break
+          except Exception as e:
+              print(f"  Not ready ({e}), retrying in 2s...")
+              time.sleep(2)
+    - {{ include "sbom-graph.falkordb.fullname" $ctx }}
+    - "6379"
+  env:
+    - name: FALKORDB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: {{ include "sbom-graph.falkordb.secretName" $ctx }}
+          key: password
+    {{- if $ctx.Values.falkordb.tls.enabled }}
+    - name: FALKORDB_SSL
+      value: "true"
+    - name: FALKORDB_CA_FILE
+      value: /tls/ca.crt
+    {{- end }}
+  resources:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    capabilities:
+      drop:
+        - ALL
+  {{- if $ctx.Values.falkordb.tls.enabled }}
+  volumeMounts:
+    - name: {{ $tlsVolume }}
+      mountPath: /tls
+      readOnly: true
+  {{- end }}
 {{- end }}
 
 {{/* ---- Enrichment Beat helpers ---- */}}

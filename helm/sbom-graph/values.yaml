@@ -3,8 +3,8 @@ global:
 
 falkordb:
   image:
-    repository: falkordb/falkordb
-    tag: latest
+    repository: falkordb/falkordb-server
+    tag: v4.16.5
   password: ""
   persistence:
     enabled: true
@@ -27,12 +27,16 @@ falkordb:
 sbomGraphApi:
   image:
     repository: sbom-graph-api
-    tag: latest
+    tag: 0.1.0-alpha.13
     pullPolicy: IfNotPresent
   replicas: 1
+  gunicornWorkers: "2"
+  # Auth: enabled by default with local users (LDAP disabled)
+  authEnabled: true
+  ldapEnabled: false
   service:
     port: 80
-    targetPort: 8000
+    targetPort: 8080
   # Leave empty to auto-generate (persisted across upgrades via lookup).
   secrets:
     flaskSecretKey: ""
@@ -54,11 +58,12 @@ sbomGraphApi:
 releaseListener:
   image:
     repository: sonatype-lifecycle-release-listener
-    tag: latest
+    tag: 0.1.0-alpha.3
     pullPolicy: IfNotPresent
   replicas: 1
   # Leave empty to auto-generate. Retrieve after install -- see NOTES.
   webhookSecret: ""
+  gunicornWorkers: "2"
   service:
     port: 80
     targetPort: 8000
@@ -74,7 +79,7 @@ enrichment:
   enabled: true
   image:
     repository: sbom-graph-enrichment
-    tag: latest
+    tag: 0.1.0-alpha.2
     pullPolicy: IfNotPresent
   replicas: 1
   interval: "3600"

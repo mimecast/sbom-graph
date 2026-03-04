@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for AppSec Data Views
-# Builds a minimal distroless container for production deployment
+# Builds a production container using python:3.14-slim (matches builder for C extension compatibility)
 
 # ============================================================================
 # Stage 1: Builder - Install dependencies and build the application
@@ -23,16 +23,20 @@ COPY ./sbom-graph-model/dist/*.whl ./deps/
 COPY ./sbom-graph-api/pyproject.toml ./sbom-graph-api/uv.lock ./sbom-graph-api/README.md ./
 # Copy application source code
 COPY ./sbom-graph-api/src/ ./src/
+COPY ./sbom-graph-api/scripts/ ./scripts/
 COPY ./sbom-graph-api/gunicorn.conf.py ./
-
+COPY ./sbom-graph-api/entrypoint.sh ./
 RUN uv pip install --target=/app/dependencies --no-cache --no-sources ./deps/*.whl .
-RUN ls -al /app/dependencies
 
 
 # ============================================================================
-# Stage 2: Runtime - Distroless Python image
+# Stage 2: Runtime - python:3.14-slim (matches builder for C extension ABI)
 # ============================================================================
-FROM gcr.io/distroless/python3-debian13:nonroot
+FROM python:3.14-slim
+
+# Create nonroot user (UID 65532 matches Kubernetes runAsUser)
+RUN groupadd --gid 65532 nonroot \
+    && useradd --uid 65532 --gid nonroot --shell /usr/sbin/nologin --no-create-home nonroot
 
 # Set working directory
 WORKDIR /app
@@ -45,6 +49,16 @@ COPY --from=builder /app/src /app/src
 
 # Copy gunicorn configuration file
 COPY --from=builder /app/gunicorn.conf.py /app/gunicorn.conf.py
+
+# Copy scripts (populate_acme_corp for init-data job)
+COPY --from=builder /app/scripts /app/scripts
+
+# Copy and set up entrypoint (logs startup for debugging empty logs)
+COPY --from=builder /app/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Create volume directories and set ownership
+RUN mkdir -p /data /certs && chown -R nonroot:nonroot /app /data /certs
 
 # Set Python path to include our dependencies and source
 ENV PYTHONPATH=/app/dependencies:/app/src
@@ -71,7 +85,7 @@ ENV TLS_KEY_FILE=""
 ENV TLS_CA_FILE=""
 
 # Authentication configuration
-ENV AUTH_ENABLED="false"
+ENV AUTH_ENABLED="true"
 ENV JWT_SECRET_KEY=""
 ENV JWT_ACCESS_TOKEN_EXPIRES_HOURS="1"
 ENV JWT_REFRESH_TOKEN_EXPIRES_DAYS="30"
@@ -99,17 +113,14 @@ VOLUME ["/certs"]
 EXPOSE 8080
 EXPOSE 8443
 
-# Set non-root user explicitly (distroless:nonroot already defaults to 65532)
-# This is explicit for security scanners and documentation
-USER 65532
+# Run as nonroot (matches Kubernetes runAsUser: 65532)
+USER nonroot
 
 # Health check
-# Note: Distroless doesn't have curl/wget, so we rely on Kubernetes probes
 # HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-#     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
+#     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
 
 # Run with gunicorn
-# Using the Python interpreter from distroless
 #
 # Memory considerations for graph visualizations with FalkorDB:
 # - Each worker needs ~100MB base (Python + Flask)
@@ -122,4 +133,4 @@ USER 65532
 #
 # TLS is automatically enabled when TLS_ENABLED=true and cert/key files are set
 # The gunicorn_config.py reads environment variables for TLS configuration
-ENTRYPOINT ["/usr/bin/python3", "-m", "gunicorn", "-c", "/app/gunicorn.conf.py", "sbom_graph_api.wsgi:app"]
+ENTRYPOINT ["/app/entrypoint.sh"]

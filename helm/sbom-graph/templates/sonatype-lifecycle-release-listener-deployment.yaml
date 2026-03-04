@@ -44,6 +44,8 @@ spec:
                 secretKeyRef:
                   name: {{ include "sbom-graph.webhookSecret.secretName" . }}
                   key: webhook-secret
+            - name: GUNICORN_WORKERS
+              value: {{ .Values.releaseListener.gunicornWorkers | quote }}
             {{- if .Values.global.internalPrefixes }}
             - name: INTERNAL_PREFIXES
               value: {{ .Values.global.internalPrefixes | quote }}

@@ -22,6 +22,8 @@ spec:
         runAsUser: 65532
         runAsGroup: 65532
         fsGroup: 65532
+      initContainers:
+        {{- include "sbom-graph.falkordb.waitContainer" (dict "ctx" . "tlsVolume" "tls-ca") | nindent 8 }}
       containers:
         - name: enrichment-beat
           image: "{{ .Values.enrichment.image.repository }}:{{ .Values.enrichment.image.tag }}"
@@ -33,6 +35,7 @@ spec:
             - "sbom_graph_enrichment.celery_app"
             - "beat"
             - "--loglevel=info"
+            - "--schedule=/tmp/celerybeat-schedule"
           resources:
             requests:
               cpu: 50m

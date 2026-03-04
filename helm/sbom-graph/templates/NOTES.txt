@@ -58,6 +58,13 @@ SBOM Graph API application secrets:
 
 Access the SBOM Graph API UI:
 
+{{- if .Values.falkordb.tls.enabled }}
+  kubectl port-forward svc/{{ include "sbom-graph.sbomGraphApi.fullname" . }} 8443:{{ .Values.sbomGraphApi.service.port }}
+
+Then open https://localhost:8443 in your browser.
+  (Your browser may warn about the self-signed certificate; proceed to accept it.)
+{{- else }}
   kubectl port-forward svc/{{ include "sbom-graph.sbomGraphApi.fullname" . }} 8080:{{ .Values.sbomGraphApi.service.port }}
 
 Then open http://localhost:8080 in your browser.
+{{- end }}
