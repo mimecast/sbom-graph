@@ -175,3 +175,5 @@ xunit-reports/
 # Files generated during scanning
 getIqOrganization*
 uv.lock
+Pipfile.lock
+Pipfile

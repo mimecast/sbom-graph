@@ -1,3 +1,4 @@
+<!-- DO NOT REMOVE: This logo is displayed on GitHub and must remain as the first element in the README. -->
 ![SBOM-Graph](./sbom-graph-logo.jpeg)
 
 ## Tool Overview and Capabilities
@@ -19,49 +20,154 @@ Strategic Potential and Future Enhancements
 
 The tool also has potential for further enhancements by enriching the graph with additional data points. For example, by incorporating metrics such as the security and quality ratings of libraries, we can enable advanced dependency threat modeling. This will allows you to proactively identify and mitigate risks by replacing less secure libraries with more robust alternatives.
 
-The project is made up of 3 parts:
+The project is made up of 4 parts:
 
-1. **sbom-graph-model** -- A Python library for processing CycloneDX files and storing them in a GraphDB
-2. **sonatype-lifecycle-release-listener** -- A release listener for SCA scans that retrieves the CycloneDX file and processes it
-3. **sbom-graph-api** -- A Flask application for visualizing graph data, ingesting CycloneDX SBOMs via authenticated API, and providing insights into dependency relationships, SNAPSHOT dependencies, and self-dependency detection
+1. **sbom-graph-model** -- A Python library for processing CycloneDX and SPDX files and storing them in a GraphDB
+2. **sbom-graph-api** -- A Flask application for visualizing graph data, ingesting SBOMs (CycloneDX and SPDX) via authenticated API, and providing reports on dependency relationships, vulnerabilities, licenses, policy compliance, and supply-chain trust scores
+3. **sbom-graph-enrichment** -- A Celery-based asynchronous enrichment pipeline that queries external APIs (OSV, ClearlyDefined, OpenSSF Scorecard, Sonatype OSS Index, deps.dev) to enrich package metadata and compute trust scores
+4. **sonatype-lifecycle-release-listener** -- A release listener for SCA scans that retrieves the CycloneDX file and processes it
 
 For detailed architecture documentation, see [SPECIFICATION.md](SPECIFICATION.md).
 For a full deployment walkthrough (prerequisites, TLS setup, Helm configuration, local and remote Kubernetes), see [GETTING_STARTED.md](GETTING_STARTED.md).
 
-   **Features**
+### Features
 
-  - **K-Partite Dependency Visualization**: Hierarchical visualization of transitive dependencies with color-coded partition levels
-  - **Bi-Partite Graph**: Shows project versions and their direct dependants in a two-column layout
-  - **Dependants Graph**: Full reverse dependency tree from a library back to leaf applications
-  - **Excel Exports**: Download dependency data as Excel spreadsheets
-  - **JSON Exports**: Download dependency data as JSON with documented schemas
-  - **Reports**: HTML tables, Excel exports, and JSON exports for:
-    - All projects with versions
-    - SNAPSHOT dependencies
-    - Self-dependency detection
-    - Multi-version dependency source tracking
-    - Non-SemVer version detection
-    - Transitive dependencies (what a version depends on)
-    - Dependants with partition levels and paths
-  - **Interactive UI Features**:
-    - Internal Only Toggle: Filter views between all projects and INTERNAL-labeled only
-    - Dynamic download links that respect current filter state
-    - Interactive API documentation with forms to test all endpoints
-    - Frozen table headers: Headers stay visible while scrolling through data
-  - **Supply-Chain Trust Score**: Composite trust score combining signals from OpenSSF Scorecard, OSV, Sonatype OSS Index, and deps.dev. Four-category scoring (Security Practices, Vulnerability Profile, Maintenance Health, Supply-Chain Hygiene). Inherited risk propagation through the dependency graph. CI/CD gate endpoint for policy enforcement. Remediation priority analysis.
+- **Multi-Format SBOM Ingestion**: Upload CycloneDX and SPDX 2.3 SBOMs via REST API with automatic format detection
+- **Vulnerability Enrichment**: Continuous enrichment from OSV.dev and Sonatype OSS Index catches new CVEs after ingestion
+- **License Tracking and Compliance**: Licenses extracted from SBOMs and enriched via ClearlyDefined, grouped by risk category (Copyleft, Weak Copyleft, Permissive), with conflict detection
+- **VEX Support**: Ingest OpenVEX documents to communicate whether a vulnerability actually affects a product, with coverage statistics
+- **Patch Planning and Blast Radius**: Frontier-level patch plans for vulnerabilities and blast radius analysis for compromised packages
+- **Policy Annotations**: Mark packages as approved/denied/hold (certifyBad/certifyGood) with CI/CD gate endpoints for binary authorisation
+- **Source Repository Tracking**: Link packages to their source repos for provenance checks and scorecard lookups
+- **Supply-Chain Trust Score**: Composite trust scores from OpenSSF Scorecard, OSV, Sonatype OSS Index, and deps.dev with inherited risk propagation (see [dedicated section below](#supply-chain-trust-score))
+- **Visualizations**:
+  - K-Partite Dependency Visualization with color-coded partition levels
+  - Bi-Partite Graph of project versions and their direct dependants
+  - Dependants Graph (full reverse dependency tree)
+  - Dependencies Graph with multiple layouts (spring, radial, shell, BFS, circular) and cycle detection
+  - Interactive layout switcher and cycle edge highlighting
+- **Reports**: HTML tables, Excel exports, and JSON exports for:
+  - All projects with versions
+  - Application inventory with latest-version filtering
+  - SNAPSHOT dependencies
+  - Self-dependency detection
+  - Multi-version dependency source tracking (diamond dependency analysis)
+  - Non-SemVer version detection
+  - Transitive dependencies (what a version depends on)
+  - Dependants with partition levels and paths
+  - All vulnerabilities ordered by severity
+  - Vulnerability dependants (impact analysis)
+  - Centrality metrics (inDegree/outDegree)
+  - License inventory and license-per-project summary
+  - Vulnerability freshness (enrichment age)
+  - Policy violations (banned packages still in use)
+  - VEX coverage statistics
+  - License conflicts (incompatible licenses in same dependency tree)
+  - Source repository inventory
+- **Programmatic API (v1)**: JSON-only endpoints for CI/CD pipelines including package vulnerability lookup, policy checks, trust score gates, and enrichment triggers
+- **Interactive UI Features**:
+  - Internal Only Toggle across all reports and visualizations
+  - Dynamic download links that respect current filter state
+  - Interactive API documentation with forms to test all endpoints
+  - Frozen table headers for scrollable data tables
 
 ## Project Structure
 
 ```
 sbom-graph/
-├── sbom-graph-model/     # Python library for CycloneDX → FalkorDB
-├── sbom-graph-api/     # Flask visualization app
-├── sonatype-lifecycle-release-listener/      # SCA scan release listener
+├── sbom-graph-model/                        # Python library for CycloneDX/SPDX → FalkorDB
+├── sbom-graph-api/                          # Flask API, reports, and visualizations
+├── sbom-graph-enrichment/                   # Celery enrichment pipeline (OSV, Scorecard, etc.)
+├── sonatype-lifecycle-release-listener/     # SCA scan release listener
 ├── helm/
-│   └── sbom-graph/        # Umbrella Helm chart for all components
-├── build-images.sh       # Docker build script
-└── SPECIFICATION.md      # Detailed architecture documentation
+│   └── sbom-graph/                          # Umbrella Helm chart for all components
+├── build-images.sh                          # Docker build script
+└── SPECIFICATION.md                         # Detailed architecture documentation
 ```
+
+## Supply-Chain Trust Score
+
+The trust score provides a single, evidence-based rating (0--10) for every package in the dependency graph by aggregating data from four external sources:
+
+| Source | What It Provides |
+|--------|-----------------|
+| [OpenSSF Scorecard](https://scorecard.dev) | 18+ security-practice checks (branch protection, code review, SAST, fuzzing, etc.) |
+| [OSV Database](https://osv.dev) | Vulnerability count, severity distribution, mean-time-to-fix |
+| [Sonatype OSS Index](https://ossindex.sonatype.org) | Proprietary vulnerability intelligence and remediation guidance |
+| [deps.dev](https://deps.dev) | Project health, advisory counts, scorecard data, and activity signals |
+
+### Scoring Categories
+
+The composite score is computed across four weighted categories, each normalised to 0--10:
+
+| Category | Default Weight | What It Measures |
+|----------|---------------|-----------------|
+| Security Practices | 30% | Branch protection, code review, SAST, fuzzing, dangerous workflows |
+| Vulnerability Profile | 35% | Open CVE count/severity, fix rate, mean time to remediate |
+| Maintenance Health | 20% | Recent activity, contributor count, maintenance signals |
+| Supply-Chain Hygiene | 15% | Pinned dependencies, signed releases, CI tests, packaging |
+
+When a data source is unavailable for a category, remaining sources are re-weighted proportionally. A **confidence level** (0--1) is reported alongside every score.
+
+### Inherited Risk Propagation
+
+A package's *direct score* only tells part of the story. A library scoring 9/10 that depends on a library scoring 2/10 is far riskier than its own score suggests. The trust score system computes an **effective score** that reflects aggregate risk through the entire transitive dependency tree:
+
+```
+effective_score(v) = α × direct_score(v) + (1 − α) × inherited_score(v)
+```
+
+- **α** (default 0.4) controls the balance between own-score and inherited risk
+- **Depth attenuation** (decay factor δ = 0.8) reduces influence at each dependency level: direct = 1.0, depth 2 = 0.8, depth 5 ≈ 0.41
+- **Minimum-path score** tracks the worst individual component on any path from an application to a leaf node ("weakest link")
+- Scores are computed **bottom-up** via reverse topological order; improvements propagate automatically when dependencies are upgraded
+
+### API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/package/{purl}/trust-score` | Full trust score breakdown: direct, effective, inherited, per-category, confidence |
+| `GET /api/v1/package/{purl}/trust-score/risk-path` | Top dependency chains contributing to score degradation |
+| `GET /api/v1/application/{purl}/supply-chain-risk` | Application-level aggregate risk with weakest-link and top contributors |
+| `GET /api/v1/analysis/trust-score-distribution` | Histogram of effective scores across all packages |
+| `GET /api/v1/analysis/remediation-priorities` | Packages ranked by remediation leverage (applications improved per upgrade) |
+| `GET /api/v1/package/{purl}/trust-check` | CI/CD gate: pass/fail against minimum effective score threshold |
+
+### CI/CD Gate
+
+The trust-check endpoint is designed for pipeline integration:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$API_URL/api/v1/package/pkg:maven%2Fcom.example%2Fmy-lib@1.0.0/trust-check?min_score=5.0"
+```
+
+Returns a `pass` or `fail` verdict with the package's effective score, confidence, and per-category breakdown. The gate checks the **effective score** (not just the direct score), catching cases where a package looks fine itself but has risky dependencies.
+
+### Configuration
+
+Scoring parameters are configurable via environment variables or Helm values:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `trustScore.enabled` | `true` | Enable/disable trust score computation |
+| `trustScore.weights.securityPractices` | `0.30` | Weight for security practices category |
+| `trustScore.weights.vulnerabilityProfile` | `0.35` | Weight for vulnerability profile category |
+| `trustScore.weights.maintenanceHealth` | `0.20` | Weight for maintenance health category |
+| `trustScore.weights.supplyChainHygiene` | `0.15` | Weight for supply-chain hygiene category |
+| `trustScore.propagation.alpha` | `0.4` | Own-score vs inherited-score balance |
+| `trustScore.propagation.decay` | `0.8` | Per-depth attenuation factor |
+| `trustScore.propagation.maxDepth` | `20` | Maximum traversal depth |
+
+## Enrichment Pipeline
+
+The `sbom-graph-enrichment` component is a Celery-based asynchronous worker that continuously enriches package metadata after SBOM ingestion. It runs the following enrichment tasks:
+
+- **Vulnerability Enrichment**: Queries OSV.dev and Sonatype OSS Index for known vulnerabilities, creating `Vulnerability` nodes and `HAS_VULNERABILITY` edges in the graph
+- **License Enrichment**: Queries ClearlyDefined for license metadata, categorising licenses by risk (Copyleft, Weak Copyleft, Permissive)
+- **Trust Score Computation**: Queries OpenSSF Scorecard, OSV, Sonatype, and deps.dev to compute the composite trust score and propagate inherited risk through the dependency graph
+
+Enrichment tasks can be triggered on-demand via the API (`POST /api/v1/enrich/vulnerabilities`) or run on a configurable schedule. The pipeline is designed to be idempotent: re-running enrichment updates existing nodes rather than creating duplicates.
 
 ## Deployment
 

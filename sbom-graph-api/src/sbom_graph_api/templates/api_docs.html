@@ -20,6 +20,25 @@
             display: inline-block; padding: 3px 8px; background: #4CAF50;
             color: white; border-radius: 3px; font-size: 12px; margin-right: 10px;
         }
+        .method-post {
+            display: inline-block; padding: 3px 8px; background: #2196F3;
+            color: white; border-radius: 3px; font-size: 12px; margin-right: 10px;
+        }
+        .method-delete {
+            display: inline-block; padding: 3px 8px; background: #f44336;
+            color: white; border-radius: 3px; font-size: 12px; margin-right: 10px;
+        }
+        .body-desc {
+            font-size: 13px; color: #888; margin-top: 5px;
+            padding: 8px 12px; background: #f8f9fa; border-radius: 4px;
+            border-left: 3px solid #2196F3;
+        }
+        .body-desc code { font-size: 12px; }
+        .section-note {
+            background: #fff3e0; padding: 8px 12px; border-radius: 4px;
+            font-size: 13px; color: #666; margin: 10px 0;
+            border-left: 3px solid #ff9800;
+        }
         .path { font-family: monospace; color: #366092; font-weight: bold; }
         .path a { color: #366092; text-decoration: none; }
         .path a:hover { text-decoration: underline; }
@@ -406,6 +425,351 @@
         </div>
     </div>
 
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/licenses">/reports/licenses</a></span>
+        <div class="description">All licenses grouped by risk category (Copyleft, Weak Copyleft, Permissive, Unknown)</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <label class="checkbox-label"><input type="checkbox" id="lic_internal">Internal Only</label>
+            <button onclick="goToLicenses()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/reports/license-summary/{project_name}/{version}</span>
+        <div class="description">License BOM for a specific project version, including transitive dependency licenses</div>
+        <div class="params">Params: <code>format</code>, <code>max_depth</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Project:</label><input type="text" id="licsum_project" placeholder="e.g., my-app">
+                <label>Version:</label><input type="text" id="licsum_version" placeholder="e.g., 1.0.0">
+            </div>
+            <div class="form-row">
+                <label>Max Depth:</label><input type="number" id="licsum_depth" placeholder="15" min="1" max="100">
+                <label class="checkbox-label"><input type="checkbox" id="licsum_internal">Internal Only</label>
+            </div>
+            <button onclick="goToLicenseSummary()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/vulnerability-freshness">/reports/vulnerability-freshness</a></span>
+        <div class="description">Enrichment freshness report showing packages whose vulnerability data is older than a configurable threshold</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <label class="checkbox-label"><input type="checkbox" id="vfresh_internal">Internal Only</label>
+            <button onclick="goToVulnFreshness()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/policy-violations">/reports/policy-violations</a></span>
+        <div class="description">All packages with &lsquo;bad&rsquo; policy annotations that are still in use as dependencies</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <label class="checkbox-label"><input type="checkbox" id="polv_internal">Internal Only</label>
+            <button onclick="goToPolicyViolations()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/vex-coverage">/reports/vex-coverage</a></span>
+        <div class="description">VEX coverage statistics showing how many vulnerabilities have VEX statements and their status breakdown</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <label class="checkbox-label"><input type="checkbox" id="vex_internal">Internal Only</label>
+            <button onclick="goToVexCoverage()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/license-conflicts">/reports/license-conflicts</a></span>
+        <div class="description">Projects mixing incompatible license categories in their dependency tree</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <label class="checkbox-label"><input type="checkbox" id="liccon_internal">Internal Only</label>
+            <button onclick="goToLicenseConflicts()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/source-repos">/reports/source-repos</a></span>
+        <div class="description">All tracked source repositories with linked package counts</div>
+        <div class="params">Params: <code>format</code></div>
+    </div>
+
+    <h2>Ingestion Endpoints</h2>
+
+    <div class="section-note">
+        These endpoints accept <code>POST</code> requests with JSON bodies. Use <code>Authorization: Bearer &lt;token&gt;</code> for authentication.
+    </div>
+
+    <div class="endpoint">
+        <span class="method-post">POST</span>
+        <span class="path">/ingest/cyclonedx</span>
+        <div class="description">Upload and process a CycloneDX SBOM. Parses components and dependencies into the graph.</div>
+        <div class="body-desc">Body: CycloneDX JSON document. Optional fields: <code>scan_id</code>, <code>application_name</code>, <code>gitlab_project_url</code></div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method-post">POST</span>
+        <span class="path">/ingest/spdx</span>
+        <div class="description">Upload and process an SPDX 2.3 JSON SBOM. Parses packages and relationships into the graph.</div>
+        <div class="body-desc">Body: SPDX 2.3 JSON document. Optional fields: <code>scan_id</code>, <code>application_name</code></div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method-post">POST</span>
+        <span class="path">/ingest/sbom</span>
+        <div class="description">Auto-detect SBOM format (CycloneDX or SPDX) from the document structure and process accordingly</div>
+        <div class="body-desc">Body: CycloneDX or SPDX JSON document. Format is detected automatically.</div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method-post">POST</span>
+        <span class="path">/ingest/vex</span>
+        <div class="description">Upload an OpenVEX document. Parses VEX statements and links them to existing vulnerabilities.</div>
+        <div class="body-desc">Body: OpenVEX JSON document</div>
+    </div>
+
+    <h2>Programmatic API (v1)</h2>
+
+    <div class="section-note">
+        JSON-only endpoints under <code>/api/v1/</code> designed for CI/CD pipelines and programmatic consumption.
+        All endpoints require JWT authentication via <code>Authorization: Bearer &lt;token&gt;</code>.
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/package/{purl}/licenses</span>
+        <div class="description">Licenses for a specific package identified by Package URL</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>PURL:</label><input type="text" id="api_lic_purl" placeholder="e.g., pkg:maven/com.google.guava/guava@31.1-jre" style="width:350px;">
+            </div>
+            <button onclick="goToApiLicenses()">Query</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/package/{purl}/vulns</span>
+        <div class="description">Vulnerabilities for a package, optionally including transitive dependency vulnerabilities</div>
+        <div class="params">Params: <code>include_dependencies</code> (boolean, default false)</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>PURL:</label><input type="text" id="api_vuln_purl" placeholder="e.g., pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1" style="width:350px;">
+            </div>
+            <div class="form-row">
+                <label class="checkbox-label"><input type="checkbox" id="api_vuln_deps">Include Dependencies</label>
+            </div>
+            <button onclick="goToApiVulns()">Query</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method-post">POST</span>
+        <span class="path">/api/v1/enrich/vulnerabilities</span>
+        <div class="description">Trigger on-demand vulnerability enrichment for all or specified packages. Dispatches async enrichment tasks.</div>
+        <div class="body-desc">Body (optional): <code>{"purls": ["pkg:maven/..."]}</code> &mdash; omit to enrich all packages</div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method-post">POST</span>
+        <span class="path">/api/v1/policy/annotate</span>
+        <div class="description">Create a policy annotation (certifyBad / certifyGood / hold) on a package</div>
+        <div class="body-desc">Body: <code>{"purl": "pkg:...", "type": "bad"|"good"|"hold", "justification": "...", "expires_at": "..."}</code></div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method-delete">DELETE</span>
+        <span class="path">/api/v1/policy/annotate/{annotation_id}</span>
+        <div class="description">Revoke a policy annotation by its ID</div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/patch-plan/{defect_id}</span>
+        <div class="description">Frontier-level patch plan for a vulnerability. Shows which packages to patch and in what order.</div>
+        <div class="params">Params: <code>max_depth</code> (default 10), <code>internal_only</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>CVE ID:</label><input type="text" id="api_patch_id" placeholder="e.g., CVE-2021-44228">
+            </div>
+            <div class="form-row">
+                <label>Max Depth:</label><input type="number" id="api_patch_depth" placeholder="10" min="1" max="50">
+                <label class="checkbox-label"><input type="checkbox" id="api_patch_internal">Internal Only</label>
+            </div>
+            <button onclick="goToPatchPlan()">Query</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/blast-radius/{purl}</span>
+        <div class="description">Blast radius analysis for a compromised package. Shows all affected dependants by distance.</div>
+        <div class="params">Params: <code>max_depth</code> (default 10), <code>internal_only</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>PURL:</label><input type="text" id="api_blast_purl" placeholder="e.g., pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1" style="width:350px;">
+            </div>
+            <div class="form-row">
+                <label>Max Depth:</label><input type="number" id="api_blast_depth" placeholder="10" min="1" max="50">
+                <label class="checkbox-label"><input type="checkbox" id="api_blast_internal">Internal Only</label>
+            </div>
+            <button onclick="goToBlastRadius()">Query</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method-post">POST</span>
+        <span class="path">/api/v1/contacts</span>
+        <div class="description">Create a point of contact linked to a package for incident response</div>
+        <div class="body-desc">Body: <code>{"email": "...", "purl": "pkg:...", "team": "...", "slack_channel": "..."}</code></div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/package/{purl}/vex</span>
+        <div class="description">VEX (Vulnerability Exploitability eXchange) statements for a package's vulnerabilities</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>PURL:</label><input type="text" id="api_vex_purl" placeholder="e.g., pkg:maven/com.example/my-lib@1.0.0" style="width:350px;">
+            </div>
+            <button onclick="goToApiVex()">Query</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/package/{purl}/policy</span>
+        <div class="description">CI/CD gate: check policy status for a package. Returns pass/fail/hold verdict with annotations.</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>PURL:</label><input type="text" id="api_policy_purl" placeholder="e.g., pkg:maven/com.example/my-lib@1.0.0" style="width:350px;">
+            </div>
+            <button onclick="goToApiPolicy()">Query</button>
+        </div>
+    </div>
+
+    <h2>Source Repository API</h2>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/source/packages</span>
+        <div class="description">All packages sourced from a given repository URL</div>
+        <div class="params">Params: <code>repo_url</code> (required)</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Repo URL:</label><input type="text" id="api_src_url" placeholder="e.g., https://github.com/google/guava" style="width:350px;">
+            </div>
+            <button onclick="goToSourcePackages()">Query</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/source/vulnerabilities</span>
+        <div class="description">All vulnerabilities in packages sourced from a repository</div>
+        <div class="params">Params: <code>repo_url</code> (required)</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Repo URL:</label><input type="text" id="api_srcvuln_url" placeholder="e.g., https://github.com/google/guava" style="width:350px;">
+            </div>
+            <button onclick="goToSourceVulns()">Query</button>
+        </div>
+    </div>
+
+    <h2>Supply-Chain Trust Score API</h2>
+
+    <div class="section-note">
+        Composite trust scores combining OpenSSF Scorecard, OSV, Sonatype OSS Index, and deps.dev.
+        Scores range from 0 (worst) to 10 (best) with inherited risk propagation through the dependency graph.
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/package/{purl}/trust-score</span>
+        <div class="description">Full trust score breakdown: direct score, effective score (with inherited risk), per-category scores, confidence level</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>PURL:</label><input type="text" id="api_trust_purl" placeholder="e.g., pkg:maven/com.google.guava/guava@31.1-jre" style="width:350px;">
+            </div>
+            <button onclick="goToTrustScore()">Query</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/package/{purl}/trust-score/risk-path</span>
+        <div class="description">Top dependency chains contributing most to score degradation. Answers: &ldquo;Why is this score low and what should I fix first?&rdquo;</div>
+        <div class="params">Params: <code>limit</code> (default 10, max 50)</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>PURL:</label><input type="text" id="api_riskpath_purl" placeholder="e.g., pkg:maven/com.google.guava/guava@31.1-jre" style="width:350px;">
+            </div>
+            <div class="form-row">
+                <label>Limit:</label><input type="number" id="api_riskpath_limit" placeholder="10" min="1" max="50">
+            </div>
+            <button onclick="goToRiskPath()">Query</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/application/{purl}/supply-chain-risk</span>
+        <div class="description">Aggregate supply-chain risk for an application: effective score, weakest-link package, top risk contributors</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>App PURL:</label><input type="text" id="api_scr_purl" placeholder="e.g., pkg:maven/com.acme/my-app@1.0.0" style="width:350px;">
+            </div>
+            <button onclick="goToSupplyChainRisk()">Query</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/api/v1/analysis/trust-score-distribution">/api/v1/analysis/trust-score-distribution</a></span>
+        <div class="description">Histogram of effective trust scores across all packages for portfolio-level risk assessment</div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/analysis/remediation-priorities</span>
+        <div class="description">Packages ranked by remediation leverage: the number of applications that would improve if each package were upgraded</div>
+        <div class="params">Params: <code>limit</code> (default 20, max 100)</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Limit:</label><input type="number" id="api_rempri_limit" placeholder="20" min="1" max="100">
+            </div>
+            <button onclick="goToRemediationPriorities()">Query</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/package/{purl}/trust-check</span>
+        <div class="description">CI/CD gate: check if a package meets minimum trust score thresholds. Returns pass/fail with score details.</div>
+        <div class="params">Params: <code>min_score</code> (default 5.0), <code>min_confidence</code> (default 0.25)</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>PURL:</label><input type="text" id="api_tcheck_purl" placeholder="e.g., pkg:maven/com.google.guava/guava@31.1-jre" style="width:350px;">
+            </div>
+            <div class="form-row">
+                <label>Min Score:</label><input type="number" id="api_tcheck_score" placeholder="5.0" min="0" max="10" step="0.1">
+                <label>Min Confidence:</label><input type="number" id="api_tcheck_conf" placeholder="0.25" min="0" max="1" step="0.05">
+            </div>
+            <button onclick="goToTrustCheck()">Query</button>
+        </div>
+    </div>
+
     <h2>JSON Schema Endpoints</h2>
 
     <div class="endpoint">
@@ -623,6 +987,135 @@
         function goToSchema() {
             const schema = document.getElementById('schema_name').value;
             window.location.href = '/schemas/' + schema;
+        }
+
+        function goToLicenses() {
+            const params = { internal_only: document.getElementById('lic_internal').checked ? 'true' : null };
+            window.location.href = buildUrl('/reports/licenses', params);
+        }
+
+        function goToLicenseSummary() {
+            const project = document.getElementById('licsum_project').value;
+            const version = document.getElementById('licsum_version').value;
+            if (!project || !version) { alert('Please enter project and version'); return; }
+            const params = {
+                max_depth: document.getElementById('licsum_depth').value || null,
+                internal_only: document.getElementById('licsum_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/reports/license-summary/' + encodeURIComponent(project) + '/' + encodeURIComponent(version), params);
+        }
+
+        function goToVulnFreshness() {
+            const params = { internal_only: document.getElementById('vfresh_internal').checked ? 'true' : null };
+            window.location.href = buildUrl('/reports/vulnerability-freshness', params);
+        }
+
+        function goToPolicyViolations() {
+            const params = { internal_only: document.getElementById('polv_internal').checked ? 'true' : null };
+            window.location.href = buildUrl('/reports/policy-violations', params);
+        }
+
+        function goToVexCoverage() {
+            const params = { internal_only: document.getElementById('vex_internal').checked ? 'true' : null };
+            window.location.href = buildUrl('/reports/vex-coverage', params);
+        }
+
+        function goToLicenseConflicts() {
+            const params = { internal_only: document.getElementById('liccon_internal').checked ? 'true' : null };
+            window.location.href = buildUrl('/reports/license-conflicts', params);
+        }
+
+        function goToApiLicenses() {
+            const purl = document.getElementById('api_lic_purl').value;
+            if (!purl) { alert('Please enter a PURL'); return; }
+            window.location.href = '/api/v1/package/' + encodeURIComponent(purl) + '/licenses';
+        }
+
+        function goToApiVulns() {
+            const purl = document.getElementById('api_vuln_purl').value;
+            if (!purl) { alert('Please enter a PURL'); return; }
+            const params = {
+                include_dependencies: document.getElementById('api_vuln_deps').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/api/v1/package/' + encodeURIComponent(purl) + '/vulns', params);
+        }
+
+        function goToPatchPlan() {
+            const defectId = document.getElementById('api_patch_id').value;
+            if (!defectId) { alert('Please enter a CVE ID'); return; }
+            const params = {
+                max_depth: document.getElementById('api_patch_depth').value || null,
+                internal_only: document.getElementById('api_patch_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/api/v1/patch-plan/' + encodeURIComponent(defectId), params);
+        }
+
+        function goToBlastRadius() {
+            const purl = document.getElementById('api_blast_purl').value;
+            if (!purl) { alert('Please enter a PURL'); return; }
+            const params = {
+                max_depth: document.getElementById('api_blast_depth').value || null,
+                internal_only: document.getElementById('api_blast_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/api/v1/blast-radius/' + encodeURIComponent(purl), params);
+        }
+
+        function goToApiVex() {
+            const purl = document.getElementById('api_vex_purl').value;
+            if (!purl) { alert('Please enter a PURL'); return; }
+            window.location.href = '/api/v1/package/' + encodeURIComponent(purl) + '/vex';
+        }
+
+        function goToApiPolicy() {
+            const purl = document.getElementById('api_policy_purl').value;
+            if (!purl) { alert('Please enter a PURL'); return; }
+            window.location.href = '/api/v1/package/' + encodeURIComponent(purl) + '/policy';
+        }
+
+        function goToSourcePackages() {
+            const url = document.getElementById('api_src_url').value;
+            if (!url) { alert('Please enter a repository URL'); return; }
+            window.location.href = buildUrl('/api/v1/source/packages', { repo_url: url });
+        }
+
+        function goToSourceVulns() {
+            const url = document.getElementById('api_srcvuln_url').value;
+            if (!url) { alert('Please enter a repository URL'); return; }
+            window.location.href = buildUrl('/api/v1/source/vulnerabilities', { repo_url: url });
+        }
+
+        function goToTrustScore() {
+            const purl = document.getElementById('api_trust_purl').value;
+            if (!purl) { alert('Please enter a PURL'); return; }
+            window.location.href = '/api/v1/package/' + encodeURIComponent(purl) + '/trust-score';
+        }
+
+        function goToRiskPath() {
+            const purl = document.getElementById('api_riskpath_purl').value;
+            if (!purl) { alert('Please enter a PURL'); return; }
+            const params = { limit: document.getElementById('api_riskpath_limit').value || null };
+            window.location.href = buildUrl('/api/v1/package/' + encodeURIComponent(purl) + '/trust-score/risk-path', params);
+        }
+
+        function goToSupplyChainRisk() {
+            const purl = document.getElementById('api_scr_purl').value;
+            if (!purl) { alert('Please enter a PURL'); return; }
+            window.location.href = '/api/v1/application/' + encodeURIComponent(purl) + '/supply-chain-risk';
+        }
+
+        function goToRemediationPriorities() {
+            const params = { limit: document.getElementById('api_rempri_limit').value || null };
+            window.location.href = buildUrl('/api/v1/analysis/remediation-priorities', params);
+        }
+
+        function goToTrustCheck() {
+            const purl = document.getElementById('api_tcheck_purl').value;
+            if (!purl) { alert('Please enter a PURL'); return; }
+            const params = {
+                min_score: document.getElementById('api_tcheck_score').value || null,
+                min_confidence: document.getElementById('api_tcheck_conf').value || null
+            };
+            window.location.href = buildUrl('/api/v1/package/' + encodeURIComponent(purl) + '/trust-check', params);
         }
     </script>
 </body>
