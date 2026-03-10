@@ -47,7 +47,8 @@ These agreements apply to **all** sub-projects without exception.
 7. **No hardcoded secrets, credentials, or API keys** in any code, configuration, or test fixture. Secrets must come from environment variables or a secret manager.
 8. **All user input must be validated and sanitised** before use.
 9. **Parameterised queries only** — no string concatenation for database queries (Cypher, SQL, or otherwise).
-10. All agents must communicate findings in Markdown, using clear section headers and evidence appendices.
+10. **Never include exception details in HTTP responses** (CWE-209: Generation of Error Message Containing Sensitive Information, CWE-497: Exposure of Sensitive System Information to an Unauthorized Control Sphere). Return a static, descriptive error message to the client instead. Exception details in log messages are acceptable at debug level only.
+11. All agents must communicate findings in Markdown, using clear section headers and evidence appendices.
 
 ---
 
@@ -164,6 +165,7 @@ No solution may progress past a gate until its criteria are met.
 - **SCA scans are mandatory** when dependencies change: Sonatype IQ.
 - **Threat modelling is required** for new features and architectural changes.
 - No hardcoded secrets or credentials in code, config, or tests.
+- No exception details in HTTP responses (CWE-209, CWE-497); debug-level logs only.
 
 ### Performance
 

@@ -139,7 +139,7 @@ def upload_cyclonedx() -> tuple[Response, int]:
 
     except CycloneDXValidationError as e:
         logger.warning("CycloneDX validation failed: %s", e)
-        return jsonify({"error": "CycloneDX validation failed", "detail": str(e)}), 422
+        return jsonify({"error": "CycloneDX validation failed"}), 422
 
     except Exception:  # pylint: disable=broad-exception-caught
         logger.exception("Unexpected error processing SBOM")
