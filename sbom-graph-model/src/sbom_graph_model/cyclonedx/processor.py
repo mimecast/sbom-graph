@@ -10,10 +10,10 @@ import logging
 import operator
 from functools import reduce
 from typing import Optional
-from urllib.parse import urlparse
 
-from ..model import Project, Version, Defect, License, VersionDefect
+from ..model import Defect, License, Project, Version, VersionDefect
 from ..persistence import Persistence
+from ..vcs import parse_repo_url
 
 logger = logging.getLogger(__name__)
 
@@ -261,25 +261,7 @@ class CycloneDXProcessor:
     @staticmethod
     def _parse_repo_url(url: str) -> dict[str, Optional[str]]:
         """Parse a repository URL into namespace, name, and vcs_type."""
-        parsed = urlparse(url.rstrip("/"))
-        namespace = parsed.netloc or None
-        path = parsed.path.lstrip("/")
-        if path.endswith(".git"):
-            path = path[:-4]
-        hostname = parsed.hostname or ""
-        is_known_git_host = (
-            hostname == "github.com"
-            or hostname.endswith(".github.com")
-            or hostname == "gitlab.com"
-            or hostname.endswith(".gitlab.com")
-            or hostname == "bitbucket.org"
-            or hostname.endswith(".bitbucket.org")
-        )
-        return {
-            "namespace": namespace,
-            "name": path or None,
-            "vcs_type": "git" if (url.endswith(".git") or is_known_git_host) else None,
-        }
+        return parse_repo_url(url)
 
     @staticmethod
     def parse_defect_from_cyclone_dx(cyclone_dx_json: dict) -> Defect:

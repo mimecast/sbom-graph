@@ -33,6 +33,7 @@ from .model import (
     HasVersion,
 )
 from .persistence import Persistence
+from .vcs import KNOWN_GIT_HOSTS, is_known_git_host, parse_repo_url
 
 __all__ = [
     # Enums
@@ -65,4 +66,8 @@ __all__ = [
     "HasVersion",
     # Persistence
     "Persistence",
+    # VCS utilities
+    "KNOWN_GIT_HOSTS",
+    "is_known_git_host",
+    "parse_repo_url",
 ]

@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from ..model import Defect, License, Project, Version, VersionDefect
 from ..persistence import Persistence
+from ..vcs import is_known_git_host, parse_repo_url
 
 logger = logging.getLogger(__name__)
 
@@ -134,19 +135,9 @@ class SPDXProcessor:
                     if not locator or not isinstance(locator, str):
                         continue
                     parsed = urlparse(locator)
-                    host = parsed.hostname.lower() if parsed.hostname else ""
-                    # Accept well-known VCS hosts (including their subdomains).
-                    if host and (
-                        host == "github.com"
-                        or host.endswith(".github.com")
-                        or host == "gitlab.com"
-                        or host.endswith(".gitlab.com")
-                        or host == "bitbucket.org"
-                        or host.endswith(".bitbucket.org")
-                    ):
+                    host = (parsed.hostname or "").lower()
+                    if host and is_known_git_host(host):
                         return locator
-                    # As a fallback, treat URLs whose path ends with ".git" as VCS URLs,
-                    # but only if they have a valid scheme and host.
                     if parsed.scheme and host and parsed.path.endswith(".git"):
                         return locator
 
@@ -182,31 +173,7 @@ class SPDXProcessor:
     @staticmethod
     def _parse_repo_url(url: str) -> dict[str, Optional[str]]:
         """Parse a repository URL into namespace, name, and vcs_type."""
-        parsed = urlparse(url.rstrip("/"))
-        namespace = parsed.netloc or None
-        path = parsed.path.lstrip("/")
-        if path.endswith(".git"):
-            path = path[:-4]
-        host = parsed.hostname.lower() if parsed.hostname else ""
-        is_git_host = bool(
-            host
-            and (
-                host == "github.com"
-                or host.endswith(".github.com")
-                or host == "gitlab.com"
-                or host.endswith(".gitlab.com")
-                or host == "bitbucket.org"
-                or host.endswith(".bitbucket.org")
-            )
-        )
-        vcs_type: Optional[str] = "git" if (
-            url.endswith(".git") or path.endswith(".git") or is_git_host
-        ) else None
-        return {
-            "namespace": namespace,
-            "name": path or None,
-            "vcs_type": vcs_type,
-        }
+        return parse_repo_url(url)
 
     def _find_root_spdx_id(
         self,

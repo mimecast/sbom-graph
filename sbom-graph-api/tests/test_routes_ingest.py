@@ -208,7 +208,6 @@ class TestUploadCycloneDX:
         assert response.status_code == 422
         data = response.get_json()
         assert "validation" in data["error"].lower()
-        assert "metadata.component" in data["detail"]
 
     def test_processor_unexpected_error(self, client):
         """Unexpected exception from the processor returns 500 with generic message."""

@@ -42,16 +42,25 @@ class TestRootPackageExports:
     def test_exports_persistence(self):
         assert sbom_graph_model.Persistence is not None
 
+    def test_exports_vcs_utilities(self):
+        assert sbom_graph_model.KNOWN_GIT_HOSTS is not None
+        assert sbom_graph_model.is_known_git_host is not None
+        assert sbom_graph_model.parse_repo_url is not None
+
     def test_all_list_complete(self):
         expected = {
-            "RiskStatus", "DefectType", "ProjectType", "LicenseRiskCategory",
-            "PolicyType", "VexStatus",
-            "Version", "Project", "Defect", "License", "PolicyAnnotation",
-            "PointOfContact", "VexStatement", "TrustScore", "SourceRepository",
-            "VersionDefect", "VersionLicense", "VersionPolicy", "VersionSource",
-            "HasTrustScore", "ContactFor", "VersionVex", "VexRefersTo",
+            "RiskStatus", "DefectType", "ProjectType",
+            "LicenseRiskCategory", "PolicyType", "VexStatus",
+            "Version", "Project", "Defect", "License",
+            "PolicyAnnotation", "PointOfContact", "VexStatement",
+            "TrustScore", "SourceRepository",
+            "VersionDefect", "VersionLicense", "VersionPolicy",
+            "VersionSource", "HasTrustScore", "ContactFor",
+            "VersionVex", "VexRefersTo",
             "DependencyVersion", "HasVersion",
             "Persistence",
+            "KNOWN_GIT_HOSTS", "is_known_git_host",
+            "parse_repo_url",
         }
         assert set(sbom_graph_model.__all__) == expected
 
