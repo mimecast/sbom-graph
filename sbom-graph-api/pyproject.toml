@@ -48,12 +48,6 @@ sbom-graph-api = "sbom_graph_api.app:main"
 
 [tool.uv]
 
-[[tool.uv.index]]
-url = "https://nexus.devuk.mimecast.lan:8443/nexus/repository/pypi.org/simple/"
-
-[[tool.uv.index]]
-url = "https://nexus.devuk.mimecast.lan:8443/nexus/repository/pypi-all/simple/"
-default = true
 
 [tool.uv.sources]
 sbom-graph-model = { path = "../sbom-graph-model", editable = true }
