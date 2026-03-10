@@ -111,9 +111,7 @@ class TestCreatePolicyAnnotation:
 
     def test_no_json_body_returns_400(self, client) -> None:
         """Missing JSON body returns 400."""
-        resp = client.post(
-            "/api/v1/policy/annotate", content_type="application/json"
-        )
+        resp = client.post("/api/v1/policy/annotate", content_type="application/json")
         assert resp.status_code == 400
 
 
@@ -129,7 +127,7 @@ class TestDeletePolicyAnnotation:
             "sbom_graph_api.routes.api_v1.get_falkordb_service",
             return_value=mock_service,
         ):
-            resp = client.delete("/api/v1/policy/annotate/some-uuid")
+            resp = client.delete("/api/v1/policy/annotate/550e8400-e29b-41d4-a716-446655440000")
 
         assert resp.status_code == 200
         data = resp.get_json()
@@ -144,9 +142,14 @@ class TestDeletePolicyAnnotation:
             "sbom_graph_api.routes.api_v1.get_falkordb_service",
             return_value=mock_service,
         ):
-            resp = client.delete("/api/v1/policy/annotate/nonexistent")
+            resp = client.delete("/api/v1/policy/annotate/a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
         assert resp.status_code == 404
+
+    def test_invalid_annotation_id_returns_400(self, client) -> None:
+        """Non-UUID annotation_id returns 400."""
+        resp = client.delete("/api/v1/policy/annotate/not-a-uuid")
+        assert resp.status_code == 400
 
 
 class TestCheckPackagePolicy:
@@ -165,9 +168,7 @@ class TestCheckPackagePolicy:
             "sbom_graph_api.routes.api_v1.get_falkordb_service",
             return_value=mock_service,
         ):
-            resp = client.get(
-                "/api/v1/package/pkg:maven/org.example/lib@1.0/policy"
-            )
+            resp = client.get("/api/v1/package/pkg:maven/org.example/lib@1.0/policy")
 
         assert resp.status_code == 200
         data = resp.get_json()
@@ -186,9 +187,7 @@ class TestCheckPackagePolicy:
             "sbom_graph_api.routes.api_v1.get_falkordb_service",
             return_value=mock_service,
         ):
-            resp = client.get(
-                "/api/v1/package/pkg:maven/org.example/lib@1.0/policy"
-            )
+            resp = client.get("/api/v1/package/pkg:maven/org.example/lib@1.0/policy")
 
         assert resp.status_code == 200
         data = resp.get_json()
@@ -221,7 +220,7 @@ class TestPolicyViolationsReport:
         ]
 
         with patch(
-            "sbom_graph_api.routes.reports.get_falkordb_service",
+            "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
             return_value=mock_service,
         ):
             resp = client.get("/reports/policy-violations?format=json")
@@ -237,7 +236,7 @@ class TestPolicyViolationsReport:
         mock_service.get_policy_violations.return_value = []
 
         with patch(
-            "sbom_graph_api.routes.reports.get_falkordb_service",
+            "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
             return_value=mock_service,
         ):
             resp = client.get("/reports/policy-violations")
@@ -251,14 +250,10 @@ class TestPolicyViolationsReport:
         mock_service.get_policy_violations.return_value = []
 
         with patch(
-            "sbom_graph_api.routes.reports.get_falkordb_service",
+            "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
             return_value=mock_service,
         ):
-            resp = client.get(
-                "/reports/policy-violations?internal_only=true&format=json"
-            )
+            resp = client.get("/reports/policy-violations?internal_only=true&format=json")
 
         assert resp.status_code == 200
-        mock_service.get_policy_violations.assert_called_once_with(
-            internal_only=True
-        )
+        mock_service.get_policy_violations.assert_called_once_with(internal_only=True)

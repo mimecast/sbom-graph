@@ -6,17 +6,25 @@ from flask import Flask
 from sbom_graph_api.utils.validation import (
     build_url_params,
     build_url_with_params,
-    is_safe_redirect_url,
     get_safe_redirect_url,
+    is_safe_redirect_url,
+    sanitize_content_disposition,
+    validate_annotation_id,
     validate_boolean,
     validate_css_dimension,
+    validate_defect_id,
+    validate_float_param,
     validate_format,
+    validate_int_param,
     validate_layout,
     validate_limit,
     validate_max_depth,
     validate_project_group,
     validate_project_name,
     validate_purl,
+    validate_schema_name,
+    validate_url,
+    validate_username,
     validate_version_name,
 )
 
@@ -666,3 +674,326 @@ class TestValidateProjectGroup:
 
     def test_semicolon_rejected(self):
         assert validate_project_group("group;drop") is None
+
+
+class TestValidateAnnotationId:
+    """Tests for validate_annotation_id function."""
+
+    def test_valid_uuid(self):
+        expected = "550e8400-e29b-41d4-a716-446655440000"
+        assert validate_annotation_id(expected) == expected
+
+    def test_uppercase_uuid(self):
+        expected = "550E8400-E29B-41D4-A716-446655440000"
+        assert validate_annotation_id(expected) == expected
+
+    def test_whitespace_stripped(self):
+        result = validate_annotation_id("  550e8400-e29b-41d4-a716-446655440000  ")
+        assert result == "550e8400-e29b-41d4-a716-446655440000"
+
+    def test_empty_returns_none(self):
+        assert validate_annotation_id("") is None
+
+    def test_none_returns_none(self):
+        assert validate_annotation_id(None) is None
+
+    def test_not_uuid_format(self):
+        assert validate_annotation_id("not-a-uuid") is None
+
+    def test_too_long(self):
+        assert validate_annotation_id("a" * 65) is None
+
+    def test_injection_attempt(self):
+        assert validate_annotation_id("550e8400'; DROP TABLE--") is None
+
+    def test_uuid_without_hyphens_rejected(self):
+        assert validate_annotation_id("550e8400e29b41d4a716446655440000") is None
+
+
+class TestValidateSchemaName:
+    """Tests for validate_schema_name function."""
+
+    def test_valid_name(self):
+        assert validate_schema_name("projects") == "projects"
+
+    def test_hyphenated_name(self):
+        assert validate_schema_name("version-dependencies") == "version-dependencies"
+
+    def test_with_numbers(self):
+        assert validate_schema_name("sbom-upload") == "sbom-upload"
+
+    def test_whitespace_stripped(self):
+        assert validate_schema_name("  projects  ") == "projects"
+
+    def test_empty_returns_none(self):
+        assert validate_schema_name("") is None
+
+    def test_none_returns_none(self):
+        assert validate_schema_name(None) is None
+
+    def test_uppercase_rejected(self):
+        assert validate_schema_name("Projects") is None
+
+    def test_underscore_rejected(self):
+        assert validate_schema_name("my_schema") is None
+
+    def test_starts_with_hyphen_rejected(self):
+        assert validate_schema_name("-schema") is None
+
+    def test_too_long(self):
+        assert validate_schema_name("a" * 129) is None
+
+    def test_newline_injection_rejected(self):
+        assert validate_schema_name("schema\r\nX-Injected: evil") is None
+
+    def test_dot_rejected(self):
+        assert validate_schema_name("schema.json") is None
+
+    def test_path_traversal_rejected(self):
+        assert validate_schema_name("../etc/passwd") is None
+
+    def test_quotes_rejected(self):
+        assert validate_schema_name('schema"') is None
+
+
+class TestValidateUsername:
+    """Tests for validate_username function."""
+
+    def test_simple_username(self):
+        assert validate_username("admin") == "admin"
+
+    def test_with_underscore(self):
+        assert validate_username("john_doe") == "john_doe"
+
+    def test_with_dot(self):
+        assert validate_username("john.doe") == "john.doe"
+
+    def test_with_hyphen(self):
+        assert validate_username("john-doe") == "john-doe"
+
+    def test_email_style(self):
+        assert validate_username("user@example.com") == "user@example.com"
+
+    def test_ldap_style(self):
+        assert validate_username("cn.user@corp.local") == "cn.user@corp.local"
+
+    def test_whitespace_stripped(self):
+        assert validate_username("  admin  ") == "admin"
+
+    def test_empty_returns_none(self):
+        assert validate_username("") is None
+
+    def test_none_returns_none(self):
+        assert validate_username(None) is None
+
+    def test_too_long(self):
+        assert validate_username("a" * 256) is None
+
+    def test_at_max_length(self):
+        assert validate_username("a" * 255) == "a" * 255
+
+    def test_starts_with_dot_rejected(self):
+        assert validate_username(".admin") is None
+
+    def test_starts_with_hyphen_rejected(self):
+        assert validate_username("-admin") is None
+
+    def test_space_in_middle_rejected(self):
+        assert validate_username("ad min") is None
+
+    def test_slash_rejected(self):
+        assert validate_username("admin/evil") is None
+
+    def test_semicolon_rejected(self):
+        assert validate_username("admin;drop") is None
+
+    def test_newline_rejected(self):
+        assert validate_username("admin\nevil") is None
+
+    def test_html_injection_rejected(self):
+        assert validate_username("<script>alert(1)</script>") is None
+
+
+class TestValidateUrl:
+    """Tests for validate_url function."""
+
+    def test_https_url(self):
+        assert validate_url("https://github.com/example/repo") == "https://github.com/example/repo"
+
+    def test_http_url(self):
+        assert validate_url("http://example.com") == "http://example.com"
+
+    def test_url_with_path(self):
+        assert validate_url("https://github.com/org/repo.git") == "https://github.com/org/repo.git"
+
+    def test_whitespace_stripped(self):
+        assert validate_url("  https://example.com  ") == "https://example.com"
+
+    def test_none_returns_none(self):
+        assert validate_url(None) is None
+
+    def test_empty_returns_none(self):
+        assert validate_url("") is None
+
+    def test_ftp_rejected(self):
+        assert validate_url("ftp://example.com") is None
+
+    def test_file_rejected(self):
+        assert validate_url("file:///etc/passwd") is None
+
+    def test_no_scheme_rejected(self):
+        assert validate_url("example.com") is None
+
+    def test_javascript_rejected(self):
+        assert validate_url("javascript:alert(1)") is None
+
+    def test_no_host_rejected(self):
+        assert validate_url("https://") is None
+
+    def test_too_long(self):
+        assert validate_url("https://example.com/" + "a" * 2048) is None
+
+
+class TestValidateFloatParam:
+    """Tests for validate_float_param function."""
+
+    def test_valid_value(self):
+        assert validate_float_param("5.0", default=3.0) == 5.0
+
+    def test_integer_string(self):
+        assert validate_float_param("7", default=3.0) == 7.0
+
+    def test_none_returns_default(self):
+        assert validate_float_param(None, default=5.0) == 5.0
+
+    def test_empty_returns_default(self):
+        assert validate_float_param("", default=5.0) == 5.0
+
+    def test_non_numeric_returns_default(self):
+        assert validate_float_param("abc", default=5.0) == 5.0
+
+    def test_nan_returns_default(self):
+        result = validate_float_param("nan", default=5.0)
+        assert result == 5.0  # NaN input falls back to default
+
+    def test_inf_returns_default(self):
+        assert validate_float_param("inf", default=5.0) == 5.0
+
+    def test_negative_inf_returns_default(self):
+        assert validate_float_param("-inf", default=5.0) == 5.0
+
+    def test_below_min_returns_default(self):
+        assert validate_float_param("-1.0", default=5.0, min_val=0.0) == 5.0
+
+    def test_above_max_returns_default(self):
+        assert validate_float_param("11.0", default=5.0, max_val=10.0) == 5.0
+
+    def test_at_min_boundary(self):
+        assert validate_float_param("0.0", default=5.0, min_val=0.0) == 0.0
+
+    def test_at_max_boundary(self):
+        assert validate_float_param("10.0", default=5.0, max_val=10.0) == 10.0
+
+    def test_custom_range(self):
+        assert validate_float_param("0.5", default=0.25, min_val=0.0, max_val=1.0) == 0.5
+
+
+class TestValidateIntParam:
+    """Tests for validate_int_param function."""
+
+    def test_valid_value(self):
+        assert validate_int_param("10", default=5) == 10
+
+    def test_none_returns_default(self):
+        assert validate_int_param(None, default=5) == 5
+
+    def test_empty_returns_default(self):
+        assert validate_int_param("", default=5) == 5
+
+    def test_non_numeric_returns_default(self):
+        assert validate_int_param("abc", default=5) == 5
+
+    def test_float_string_returns_default(self):
+        assert validate_int_param("1.5", default=5) == 5
+
+    def test_below_min_returns_default(self):
+        assert validate_int_param("0", default=5, min_val=1) == 5
+
+    def test_above_max_returns_default(self):
+        assert validate_int_param("101", default=5, max_val=100) == 5
+
+    def test_at_min_boundary(self):
+        assert validate_int_param("1", default=5, min_val=1) == 1
+
+    def test_at_max_boundary(self):
+        assert validate_int_param("50", default=5, max_val=50) == 50
+
+    def test_negative_returns_default(self):
+        assert validate_int_param("-5", default=10, min_val=1) == 10
+
+    def test_custom_range(self):
+        assert validate_int_param("25", default=10, min_val=1, max_val=50) == 25
+
+
+class TestSanitizeContentDisposition:
+    """Tests for sanitize_content_disposition function."""
+
+    def test_normal_filename(self):
+        result = sanitize_content_disposition("projects.schema.json")
+        assert result == 'inline; filename="projects.schema.json"'
+
+    def test_strips_newlines(self):
+        result = sanitize_content_disposition("evil\r\nX-Injected: header")
+        assert "\r" not in result
+        assert "\n" not in result
+
+    def test_strips_carriage_return(self):
+        result = sanitize_content_disposition("file\rname")
+        assert "\r" not in result
+
+    def test_strips_null_bytes(self):
+        result = sanitize_content_disposition("file\x00name")
+        assert "\x00" not in result
+
+    def test_escapes_double_quotes(self):
+        result = sanitize_content_disposition('file"name')
+        assert '"file' not in result or "'" in result
+        assert result.count('"') == 2  # only the wrapping quotes
+
+    def test_header_injection_prevented(self):
+        malicious = 'test.json"\r\nX-Evil: injected\r\n\r\n<html>bad</html>'
+        result = sanitize_content_disposition(malicious)
+        assert "\r" not in result
+        assert "\n" not in result
+        assert "X-Evil" not in result.split('"', maxsplit=1)[0]
+
+
+class TestValidateDefectId:
+    """Tests for validate_defect_id function (used in patch-plan)."""
+
+    def test_cve_id(self):
+        assert validate_defect_id("CVE-2021-44228") == "CVE-2021-44228"
+
+    def test_snyk_id(self):
+        assert validate_defect_id("SNYK-JAVA-LOG4J-2314720") == "SNYK-JAVA-LOG4J-2314720"
+
+    def test_ghsa_id(self):
+        assert validate_defect_id("GHSA-jfh8-c2jp-5v3q") == "GHSA-jfh8-c2jp-5v3q"
+
+    def test_empty_returns_none(self):
+        assert validate_defect_id("") is None
+
+    def test_none_returns_none(self):
+        assert validate_defect_id(None) is None
+
+    def test_too_long(self):
+        assert validate_defect_id("a" * 129) is None
+
+    def test_slash_rejected(self):
+        assert validate_defect_id("CVE-2021/44228") is None
+
+    def test_space_rejected(self):
+        assert validate_defect_id("CVE 2021") is None
+
+    def test_injection_rejected(self):
+        assert validate_defect_id("CVE'; DROP TABLE--") is None

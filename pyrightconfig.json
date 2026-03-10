@@ -1,0 +1,16 @@
+{
+    "venvPath": "sbom-graph-api",
+    "venv": ".venv",
+    "extraPaths": [
+        "sbom-graph-api/src",
+        "sbom-graph-model/src"
+    ],
+    "pythonVersion": "3.14",
+    "typeCheckingMode": "basic",
+    "exclude": [
+        "**/node_modules",
+        "**/.venv",
+        "**/build",
+        "**/tests"
+    ]
+}

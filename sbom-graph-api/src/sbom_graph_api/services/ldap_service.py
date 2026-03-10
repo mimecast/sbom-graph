@@ -32,8 +32,6 @@ class LDAPUser:
 class LDAPAuthenticationError(Exception):
     """Raised when LDAP authentication fails."""
 
-    pass
-
 
 class LDAPService:
     """Service for authenticating users against an LDAP server."""
@@ -94,12 +92,12 @@ class LDAPService:
 
             # Get user attributes (including groups from memberOf attribute)
             user_info = self._get_user_info(conn, username)
-            logger.debug(f"LDAP user info for {username}: {user_info}")
+            logger.debug("LDAP user info for %s: %s", username, user_info)
 
             # Get groups from memberOf attribute and extract CNs from full DNs
             groups = user_info.get("groups", [])
             group_names = self._extract_group_names(groups)
-            logger.debug(f"User {username} group names: {group_names}")
+            logger.debug("User %s group names: %s", username, group_names)
 
             # Determine admin status based on admin groups
             is_admin = False
@@ -107,7 +105,7 @@ class LDAPService:
                 admin_matches = set(group_names) & set(self.config.admin_groups)
                 is_admin = bool(admin_matches)
                 if is_admin:
-                    logger.info(f"User {username} granted admin via groups: {admin_matches}")
+                    logger.info("User %s granted admin via groups: %s", username, admin_matches)
 
             # Check group membership if required
             if self.config.require_group_membership:
@@ -130,7 +128,9 @@ class LDAPService:
                         return None
 
                     logger.info(
-                        f"User {username} authorized via group membership: {user_allowed_groups}"
+                        "User %s authorized via group membership: %s",
+                        username,
+                        user_allowed_groups,
                     )
             elif self.config.required_group:
                 # Legacy single group check (backward compatibility)
@@ -151,10 +151,10 @@ class LDAPService:
             )
 
         except LDAPException as e:
-            logger.warning(f"LDAP authentication failed for user {username}: {e}")
+            logger.warning("LDAP authentication failed for user %s: %s", username, e)
             return None
         except Exception as e:
-            logger.error(f"Unexpected error during LDAP authentication: {e}")
+            logger.error("Unexpected error during LDAP authentication: %s", e)
             raise LDAPAuthenticationError(f"Authentication error: {e}") from e
 
     def _get_user_info(self, conn: Connection, username: str) -> dict[str, Any]:
@@ -255,7 +255,7 @@ class LDAPService:
             return True
 
         except LDAPException as e:
-            logger.error(f"LDAP connection test failed: {e}")
+            logger.error("LDAP connection test failed: %s", e)
             return False
 
 
@@ -265,7 +265,7 @@ _ldap_service: LDAPService | None = None
 
 def get_ldap_service() -> LDAPService:
     """Get the LDAP service singleton."""
-    global _ldap_service
+    global _ldap_service  # pylint: disable=global-statement
     if _ldap_service is None:
         _ldap_service = LDAPService()
     return _ldap_service
@@ -273,5 +273,5 @@ def get_ldap_service() -> LDAPService:
 
 def reset_ldap_service() -> None:
     """Reset the LDAP service singleton (useful for testing)."""
-    global _ldap_service
+    global _ldap_service  # pylint: disable=global-statement
     _ldap_service = None

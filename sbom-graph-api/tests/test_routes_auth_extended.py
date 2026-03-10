@@ -4,14 +4,18 @@ from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
-from flask import Flask
 
 from sbom_graph_api.config import (
-    AppConfig, DatabaseConfig, FalkorDBConfig, JWTConfig, LDAPConfig, TLSConfig,
+    AppConfig,
+    DatabaseConfig,
+    FalkorDBConfig,
+    JWTConfig,
+    LDAPConfig,
+    TLSConfig,
     reset_config,
 )
 from sbom_graph_api.services.falkordb_service import reset_service
-from sbom_graph_api.services.ldap_service import LDAPUser, LDAPAuthenticationError
+from sbom_graph_api.services.ldap_service import LDAPAuthenticationError, LDAPUser
 from sbom_graph_api.services.token_storage import reset_token_storage
 from sbom_graph_api.services.user_storage import reset_user_storage
 
@@ -25,11 +29,18 @@ def ldap_app(tmp_path):
     reset_token_storage()
 
     config = AppConfig(
-        debug=True, host="127.0.0.1", port=8080,
+        debug=True,
+        host="127.0.0.1",
+        port=8080,
         secret_key="test-secret-key-for-testing",
         falkordb=FalkorDBConfig(
-            host="test", port=6379, password="test", graph_name="test",
-            socket_timeout=30.0, socket_connect_timeout=10.0, internal_label="INTERNAL",
+            host="test",
+            port=6379,
+            password="test",
+            graph_name="test",
+            socket_timeout=30.0,
+            socket_connect_timeout=10.0,
+            internal_label="INTERNAL",
             ssl=False,
             ssl_ca_certs=None,
         ),
@@ -38,16 +49,24 @@ def ldap_app(tmp_path):
             secret_key="test-jwt-secret-key-long-enough-for-testing",
             access_token_expires=timedelta(hours=1),
             refresh_token_expires=timedelta(days=30),
-            algorithm="HS256", token_location=["headers", "cookies"],
+            algorithm="HS256",
+            token_location=["headers", "cookies"],
         ),
         ldap=LDAPConfig(
-            enabled=True, server="ldap.test.com", port=389, use_ssl=False,
+            enabled=True,
+            server="ldap.test.com",
+            port=389,
+            use_ssl=False,
             base_dn="dc=test,dc=com",
             user_dn_template="uid={username},ou=users,dc=test,dc=com",
-            bind_dn=None, bind_password=None,
-            search_filter="(uid={username})", group_search_base=None,
-            required_group=None, allowed_groups=[],
-            admin_groups=["admins"], user_groups=["users"],
+            bind_dn=None,
+            bind_password=None,
+            search_filter="(uid={username})",
+            group_search_base=None,
+            required_group=None,
+            allowed_groups=[],
+            admin_groups=["admins"],
+            user_groups=["users"],
             require_group_membership=False,
         ),
         database=DatabaseConfig(path=str(tmp_path / "ldap-test.db"), encryption_key="test-enc"),
@@ -56,6 +75,7 @@ def ldap_app(tmp_path):
 
     with patch("sbom_graph_api.config.AppConfig.from_env", return_value=config):
         from sbom_graph_api.app import create_app
+
         app = create_app()
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
@@ -77,9 +97,12 @@ class TestLDAPLogin:
 
     def test_ldap_login_success(self, ldap_client):
         ldap_user = LDAPUser(
-            username="jdoe", dn="uid=jdoe,ou=users",
-            email="jdoe@test.com", display_name="John Doe",
-            groups=["users"], is_admin=False,
+            username="jdoe",
+            dn="uid=jdoe,ou=users",
+            email="jdoe@test.com",
+            display_name="John Doe",
+            groups=["users"],
+            is_admin=False,
         )
         with patch("sbom_graph_api.routes.auth.get_ldap_service") as m:
             mock_svc = MagicMock()
@@ -87,7 +110,8 @@ class TestLDAPLogin:
             m.return_value = mock_svc
 
             response = ldap_client.post(
-                "/auth/login", data={"username": "jdoe", "password": "pass"},
+                "/auth/login",
+                data={"username": "jdoe", "password": "pass"},
                 follow_redirects=False,
             )
             assert response.status_code in (302, 303)
@@ -99,7 +123,8 @@ class TestLDAPLogin:
             m.return_value = mock_svc
 
             response = ldap_client.post(
-                "/auth/login", data={"username": "bad", "password": "bad"},
+                "/auth/login",
+                data={"username": "bad", "password": "bad"},
             )
             assert response.status_code == 200
             assert b"Invalid" in response.data or b"invalid" in response.data
@@ -111,15 +136,18 @@ class TestLDAPLogin:
             m.return_value = mock_svc
 
             response = ldap_client.post(
-                "/auth/login", data={"username": "user", "password": "pass"},
+                "/auth/login",
+                data={"username": "user", "password": "pass"},
             )
             assert response.status_code == 200
             assert b"failed" in response.data.lower() or b"error" in response.data.lower()
 
     def test_ldap_admin_via_groups(self, ldap_client):
         ldap_user = LDAPUser(
-            username="admin", dn="uid=admin,ou=users",
-            groups=["admins"], is_admin=True,
+            username="admin",
+            dn="uid=admin,ou=users",
+            groups=["admins"],
+            is_admin=True,
         )
         with patch("sbom_graph_api.routes.auth.get_ldap_service") as m:
             mock_svc = MagicMock()
@@ -173,8 +201,9 @@ class TestLDAPAdminRestrictions:
             sess["authenticated"] = True
             sess["username"] = "admin"
             sess["is_admin"] = True
-        response = ldap_client.post("/auth/admin/users/someone/toggle-admin",
-                                     content_type="application/json")
+        response = ldap_client.post(
+            "/auth/admin/users/someone/toggle-admin", content_type="application/json"
+        )
         assert response.status_code == 400
 
     def test_toggle_active_blocked_with_ldap(self, ldap_client):
@@ -182,8 +211,9 @@ class TestLDAPAdminRestrictions:
             sess["authenticated"] = True
             sess["username"] = "admin"
             sess["is_admin"] = True
-        response = ldap_client.post("/auth/admin/users/someone/toggle-active",
-                                     content_type="application/json")
+        response = ldap_client.post(
+            "/auth/admin/users/someone/toggle-active", content_type="application/json"
+        )
         assert response.status_code == 400
 
     def test_reset_password_blocked_with_ldap(self, ldap_client):
@@ -191,8 +221,9 @@ class TestLDAPAdminRestrictions:
             sess["authenticated"] = True
             sess["username"] = "admin"
             sess["is_admin"] = True
-        response = ldap_client.post("/auth/admin/users/someone/reset-password",
-                                     content_type="application/json")
+        response = ldap_client.post(
+            "/auth/admin/users/someone/reset-password", content_type="application/json"
+        )
         assert response.status_code == 400
 
     def test_delete_user_blocked_with_ldap(self, ldap_client):
@@ -200,8 +231,9 @@ class TestLDAPAdminRestrictions:
             sess["authenticated"] = True
             sess["username"] = "admin"
             sess["is_admin"] = True
-        response = ldap_client.post("/auth/admin/users/someone/delete",
-                                     content_type="application/json")
+        response = ldap_client.post(
+            "/auth/admin/users/someone/delete", content_type="application/json"
+        )
         assert response.status_code == 400
 
 
@@ -216,11 +248,18 @@ class TestTokenCreateFlow:
         reset_token_storage()
 
         config = AppConfig(
-            debug=True, host="127.0.0.1", port=8080,
+            debug=True,
+            host="127.0.0.1",
+            port=8080,
             secret_key="test-secret",
             falkordb=FalkorDBConfig(
-                host="t", port=6379, password="", graph_name="t",
-                socket_timeout=30.0, socket_connect_timeout=10.0, internal_label="INTERNAL",
+                host="t",
+                port=6379,
+                password="",
+                graph_name="t",
+                socket_timeout=30.0,
+                socket_connect_timeout=10.0,
+                internal_label="INTERNAL",
                 ssl=False,
                 ssl_ca_certs=None,
             ),
@@ -229,14 +268,25 @@ class TestTokenCreateFlow:
                 secret_key="test-jwt-secret-key-long-enough",
                 access_token_expires=timedelta(hours=1),
                 refresh_token_expires=timedelta(days=30),
-                algorithm="HS256", token_location=["headers", "cookies"],
+                algorithm="HS256",
+                token_location=["headers", "cookies"],
             ),
             ldap=LDAPConfig(
-                enabled=False, server="localhost", port=389, use_ssl=False,
-                base_dn="dc=test", user_dn_template="uid={username}",
-                bind_dn=None, bind_password=None, search_filter="(uid={username})",
-                group_search_base=None, required_group=None, allowed_groups=[],
-                admin_groups=[], user_groups=[], require_group_membership=False,
+                enabled=False,
+                server="localhost",
+                port=389,
+                use_ssl=False,
+                base_dn="dc=test",
+                user_dn_template="uid={username}",
+                bind_dn=None,
+                bind_password=None,
+                search_filter="(uid={username})",
+                group_search_base=None,
+                required_group=None,
+                allowed_groups=[],
+                admin_groups=[],
+                user_groups=[],
+                require_group_membership=False,
             ),
             database=DatabaseConfig(path=str(tmp_path / "tok.db"), encryption_key="enc"),
             auth_enabled=True,
@@ -244,6 +294,7 @@ class TestTokenCreateFlow:
 
         with patch("sbom_graph_api.config.AppConfig.from_env", return_value=config):
             from sbom_graph_api.app import create_app
+
             app = create_app()
             app.config["TESTING"] = True
             app.config["WTF_CSRF_ENABLED"] = False

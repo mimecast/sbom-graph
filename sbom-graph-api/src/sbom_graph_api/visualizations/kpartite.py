@@ -41,14 +41,14 @@ def get_partition_color(partition: int) -> str:
     return PARTITION_COLORS[-1]
 
 
-def calculate_partitions_longest_path(G: nx.DiGraph, root_id: str) -> dict[str, int]:
+def calculate_partitions_longest_path(graph: nx.DiGraph, root_id: str) -> dict[str, int]:
     """Calculate partition levels based on the LONGEST path from root to each node.
 
     Uses DFS to find all paths from root to each node and assigns the partition
     based on the maximum path length (deepest dependency chain).
 
     Args:
-        G: NetworkX DiGraph with dependency relationships
+        graph: NetworkX DiGraph with dependency relationships
         root_id: The node ID of the root element
 
     Returns:
@@ -60,7 +60,7 @@ def calculate_partitions_longest_path(G: nx.DiGraph, root_id: str) -> dict[str, 
     while stack:
         current, depth = stack.pop()
 
-        for successor in G.successors(current):
+        for successor in graph.successors(current):
             new_depth = depth + 1
 
             if successor not in partitions or new_depth > partitions[successor]:
@@ -130,7 +130,10 @@ def create_kpartite_visualization(
 
     # Get dependency graph
     nodes, edges = service.get_transitive_dependencies(
-        project_name, version_name, max_depth, internal_only,
+        project_name,
+        version_name,
+        max_depth,
+        internal_only,
         project_group=project_group,
     )
 
@@ -147,7 +150,7 @@ def create_kpartite_visualization(
         ]
 
     # Build NetworkX graph for partition calculation
-    G = nx.DiGraph()
+    graph: nx.DiGraph = nx.DiGraph()
     root_id = f"{project_name}:{version_name}"
 
     node_data = {n["id"]: n for n in nodes}
@@ -163,13 +166,13 @@ def create_kpartite_visualization(
         }
 
     for node in node_data.values():
-        G.add_node(node["id"])
+        graph.add_node(node["id"])
 
     for edge in edges:
-        G.add_edge(edge["source"], edge["target"])
+        graph.add_edge(edge["source"], edge["target"])
 
     # Calculate partitions using longest path
-    partitions = calculate_partitions_longest_path(G, root_id)
+    partitions = calculate_partitions_longest_path(graph, root_id)
 
     # Create PyVis network
     net = Network(
@@ -219,8 +222,8 @@ def create_kpartite_visualization(
         color = get_partition_color(partition)
 
         # Escape all user-controlled data to prevent XSS
-        safe_project = escape(data['project_name'])
-        safe_version = escape(data['version'])
+        safe_project = escape(data["project_name"])
+        safe_version = escape(data["version"])
         label = f"{safe_project}\n{safe_version}"
 
         labels_str = escape(", ".join(data.get("labels", [])))

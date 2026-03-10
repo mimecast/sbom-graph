@@ -13,19 +13,29 @@ class TestApplicationsEndpoint:
         return mock_service
 
     def test_html_format(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
-            m.return_value = self._mock_service([
-                {"project_name": "app-a", "version": "1.0.0", "scan_id": "s1",
-                 "public_id": "p1", "repo_url": "https://git", "is_internal": True},
-            ])
+        with patch("sbom_graph_api.routes.reports.inventory.get_falkordb_service") as m:
+            m.return_value = self._mock_service(
+                [
+                    {
+                        "project_name": "app-a",
+                        "version": "1.0.0",
+                        "scan_id": "s1",
+                        "public_id": "p1",
+                        "repo_url": "https://git",
+                        "is_internal": True,
+                    },
+                ]
+            )
             response = client.get("/reports/applications")
             assert response.status_code == 200
             assert b"app-a" in response.data
 
     def test_excel_format(self, client):
         with (
-            patch("sbom_graph_api.routes.reports.get_falkordb_service") as m,
-            patch("sbom_graph_api.routes.reports.create_applications_excel") as mock_excel,
+            patch("sbom_graph_api.routes.reports.inventory.get_falkordb_service") as m,
+            patch(
+                "sbom_graph_api.routes.reports.inventory.create_applications_excel"
+            ) as mock_excel,
         ):
             m.return_value = self._mock_service([])
             mock_excel.return_value = BytesIO(b"fake-excel")
@@ -34,18 +44,26 @@ class TestApplicationsEndpoint:
             assert "spreadsheetml" in response.content_type
 
     def test_json_format(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
-            m.return_value = self._mock_service([
-                {"project_name": "app-a", "version": "1.0.0", "scan_id": "s1",
-                 "public_id": None, "repo_url": None, "is_internal": False},
-            ])
+        with patch("sbom_graph_api.routes.reports.inventory.get_falkordb_service") as m:
+            m.return_value = self._mock_service(
+                [
+                    {
+                        "project_name": "app-a",
+                        "version": "1.0.0",
+                        "scan_id": "s1",
+                        "public_id": None,
+                        "repo_url": None,
+                        "is_internal": False,
+                    },
+                ]
+            )
             response = client.get("/reports/applications?format=json")
             assert response.status_code == 200
             data = response.get_json()
             assert data["report_type"] == "applications"
 
     def test_latest_only_param(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.inventory.get_falkordb_service") as m:
             m.return_value = self._mock_service([])
             response = client.get("/reports/applications?latest_only=true")
             assert response.status_code == 200
@@ -60,17 +78,26 @@ class TestNonSemverEndpoint:
         return mock
 
     def test_html_format(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
-            m.return_value = self._mock_service([
-                {"project_name": "proj", "version": "latest", "reason": "No numeric", "labels": ["Version"]},
-            ])
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
+            m.return_value = self._mock_service(
+                [
+                    {
+                        "project_name": "proj",
+                        "version": "latest",
+                        "reason": "No numeric",
+                        "labels": ["Version"],
+                    },
+                ]
+            )
             response = client.get("/reports/non-semver-versions")
             assert response.status_code == 200
 
     def test_excel_format(self, client):
         with (
-            patch("sbom_graph_api.routes.reports.get_falkordb_service") as m,
-            patch("sbom_graph_api.routes.reports.create_non_semver_report_excel") as mock_excel,
+            patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m,
+            patch(
+                "sbom_graph_api.routes.reports.dependencies.create_non_semver_report_excel"
+            ) as mock_excel,
         ):
             m.return_value = self._mock_service([])
             mock_excel.return_value = BytesIO(b"excel")
@@ -78,10 +105,12 @@ class TestNonSemverEndpoint:
             assert response.status_code == 200
 
     def test_json_format(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
-            m.return_value = self._mock_service([
-                {"project_name": "p", "version": "x", "reason": "r", "labels": []},
-            ])
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
+            m.return_value = self._mock_service(
+                [
+                    {"project_name": "p", "version": "x", "reason": "r", "labels": []},
+                ]
+            )
             response = client.get("/reports/non-semver-versions?format=json")
             data = response.get_json()
             assert data["report_type"] == "non-semver-versions"
@@ -96,29 +125,54 @@ class TestMultiVersionDepsEndpoint:
         mock_service.get_library_version_usage.return_value = {
             "library": {"project_name": "my-lib", "total_versions": 1},
             "total_dependants": 1,
-            "versions": [{"version": "1.0", "dependant_count": 1, "is_internal": False,
-                          "dependants": [{"project_name": "app", "version": "1.0",
-                                          "project_group": "", "is_internal": False}]}],
+            "versions": [
+                {
+                    "version": "1.0",
+                    "dependant_count": 1,
+                    "is_internal": False,
+                    "dependants": [
+                        {
+                            "project_name": "app",
+                            "version": "1.0",
+                            "project_group": "",
+                            "is_internal": False,
+                        }
+                    ],
+                }
+            ],
         }
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service", return_value=mock_service):
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
+            return_value=mock_service,
+        ):
             response = client.get("/reports/multi-version-deps/my-lib")
             assert response.status_code == 200
 
     def test_not_found_json(self, client):
         mock_service = MagicMock()
         mock_service.get_library_version_usage.return_value = {
-            "library": {}, "total_dependants": 0, "versions": [],
+            "library": {},
+            "total_dependants": 0,
+            "versions": [],
         }
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service", return_value=mock_service):
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
+            return_value=mock_service,
+        ):
             response = client.get("/reports/multi-version-deps/nonexistent?format=json")
             assert response.status_code == 404
 
     def test_not_found_html(self, client):
         mock_service = MagicMock()
         mock_service.get_library_version_usage.return_value = {
-            "library": {}, "total_dependants": 0, "versions": [],
+            "library": {},
+            "total_dependants": 0,
+            "versions": [],
         }
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service", return_value=mock_service):
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
+            return_value=mock_service,
+        ):
             response = client.get("/reports/multi-version-deps/nonexistent")
             assert response.status_code == 404
 
@@ -127,11 +181,18 @@ class TestMultiVersionDepsEndpoint:
         mock_service.get_library_version_usage.return_value = {
             "library": {"project_name": "lib", "total_versions": 1},
             "total_dependants": 0,
-            "versions": [{"version": "1.0", "dependant_count": 0, "is_internal": False, "dependants": []}],
+            "versions": [
+                {"version": "1.0", "dependant_count": 0, "is_internal": False, "dependants": []}
+            ],
         }
         with (
-            patch("sbom_graph_api.routes.reports.get_falkordb_service", return_value=mock_service),
-            patch("sbom_graph_api.routes.reports.create_multi_version_deps_excel") as mock_excel,
+            patch(
+                "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
+                return_value=mock_service,
+            ),
+            patch(
+                "sbom_graph_api.routes.reports.dependencies.create_multi_version_deps_excel"
+            ) as mock_excel,
         ):
             mock_excel.return_value = BytesIO(b"excel")
             response = client.get("/reports/multi-version-deps/lib?format=excel")
@@ -142,9 +203,14 @@ class TestMultiVersionDepsEndpoint:
         mock_service.get_library_version_usage.return_value = {
             "library": {"project_name": "lib", "total_versions": 1},
             "total_dependants": 0,
-            "versions": [{"version": "1.0", "dependant_count": 0, "is_internal": False, "dependants": []}],
+            "versions": [
+                {"version": "1.0", "dependant_count": 0, "is_internal": False, "dependants": []}
+            ],
         }
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service", return_value=mock_service):
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
+            return_value=mock_service,
+        ):
             response = client.get("/reports/multi-version-deps/lib?format=json")
             assert response.status_code == 200
             data = response.get_json()
@@ -160,13 +226,13 @@ class TestMultiVersionSourcesEndpoint:
         return mock
 
     def test_not_found_json(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
             m.return_value = self._mock_service({"target": None, "multi_version_dependencies": []})
             response = client.get("/reports/multi-version-sources/proj/1.0?format=json")
             assert response.status_code == 404
 
     def test_not_found_html(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
             m.return_value = self._mock_service({"target": None, "multi_version_dependencies": []})
             response = client.get("/reports/multi-version-sources/proj/1.0")
             assert response.status_code == 404
@@ -175,15 +241,27 @@ class TestMultiVersionSourcesEndpoint:
         data = {
             "target": {"project_name": "proj", "version": "1.0", "scan_ids_count": 1},
             "multi_version_dependencies": [
-                {"dependency_project": "lib", "version_count": 2,
-                 "versions": [
-                     {"version": "1.0", "contributing_applications": [{"project_name": "app", "version": "1.0"}],
-                      "scan_ids_intersection": []},
-                     {"version": "2.0", "contributing_applications": [], "scan_ids_intersection": []},
-                 ]},
+                {
+                    "dependency_project": "lib",
+                    "version_count": 2,
+                    "versions": [
+                        {
+                            "version": "1.0",
+                            "contributing_applications": [
+                                {"project_name": "app", "version": "1.0"}
+                            ],
+                            "scan_ids_intersection": [],
+                        },
+                        {
+                            "version": "2.0",
+                            "contributing_applications": [],
+                            "scan_ids_intersection": [],
+                        },
+                    ],
+                },
             ],
         }
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
             m.return_value = self._mock_service(data)
             response = client.get("/reports/multi-version-sources/proj/1.0")
             assert response.status_code == 200
@@ -194,8 +272,11 @@ class TestMultiVersionSourcesEndpoint:
             "multi_version_dependencies": [],
         }
         with (
-            patch("sbom_graph_api.routes.reports.get_falkordb_service") as m,
-            patch("sbom_graph_api.routes.reports.create_multi_version_dependency_report_excel") as mock_excel,
+            patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m,
+            patch(
+                "sbom_graph_api.routes.reports.dependencies."
+                "create_multi_version_dependency_report_excel"
+            ) as mock_excel,
         ):
             m.return_value = self._mock_service(data)
             mock_excel.return_value = BytesIO(b"excel")
@@ -207,7 +288,7 @@ class TestMultiVersionSourcesEndpoint:
             "target": {"project_name": "p", "version": "1.0", "scan_ids_count": 0},
             "multi_version_dependencies": [],
         }
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
             m.return_value = self._mock_service(data)
             response = client.get("/reports/multi-version-sources/p/1.0?format=json")
             assert response.status_code == 200
@@ -218,69 +299,102 @@ class TestVersionDependenciesEndpoint:
 
     def _mock_service(self, versions, deps, is_compliant=True, latest=None):
         mock = MagicMock()
-        mock.is_project_semver_compliant.return_value = (is_compliant, [] if is_compliant else ["bad"])
+        mock.is_project_semver_compliant.return_value = (
+            is_compliant,
+            [] if is_compliant else ["bad"],
+        )
         mock.get_latest_semver_version.return_value = latest
         mock.get_all_versions_of_project.return_value = versions
         mock.get_transitive_dependencies_for_report.return_value = deps
         return mock
 
     def test_html_with_data(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
             m.return_value = self._mock_service(
-                ["1.0.0"], [{"depth": 1, "dependency_project": "lib", "dependency_version": "1.0", "is_internal": False}],
+                ["1.0.0"],
+                [
+                    {
+                        "depth": 1,
+                        "dependency_project": "lib",
+                        "dependency_version": "1.0",
+                        "is_internal": False,
+                    }
+                ],
             )
             response = client.get("/reports/version-dependencies/proj/1.0.0")
             assert response.status_code == 200
 
     def test_project_not_found(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
             m.return_value = self._mock_service([], [])
             response = client.get("/reports/version-dependencies/none/1.0?format=json")
             assert response.status_code == 404
 
     def test_version_not_found(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
             m.return_value = self._mock_service(["1.0.0"], [])
             response = client.get("/reports/version-dependencies/proj/2.0.0?format=json")
             assert response.status_code == 404
 
     def test_latest_version_success(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
             m.return_value = self._mock_service(
-                ["1.0.0", "2.0.0"], [], is_compliant=True, latest="2.0.0",
+                ["1.0.0", "2.0.0"],
+                [],
+                is_compliant=True,
+                latest="2.0.0",
             )
             response = client.get("/reports/version-dependencies/proj/latest")
             assert response.status_code == 200
 
     def test_latest_version_not_semver(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
             m.return_value = self._mock_service(["latest"], [], is_compliant=False)
             response = client.get("/reports/version-dependencies/proj/latest?format=json")
             assert response.status_code == 400
 
     def test_excel_format(self, client):
         with (
-            patch("sbom_graph_api.routes.reports.get_falkordb_service") as m,
-            patch("sbom_graph_api.exports.excel.create_version_dependencies_report_excel") as mock_excel,
+            patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m,
+            patch(
+                "sbom_graph_api.routes.reports.dependencies."
+                "create_version_dependencies_report_excel"
+            ) as mock_excel,
         ):
             m.return_value = self._mock_service(
-                ["1.0.0"], [{"depth": 1, "dependency_project": "lib", "dependency_version": "1.0", "is_internal": False}],
+                ["1.0.0"],
+                [
+                    {
+                        "depth": 1,
+                        "dependency_project": "lib",
+                        "dependency_version": "1.0",
+                        "is_internal": False,
+                    }
+                ],
             )
             mock_excel.return_value = BytesIO(b"excel")
             response = client.get("/reports/version-dependencies/proj/1.0.0?format=excel")
             assert response.status_code == 200
 
     def test_json_format(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
             m.return_value = self._mock_service(
-                ["1.0.0"], [{"depth": 1, "dependency_project": "lib", "dependency_version": "1.0", "is_internal": False}],
+                ["1.0.0"],
+                [
+                    {
+                        "depth": 1,
+                        "dependency_project": "lib",
+                        "dependency_version": "1.0",
+                        "is_internal": False,
+                    }
+                ],
             )
             response = client.get("/reports/version-dependencies/proj/1.0.0?format=json")
             data = response.get_json()
             assert data["report_type"] == "version-dependencies"
 
     def test_json_format_no_dependencies(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
             m.return_value = self._mock_service(["1.0.0"], [])
             response = client.get("/reports/version-dependencies/proj/1.0.0?format=json")
             data = response.get_json()
@@ -301,27 +415,29 @@ class TestDependantsEndpoint:
         return mock
 
     def test_not_found_json(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
             m.return_value = self._mock_service(root_found=False)
             response = client.get("/reports/dependants/proj/1.0?format=json")
             assert response.status_code == 404
 
     def test_not_found_html(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
             m.return_value = self._mock_service(root_found=False)
             response = client.get("/reports/dependants/proj/1.0")
             assert response.status_code == 404
 
     def test_html_with_data(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
             m.return_value = self._mock_service()
             response = client.get("/reports/dependants/proj/1.0")
             assert response.status_code == 200
 
     def test_excel_format(self, client):
         with (
-            patch("sbom_graph_api.routes.reports.get_falkordb_service") as m,
-            patch("sbom_graph_api.routes.reports.create_dependants_report_excel") as mock_excel,
+            patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m,
+            patch(
+                "sbom_graph_api.routes.reports.dependencies.create_dependants_report_excel"
+            ) as mock_excel,
         ):
             m.return_value = self._mock_service()
             mock_excel.return_value = BytesIO(b"excel")
@@ -329,7 +445,7 @@ class TestDependantsEndpoint:
             assert response.status_code == 200
 
     def test_json_format(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.dependencies.get_falkordb_service") as m:
             m.return_value = self._mock_service()
             response = client.get("/reports/dependants/proj/1.0?format=json")
             data = response.get_json()
@@ -345,18 +461,25 @@ class TestCentralityEndpoint:
         return mock
 
     def test_html_format(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
-            m.return_value = self._mock_service([
-                {"inDegree": 10, "outDegree": 5, "project_name": "lib",
-                 "project_group": "g", "version_name": "1.0"},
-            ])
+        with patch("sbom_graph_api.routes.reports.inventory.get_falkordb_service") as m:
+            m.return_value = self._mock_service(
+                [
+                    {
+                        "inDegree": 10,
+                        "outDegree": 5,
+                        "project_name": "lib",
+                        "project_group": "g",
+                        "version_name": "1.0",
+                    },
+                ]
+            )
             response = client.get("/reports/centrality")
             assert response.status_code == 200
 
     def test_excel_format(self, client):
         with (
-            patch("sbom_graph_api.routes.reports.get_falkordb_service") as m,
-            patch("sbom_graph_api.exports.excel.create_centrality_excel") as mock_excel,
+            patch("sbom_graph_api.routes.reports.inventory.get_falkordb_service") as m,
+            patch("sbom_graph_api.routes.reports.inventory.create_centrality_excel") as mock_excel,
         ):
             m.return_value = self._mock_service()
             mock_excel.return_value = BytesIO(b"excel")
@@ -364,14 +487,14 @@ class TestCentralityEndpoint:
             assert response.status_code == 200
 
     def test_json_format(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.inventory.get_falkordb_service") as m:
             m.return_value = self._mock_service([])
             response = client.get("/reports/centrality?format=json")
             data = response.get_json()
             assert data["report_type"] == "centrality"
 
     def test_invalid_sort_by_defaults(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.inventory.get_falkordb_service") as m:
             m.return_value = self._mock_service([])
             response = client.get("/reports/centrality?sort_by=invalid")
             assert response.status_code == 200

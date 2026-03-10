@@ -21,7 +21,8 @@ dev = [
     "bandit>=1.7.9",
     "pytest>=8.2.2,<9.0.0",
     "pytest-cov>=6.0.0",
-    "pytest-html>=4.1.1"
+    "pytest-html>=4.1.1",
+    "types-gunicorn>=23.0.0",
 ]
 
 [tool.pytest.ini_options]

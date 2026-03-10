@@ -1,28 +1,45 @@
-"""JSON schemas for report and export data.
+"""JSON schemas for report data and inbound request validation.
 
 This module provides JSON Schema definitions for all reports and exports,
-enabling validation and documentation of the API responses.
+enabling validation and documentation of the API responses. It also
+provides inbound schemas for validating POST request payloads.
 """
 
 from sbom_graph_api.schemas.definitions import (
     APPLICATIONS_SCHEMA,
     CENTRALITY_SCHEMA,
     DEPENDANTS_SCHEMA,
+    LICENSE_CONFLICTS_SCHEMA,
+    LICENSE_SUMMARY_SCHEMA,
+    LICENSES_SCHEMA,
     MULTI_VERSION_DEPS_SCHEMA,
     MULTI_VERSION_SOURCES_SCHEMA,
     NON_SEMVER_VERSIONS_SCHEMA,
+    POLICY_VIOLATIONS_SCHEMA,
     PROJECTS_SCHEMA,
     SCHEMA_INDEX,
     SELF_DEPENDENCIES_SCHEMA,
     SNAPSHOTS_SCHEMA,
+    SOURCE_REPOS_SCHEMA,
     VERSION_DEPENDENCIES_SCHEMA,
+    VEX_COVERAGE_SCHEMA,
     VULNERABILITIES_SCHEMA,
     VULNERABILITY_DEPENDANTS_SCHEMA,
+    VULNERABILITY_FRESHNESS_SCHEMA,
     get_schema,
     get_schema_list,
 )
+from sbom_graph_api.schemas.inbound import (
+    CONTACT_CREATE_SCHEMA,
+    ENRICHMENT_REQUEST_SCHEMA,
+    INBOUND_SCHEMA_INDEX,
+    POLICY_ANNOTATION_SCHEMA,
+    SBOM_UPLOAD_SCHEMA,
+    VEX_UPLOAD_SCHEMA,
+)
 
 __all__ = [
+    # Outbound report schemas
     "PROJECTS_SCHEMA",
     "APPLICATIONS_SCHEMA",
     "SNAPSHOTS_SCHEMA",
@@ -35,7 +52,21 @@ __all__ = [
     "VULNERABILITIES_SCHEMA",
     "VULNERABILITY_DEPENDANTS_SCHEMA",
     "CENTRALITY_SCHEMA",
+    "LICENSES_SCHEMA",
+    "LICENSE_SUMMARY_SCHEMA",
+    "LICENSE_CONFLICTS_SCHEMA",
+    "VULNERABILITY_FRESHNESS_SCHEMA",
+    "POLICY_VIOLATIONS_SCHEMA",
+    "VEX_COVERAGE_SCHEMA",
+    "SOURCE_REPOS_SCHEMA",
     "SCHEMA_INDEX",
     "get_schema",
     "get_schema_list",
+    # Inbound request schemas
+    "SBOM_UPLOAD_SCHEMA",
+    "VEX_UPLOAD_SCHEMA",
+    "ENRICHMENT_REQUEST_SCHEMA",
+    "POLICY_ANNOTATION_SCHEMA",
+    "CONTACT_CREATE_SCHEMA",
+    "INBOUND_SCHEMA_INDEX",
 ]

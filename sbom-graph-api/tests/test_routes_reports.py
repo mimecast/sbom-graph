@@ -11,7 +11,9 @@ class TestProjectsReportEndpoint:
 
     def test_projects_returns_html_by_default(self, client):
         """Test projects endpoint returns HTML by default."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = [
                 {"project_name": "project-a", "version": "1.0.0"},
@@ -31,8 +33,12 @@ class TestProjectsReportEndpoint:
         mock_buffer = BytesIO(b"excel content")
 
         with (
-            patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service,
-            patch("sbom_graph_api.routes.reports.create_all_projects_excel") as mock_export,
+            patch(
+                "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+            ) as mock_get_service,
+            patch(
+                "sbom_graph_api.routes.reports.inventory.create_all_projects_excel"
+            ) as mock_export,
         ):
             mock_service = MagicMock()
             mock_get_service.return_value = mock_service
@@ -48,7 +54,9 @@ class TestProjectsReportEndpoint:
 
     def test_projects_respects_limit_parameter(self, client):
         """Test projects endpoint respects limit parameter."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = []
             mock_get_service.return_value = mock_service
@@ -59,7 +67,9 @@ class TestProjectsReportEndpoint:
 
     def test_projects_shows_statistics(self, client):
         """Test projects endpoint shows statistics."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = [
                 {"project_name": "project-a", "version": "1.0.0"},
@@ -78,7 +88,9 @@ class TestProjectsReportEndpoint:
 
     def test_projects_handles_empty_database(self, client):
         """Test projects endpoint handles empty database gracefully."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = []
             mock_get_service.return_value = mock_service
@@ -90,7 +102,9 @@ class TestProjectsReportEndpoint:
 
     def test_projects_invalid_format_defaults_to_html(self, client):
         """Test projects endpoint defaults to HTML for invalid format."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = []
             mock_get_service.return_value = mock_service
@@ -102,7 +116,9 @@ class TestProjectsReportEndpoint:
 
     def test_projects_internal_only_filter(self, client):
         """Test projects endpoint with internal_only filter."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = [
                 {"project_name": "acme_corp-lib", "version": "1.0.0"},
@@ -123,8 +139,12 @@ class TestProjectsReportEndpoint:
         mock_buffer = BytesIO(b"excel content")
 
         with (
-            patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service,
-            patch("sbom_graph_api.routes.reports.create_all_projects_excel") as mock_export,
+            patch(
+                "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+            ) as mock_get_service,
+            patch(
+                "sbom_graph_api.routes.reports.inventory.create_all_projects_excel"
+            ) as mock_export,
         ):
             mock_service = MagicMock()
             mock_get_service.return_value = mock_service
@@ -144,7 +164,9 @@ class TestSnapshotsReportEndpoint:
 
     def test_snapshots_returns_html_by_default(self, client):
         """Test snapshots endpoint returns HTML by default."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_snapshot_dependencies.return_value = [
                 {
@@ -168,8 +190,13 @@ class TestSnapshotsReportEndpoint:
         mock_buffer = BytesIO(b"excel content")
 
         with (
-            patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service,
-            patch("sbom_graph_api.routes.reports.create_snapshot_report_excel") as mock_export,
+            patch(
+                "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+            ) as mock_get_service,
+            patch(
+                "sbom_graph_api.routes.reports.dependencies"
+                ".create_snapshot_report_excel"
+            ) as mock_export,
         ):
             mock_service = MagicMock()
             mock_service.find_snapshot_dependencies.return_value = []
@@ -183,7 +210,9 @@ class TestSnapshotsReportEndpoint:
 
     def test_snapshots_shows_statistics(self, client):
         """Test snapshots endpoint shows statistics."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_snapshot_dependencies.return_value = [
                 {
@@ -211,7 +240,9 @@ class TestSnapshotsReportEndpoint:
 
     def test_snapshots_handles_no_snapshots(self, client):
         """Test snapshots endpoint handles no SNAPSHOT dependencies."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_snapshot_dependencies.return_value = []
             mock_get_service.return_value = mock_service
@@ -229,7 +260,9 @@ class TestSelfDependenciesReportEndpoint:
 
     def test_self_dependencies_returns_html_by_default(self, client):
         """Test self-dependencies endpoint returns HTML by default."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_self_dependencies.return_value = [
                 {
@@ -251,9 +284,12 @@ class TestSelfDependenciesReportEndpoint:
         mock_buffer = BytesIO(b"excel content")
 
         with (
-            patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service,
             patch(
-                "sbom_graph_api.routes.reports.create_self_dependency_report_excel"
+                "sbom_graph_api.routes.reports.dependencies"
+                ".get_falkordb_service",
+            ) as mock_get_service,
+            patch(
+                "sbom_graph_api.routes.reports.dependencies.create_self_dependency_report_excel"
             ) as mock_export,
         ):
             mock_service = MagicMock()
@@ -268,7 +304,9 @@ class TestSelfDependenciesReportEndpoint:
 
     def test_self_dependencies_shows_statistics(self, client):
         """Test self-dependencies endpoint shows statistics."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_self_dependencies.return_value = [
                 {
@@ -294,7 +332,9 @@ class TestSelfDependenciesReportEndpoint:
 
     def test_self_dependencies_handles_no_self_deps(self, client):
         """Test self-dependencies endpoint handles no self-dependencies."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_self_dependencies.return_value = []
             mock_get_service.return_value = mock_service
@@ -312,7 +352,9 @@ class TestMultiVersionDepsReportEndpoint:
 
     def test_multi_version_deps_returns_html_by_default(self, client):
         """Test multi-version-deps endpoint returns HTML by default."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_library_version_usage.return_value = {
                 "library": {"project_name": "jackson-databind", "total_versions": 2},
@@ -356,8 +398,13 @@ class TestMultiVersionDepsReportEndpoint:
         mock_buffer = BytesIO(b"excel content")
 
         with (
-            patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service,
-            patch("sbom_graph_api.routes.reports.create_multi_version_deps_excel") as mock_export,
+            patch(
+                "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+            ) as mock_get_service,
+            patch(
+                "sbom_graph_api.routes.reports.dependencies"
+                ".create_multi_version_deps_excel"
+            ) as mock_export,
         ):
             mock_service = MagicMock()
             mock_service.get_library_version_usage.return_value = {
@@ -386,7 +433,9 @@ class TestMultiVersionDepsReportEndpoint:
 
     def test_multi_version_deps_returns_json_when_requested(self, client):
         """Test multi-version-deps endpoint returns JSON when format=json."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_library_version_usage.return_value = {
                 "library": {"project_name": "test-lib", "total_versions": 1},
@@ -413,7 +462,9 @@ class TestMultiVersionDepsReportEndpoint:
 
     def test_multi_version_deps_passes_internal_only(self, client):
         """Test multi-version-deps endpoint passes internal_only parameter."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_library_version_usage.return_value = {
                 "library": {"project_name": "test-lib", "total_versions": 0},
@@ -430,7 +481,9 @@ class TestMultiVersionDepsReportEndpoint:
 
     def test_multi_version_deps_handles_not_found(self, client):
         """Test multi-version-deps endpoint handles library not found."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_library_version_usage.return_value = {
                 "library": {"project_name": "unknown", "total_versions": 0},
@@ -445,7 +498,9 @@ class TestMultiVersionDepsReportEndpoint:
 
     def test_multi_version_deps_json_not_found(self, client):
         """Test multi-version-deps endpoint returns JSON 404 when library not found."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_library_version_usage.return_value = {
                 "library": {"project_name": "unknown", "total_versions": 0},
@@ -466,7 +521,9 @@ class TestInternalOnlyToggle:
 
     def test_toggle_checkbox_present_in_html(self, client):
         """Test that internal_only toggle checkbox is present in HTML reports."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = []
             mock_get_service.return_value = mock_service
@@ -480,7 +537,9 @@ class TestInternalOnlyToggle:
 
     def test_toggle_unchecked_by_default(self, client):
         """Test that toggle is unchecked when internal_only is false."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = []
             mock_get_service.return_value = mock_service
@@ -493,7 +552,9 @@ class TestInternalOnlyToggle:
 
     def test_toggle_checked_when_internal_only_true(self, client):
         """Test that toggle is checked when internal_only=true."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = []
             mock_get_service.return_value = mock_service
@@ -508,7 +569,9 @@ class TestInternalOnlyToggle:
 
     def test_download_links_include_internal_only_param(self, client):
         """Test that Excel and JSON download links include internal_only parameter."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = []
             mock_get_service.return_value = mock_service
@@ -523,7 +586,9 @@ class TestInternalOnlyToggle:
 
     def test_toggle_present_in_snapshots_report(self, client):
         """Test toggle is present in snapshots report."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_snapshot_dependencies.return_value = []
             mock_get_service.return_value = mock_service
@@ -535,7 +600,9 @@ class TestInternalOnlyToggle:
 
     def test_toggle_present_in_self_dependencies_report(self, client):
         """Test toggle is present in self-dependencies report."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_self_dependencies.return_value = []
             mock_get_service.return_value = mock_service

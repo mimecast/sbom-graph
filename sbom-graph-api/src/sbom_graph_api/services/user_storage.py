@@ -10,39 +10,43 @@ import os
 import secrets
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, create_engine
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy import String, create_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from sbom_graph_api.config import DatabaseConfig, get_config
 
 logger = logging.getLogger(__name__)
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):  # pylint: disable=too-few-public-methods
+    """SQLAlchemy declarative base for all models."""
 
 
-class LocalUser(Base):
+class LocalUser(Base):  # pylint: disable=too-few-public-methods
     """SQLAlchemy model for local users."""
 
     __tablename__ = "local_users"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    username = Column(String(255), nullable=False, unique=True, index=True)
-    password_hash = Column(String(255), nullable=False)
-    email = Column(String(255), nullable=True)
-    display_name = Column(String(255), nullable=True)
-    is_admin = Column(Boolean, nullable=False, default=False)
-    is_active = Column(Boolean, nullable=False, default=True)
-    must_change_password = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(UTC))
-    updated_at = Column(DateTime, nullable=True, onupdate=lambda: datetime.now(UTC))
-    last_login_at = Column(DateTime, nullable=True)
-    created_by = Column(String(255), nullable=True)  # Username of admin who created
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(255), default=None)
+    display_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    is_admin: Mapped[bool] = mapped_column(default=False)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    must_change_password: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
+    updated_at: Mapped[datetime | None] = mapped_column(
+        default=None, onupdate=lambda: datetime.now(UTC)
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(default=None)
+    created_by: Mapped[str | None] = mapped_column(  # Username of admin who created
+        String(255), default=None
+    )
 
 
 class UserStorageError(Exception):
     """Raised when user storage operations fail."""
-
-    pass
 
 
 class UserStorageService:
@@ -87,6 +91,7 @@ class UserStorageService:
     def _get_session(self) -> Session:
         """Get a new database session."""
         self._get_engine()
+        assert self._session_factory is not None  # Set by _get_engine
         return self._session_factory()
 
     def _hash_password(self, password: str, salt: bytes | None = None) -> tuple[str, bytes]:
@@ -125,7 +130,7 @@ class UserStorageService:
             True if password matches, False otherwise
         """
         try:
-            salt_hex, hash_hex = stored_hash.split(":")
+            salt_hex, _ = stored_hash.split(":")
             salt = bytes.fromhex(salt_hex)
 
             # Compute hash with same salt
@@ -160,8 +165,8 @@ class UserStorageService:
             count = session.query(LocalUser).count()
             session.close()
             return count > 0
-        except Exception as e:
-            logger.error(f"Failed to check user count: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to check user count: %s", e)
             return False
 
     def create_user(
@@ -192,7 +197,11 @@ class UserStorageService:
             session = self._get_session()
 
             # Check if username already exists
-            existing = session.query(LocalUser).filter(LocalUser.username == username).first()
+            existing = (
+                session.query(LocalUser)
+                .filter(LocalUser.username == username)
+                .first()  # pyright: ignore[reportGeneralTypeIssues]
+            )
             if existing:
                 session.close()
                 raise UserStorageError(f"Username '{username}' already exists")
@@ -220,19 +229,19 @@ class UserStorageService:
 
             # Refresh to get the ID
             session.refresh(user)
-            user_id = user.id
+            user_id = user.id  # pyright: ignore[reportReturnType]
 
             session.close()
 
-            logger.info(f"Created user '{username}' (admin={is_admin})")
+            logger.info("Created user '%s' (admin=%s)", username, is_admin)
 
             # Return a detached copy
             return self.get_user_by_id(user_id), temp_password
 
         except UserStorageError:
             raise
-        except Exception as e:
-            logger.error(f"Failed to create user: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to create user: %s", e)
             raise UserStorageError(f"Failed to create user: {e}") from e
 
     def create_first_user(self, username: str, password: str) -> LocalUser | None:
@@ -260,10 +269,10 @@ class UserStorageService:
                 must_change_password=False,
                 created_by="system",
             )
-            logger.info(f"Created first admin user: {username}")
+            logger.info("Created first admin user: %s", username)
             return user
-        except Exception as e:
-            logger.error(f"Failed to create first user: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to create first user: %s", e)
             return None
 
     def authenticate(self, username: str, password: str) -> LocalUser | None:
@@ -283,7 +292,7 @@ class UserStorageService:
                 session.query(LocalUser)
                 .filter(
                     LocalUser.username == username,
-                    LocalUser.is_active == True,  # noqa: E712
+                    LocalUser.is_active.is_(True),
                 )
                 .first()
             )
@@ -292,23 +301,25 @@ class UserStorageService:
                 session.close()
                 return None
 
-            if not self._verify_password(password, user.password_hash):
+            if not self._verify_password(  # pyright: ignore[reportArgumentType]
+                password, user.password_hash
+            ):
                 session.close()
                 return None
 
             # Update last login time
-            user.last_login_at = datetime.now(UTC)
+            user.last_login_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
             session.commit()
 
             # Get user ID before closing session
-            user_id = user.id
+            user_id = user.id  # pyright: ignore[reportReturnType]
             session.close()
 
             # Return fresh copy
             return self.get_user_by_id(user_id)
 
-        except Exception as e:
-            logger.error(f"Authentication error: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Authentication error: %s", e)
             return None
 
     def get_user_by_id(self, user_id: int) -> LocalUser | None:
@@ -322,7 +333,11 @@ class UserStorageService:
         """
         try:
             session = self._get_session()
-            user = session.query(LocalUser).filter(LocalUser.id == user_id).first()
+            user = (
+                session.query(LocalUser)
+                .filter(LocalUser.id == user_id)
+                .first()  # pyright: ignore[reportGeneralTypeIssues]
+            )
 
             if user:
                 # Create a detached copy
@@ -330,8 +345,8 @@ class UserStorageService:
 
             session.close()
             return user
-        except Exception as e:
-            logger.error(f"Failed to get user by ID: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to get user by ID: %s", e)
             return None
 
     def get_user_by_username(self, username: str) -> LocalUser | None:
@@ -345,15 +360,19 @@ class UserStorageService:
         """
         try:
             session = self._get_session()
-            user = session.query(LocalUser).filter(LocalUser.username == username).first()
+            user = (
+                session.query(LocalUser)
+                .filter(LocalUser.username == username)
+                .first()  # pyright: ignore[reportGeneralTypeIssues]
+            )
 
             if user:
                 session.expunge(user)
 
             session.close()
             return user
-        except Exception as e:
-            logger.error(f"Failed to get user by username: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to get user by username: %s", e)
             return None
 
     def list_users(self) -> list[LocalUser]:
@@ -364,7 +383,11 @@ class UserStorageService:
         """
         try:
             session = self._get_session()
-            users = session.query(LocalUser).order_by(LocalUser.username).all()
+            users = (
+                session.query(LocalUser)
+                .order_by(LocalUser.username)
+                .all()  # pyright: ignore[reportGeneralTypeIssues]
+            )
 
             # Detach all users
             for user in users:
@@ -372,8 +395,8 @@ class UserStorageService:
 
             session.close()
             return users
-        except Exception as e:
-            logger.error(f"Failed to list users: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to list users: %s", e)
             return []
 
     def change_password(
@@ -395,31 +418,37 @@ class UserStorageService:
         try:
             session = self._get_session()
 
-            user = session.query(LocalUser).filter(LocalUser.username == username).first()
+            user = (
+                session.query(LocalUser)
+                .filter(LocalUser.username == username)
+                .first()  # pyright: ignore[reportGeneralTypeIssues]
+            )
 
             if not user:
                 session.close()
                 return False
 
             # Verify old password
-            if not self._verify_password(old_password, user.password_hash):
+            if not self._verify_password(  # pyright: ignore[reportArgumentType]
+                old_password, user.password_hash
+            ):
                 session.close()
                 return False
 
             # Set new password
             new_hash, _ = self._hash_password(new_password)
-            user.password_hash = new_hash
-            user.must_change_password = False
-            user.updated_at = datetime.now(UTC)
+            user.password_hash = new_hash  # pyright: ignore[reportAttributeAccessIssue]
+            user.must_change_password = False  # pyright: ignore[reportAttributeAccessIssue]
+            user.updated_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
 
             session.commit()
             session.close()
 
-            logger.info(f"Password changed for user '{username}'")
+            logger.info("Password changed for user '%s'", username)
             return True
 
-        except Exception as e:
-            logger.error(f"Failed to change password: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to change password: %s", e)
             return False
 
     def reset_password(self, username: str, admin_username: str) -> str | None:
@@ -435,7 +464,11 @@ class UserStorageService:
         try:
             session = self._get_session()
 
-            user = session.query(LocalUser).filter(LocalUser.username == username).first()
+            user = (
+                session.query(LocalUser)
+                .filter(LocalUser.username == username)
+                .first()  # pyright: ignore[reportGeneralTypeIssues]
+            )
 
             if not user:
                 session.close()
@@ -445,18 +478,18 @@ class UserStorageService:
             temp_password = self._generate_temp_password()
             new_hash, _ = self._hash_password(temp_password)
 
-            user.password_hash = new_hash
-            user.must_change_password = True
-            user.updated_at = datetime.now(UTC)
+            user.password_hash = new_hash  # pyright: ignore[reportAttributeAccessIssue]
+            user.must_change_password = True  # pyright: ignore[reportAttributeAccessIssue]
+            user.updated_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
 
             session.commit()
             session.close()
 
-            logger.info(f"Password reset for user '{username}' by admin '{admin_username}'")
+            logger.info("Password reset for user '%s' by admin '%s'", username, admin_username)
             return temp_password
 
-        except Exception as e:
-            logger.error(f"Failed to reset password: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to reset password: %s", e)
             return None
 
     def set_admin(self, username: str, is_admin: bool, admin_username: str) -> bool:
@@ -473,24 +506,28 @@ class UserStorageService:
         try:
             session = self._get_session()
 
-            user = session.query(LocalUser).filter(LocalUser.username == username).first()
+            user = (
+                session.query(LocalUser)
+                .filter(LocalUser.username == username)
+                .first()  # pyright: ignore[reportGeneralTypeIssues]
+            )
 
             if not user:
                 session.close()
                 return False
 
-            user.is_admin = is_admin
-            user.updated_at = datetime.now(UTC)
+            user.is_admin = is_admin  # pyright: ignore[reportAttributeAccessIssue]
+            user.updated_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
 
             session.commit()
             session.close()
 
             action = "granted admin to" if is_admin else "removed admin from"
-            logger.info(f"Admin '{admin_username}' {action} user '{username}'")
+            logger.info("Admin '%s' %s user '%s'", admin_username, action, username)
             return True
 
-        except Exception as e:
-            logger.error(f"Failed to set admin status: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to set admin status: %s", e)
             return False
 
     def set_active(self, username: str, is_active: bool, admin_username: str) -> bool:
@@ -507,24 +544,28 @@ class UserStorageService:
         try:
             session = self._get_session()
 
-            user = session.query(LocalUser).filter(LocalUser.username == username).first()
+            user = (
+                session.query(LocalUser)
+                .filter(LocalUser.username == username)
+                .first()  # pyright: ignore[reportGeneralTypeIssues]
+            )
 
             if not user:
                 session.close()
                 return False
 
-            user.is_active = is_active
-            user.updated_at = datetime.now(UTC)
+            user.is_active = is_active  # pyright: ignore[reportAttributeAccessIssue]
+            user.updated_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
 
             session.commit()
             session.close()
 
             action = "enabled" if is_active else "disabled"
-            logger.info(f"Admin '{admin_username}' {action} user '{username}'")
+            logger.info("Admin '%s' %s user '%s'", admin_username, action, username)
             return True
 
-        except Exception as e:
-            logger.error(f"Failed to set active status: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to set active status: %s", e)
             return False
 
     def delete_user(self, username: str, admin_username: str) -> bool:
@@ -540,7 +581,11 @@ class UserStorageService:
         try:
             session = self._get_session()
 
-            user = session.query(LocalUser).filter(LocalUser.username == username).first()
+            user = (
+                session.query(LocalUser)
+                .filter(LocalUser.username == username)
+                .first()  # pyright: ignore[reportGeneralTypeIssues]
+            )
 
             if not user:
                 session.close()
@@ -550,11 +595,11 @@ class UserStorageService:
             session.commit()
             session.close()
 
-            logger.info(f"Admin '{admin_username}' deleted user '{username}'")
+            logger.info("Admin '%s' deleted user '%s'", admin_username, username)
             return True
 
-        except Exception as e:
-            logger.error(f"Failed to delete user: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to delete user: %s", e)
             return False
 
     def update_user(
@@ -576,27 +621,31 @@ class UserStorageService:
         try:
             session = self._get_session()
 
-            user = session.query(LocalUser).filter(LocalUser.username == username).first()
+            user = (
+                session.query(LocalUser)
+                .filter(LocalUser.username == username)
+                .first()  # pyright: ignore[reportGeneralTypeIssues]
+            )
 
             if not user:
                 session.close()
                 return False
 
             if email is not None:
-                user.email = email
+                user.email = email  # pyright: ignore[reportAttributeAccessIssue]
             if display_name is not None:
-                user.display_name = display_name
+                user.display_name = display_name  # pyright: ignore[reportAttributeAccessIssue]
 
-            user.updated_at = datetime.now(UTC)
+            user.updated_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
 
             session.commit()
             session.close()
 
-            logger.info(f"Updated profile for user '{username}'")
+            logger.info("Updated profile for user '%s'", username)
             return True
 
-        except Exception as e:
-            logger.error(f"Failed to update user: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to update user: %s", e)
             return False
 
 
@@ -606,7 +655,7 @@ _user_storage: UserStorageService | None = None
 
 def get_user_storage() -> UserStorageService:
     """Get the user storage service singleton."""
-    global _user_storage
+    global _user_storage  # pylint: disable=global-statement
     if _user_storage is None:
         _user_storage = UserStorageService()
     return _user_storage
@@ -614,5 +663,5 @@ def get_user_storage() -> UserStorageService:
 
 def reset_user_storage() -> None:
     """Reset the user storage singleton (useful for testing)."""
-    global _user_storage
+    global _user_storage  # pylint: disable=global-statement
     _user_storage = None

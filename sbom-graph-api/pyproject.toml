@@ -22,6 +22,7 @@ dependencies = [
     "cryptography>=46.0.5",
     "sqlalchemy>=2.0.0",
     "werkzeug>=3.1.6",
+    "jsonschema>=4.20.0",
     "sbom-graph-model",
 ]
 
@@ -31,12 +32,28 @@ dev = [
     "pytest-cov>=4.0.0",
     "ruff>=0.1.0",
     "bandit[toml]>=1.7.0",
+    "pandas-stubs>=2.0.0",
+    "types-jsonschema>=4.20.0",
+    "types-gunicorn>=23.0.0",
+    "types-ldap3>=2.9.0",
+    "types-networkx>=3.0",
+    "types-openpyxl>=3.1.0",
+    "types-WTForms>=3.0.0",
+    "pylint>=4.0.5",
+    "mypy>=1.19.1",
 ]
 
 [project.scripts]
 sbom-graph-api = "sbom_graph_api.app:main"
 
 [tool.uv]
+
+[[tool.uv.index]]
+url = "https://nexus.devuk.mimecast.lan:8443/nexus/repository/pypi.org/simple/"
+
+[[tool.uv.index]]
+url = "https://nexus.devuk.mimecast.lan:8443/nexus/repository/pypi-all/simple/"
+default = true
 
 [tool.uv.sources]
 sbom-graph-model = { path = "../sbom-graph-model", editable = true }
@@ -64,6 +81,65 @@ skips = []
 
 [tool.bandit.assert_used]
 skips = ["*_test.py", "test_*.py"]
+
+[tool.pylint.main]
+# Let pylint discover packages installed in the project venv.
+init-hook = "import sys, pathlib; [sys.path.extend([str(d) for d in sorted(p.glob('python*/site-packages'))]) for p in [pathlib.Path(c, 'lib') for c in ['.venv', 'sbom-graph-api/.venv']] if p.exists()]; src = pathlib.Path('sbom-graph-api/src').resolve(); sys.path.insert(0, str(src)) if src.is_dir() and str(src) not in sys.path else None"
+
+# Ruff handles import ordering; disable duplicate-code since report
+# generators legitimately share structural patterns.
+disable = [
+    "duplicate-code",       # R0801 — report generators share patterns
+    "cyclic-import",        # R0401 — package __init__ ↔ sub-module
+    "too-many-positional-arguments",  # R0917 — duplicates too-many-arguments
+    "import-outside-toplevel",        # C0415 — intentional lazy imports
+]
+
+# Singleton module-level variables are intentionally lowercase.
+[tool.pylint."messages control"]
+good-names = ["e", "f", "i", "j", "k", "v", "bp", "db", "ws"]
+
+[tool.pylint.basic]
+const-rgx = "^(_?[A-Z][A-Z0-9_]*|__[a-z_]+__|_[a-z_]+)$"
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint.design]
+max-args = 12
+max-locals = 55
+max-returns = 11
+max-branches = 21
+max-statements = 85
+max-attributes = 15
+max-public-methods = 60
+max-module-lines = 4000
+max-nested-blocks = 6
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.14"
+extraPaths = ["src"]
+
+[tool.mypy]
+python_executable = ".venv/bin/python"
+mypy_path = "src"
+namespace_packages = true
+explicit_package_bases = true
+ignore_missing_imports = false
+
+[[tool.mypy.overrides]]
+module = "falkordb.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pyvis.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "flask_wtf.*"
+ignore_missing_imports = true
 
 [build-system]
 requires = ["hatchling"]

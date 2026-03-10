@@ -16,6 +16,8 @@ from sbom_graph_model.spdx import SPDXProcessor, SPDXValidationError
 
 from sbom_graph_api.config import get_config
 from sbom_graph_api.routes.auth import auth_required
+from sbom_graph_api.schemas.inbound import SBOM_UPLOAD_SCHEMA, VEX_UPLOAD_SCHEMA
+from sbom_graph_api.utils.validation import validate_json_body
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +33,7 @@ def _create_persistence() -> Persistence:
         A configured Persistence instance connected to FalkorDB.
     """
     config = get_config().falkordb
-    internal_prefixes = Persistence.parse_internal_prefixes(
-        os.environ.get("INTERNAL_PREFIXES", "")
-    )
+    internal_prefixes = Persistence.parse_internal_prefixes(os.environ.get("INTERNAL_PREFIXES", ""))
 
     return Persistence(
         host=config.host,
@@ -89,18 +89,14 @@ def upload_cyclonedx() -> tuple[Response, int]:
         return jsonify({"error": "Content-Type must be application/json"}), 415
 
     body = request.get_json(silent=True)
-    if body is None:
-        return jsonify({"error": "Request body must be valid JSON"}), 400
-
     if not isinstance(body, dict):
         return jsonify({"error": "Request body must be a JSON object"}), 400
 
-    sbom = body.get("sbom")
-    if sbom is None:
-        return jsonify({"error": "Missing required field: sbom"}), 400
+    errors = validate_json_body(body, SBOM_UPLOAD_SCHEMA)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
 
-    if not isinstance(sbom, dict):
-        return jsonify({"error": "Field 'sbom' must be a JSON object"}), 400
+    sbom = body["sbom"]
 
     # Extract optional parameters; derive defaults from SBOM metadata
     metadata = sbom.get("metadata", {})
@@ -145,7 +141,7 @@ def upload_cyclonedx() -> tuple[Response, int]:
         logger.warning("CycloneDX validation failed: %s", e)
         return jsonify({"error": "CycloneDX validation failed", "detail": str(e)}), 422
 
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         logger.exception("Unexpected error processing SBOM")
         return jsonify({"error": "An unexpected error occurred while processing the SBOM"}), 500
 
@@ -163,14 +159,15 @@ def upload_vex() -> tuple[Response, int]:
         JSON summary: ``{status, statements_count, linked_vulnerabilities}``.
     """
     body = request.get_json(silent=True)
-    if not body:
-        return jsonify({"error": "JSON body required"}), 400
-
     if not isinstance(body, dict):
         return jsonify({"error": "Request body must be a JSON object"}), 400
 
+    errors = validate_json_body(body, VEX_UPLOAD_SCHEMA)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
+
     try:
-        from sbom_graph_model.vex import VexProcessor, VexProcessingError
+        from sbom_graph_model.vex import VexProcessingError, VexProcessor
     except ImportError:
         return jsonify({"error": "VEX processing module not available"}), 503
 
@@ -181,19 +178,23 @@ def upload_vex() -> tuple[Response, int]:
         result = processor.process_vex_document(body)
     except VexProcessingError as e:
         logger.warning("VEX document validation failed", exc_info=e)
-        return jsonify({
-            "error": "VEX document validation failed",
-            "error_code": "VEX_VALIDATION_ERROR",
-        }), 422
-    except Exception:
+        return jsonify(
+            {
+                "error": "VEX document validation failed",
+                "error_code": "VEX_VALIDATION_ERROR",
+            }
+        ), 422
+    except Exception:  # pylint: disable=broad-exception-caught
         logger.exception("VEX processing failed")
         return jsonify({"error": "Internal error processing VEX document"}), 500
 
-    return jsonify({
-        "status": "ok",
-        "statements_count": result["statements_processed"],
-        "linked_vulnerabilities": result["linked_vulnerabilities"],
-    }), 201
+    return jsonify(
+        {
+            "status": "ok",
+            "statements_count": result["statements_processed"],
+            "linked_vulnerabilities": result["linked_vulnerabilities"],
+        }
+    ), 201
 
 
 @bp.route("/spdx", methods=["POST"])
@@ -222,19 +223,14 @@ def upload_spdx() -> tuple[Response, int]:
         return jsonify({"error": "Content-Type must be application/json"}), 415
 
     body = request.get_json(silent=True)
-    if body is None:
-        return jsonify({"error": "Request body must be valid JSON"}), 400
-
     if not isinstance(body, dict):
         return jsonify({"error": "Request body must be a JSON object"}), 400
 
-    sbom = body.get("sbom")
-    if sbom is None:
-        return jsonify({"error": "Missing required field: sbom"}), 400
+    errors = validate_json_body(body, SBOM_UPLOAD_SCHEMA)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
 
-    if not isinstance(sbom, dict):
-        return jsonify({"error": "Field 'sbom' must be a JSON object"}), 400
-
+    sbom = body["sbom"]
     doc_name = sbom.get("name", "")
     public_app_id = body.get("public_app_id") or doc_name or "unknown"
     app_id = body.get("app_id") or _derive_app_id(public_app_id)
@@ -275,7 +271,7 @@ def upload_spdx() -> tuple[Response, int]:
         logger.warning("SPDX validation failed: %s", e)
         return jsonify({"error": "SPDX validation failed"}), 422
 
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         logger.exception("Unexpected error processing SPDX SBOM")
         return jsonify({"error": "An unexpected error occurred while processing the SBOM"}), 500
 
@@ -320,25 +316,22 @@ def upload_sbom() -> tuple[Response, int]:
         return jsonify({"error": "Content-Type must be application/json"}), 415
 
     body = request.get_json(silent=True)
-    if body is None:
-        return jsonify({"error": "Request body must be valid JSON"}), 400
-
     if not isinstance(body, dict):
         return jsonify({"error": "Request body must be a JSON object"}), 400
 
-    sbom = body.get("sbom")
-    if sbom is None:
-        return jsonify({"error": "Missing required field: sbom"}), 400
+    errors = validate_json_body(body, SBOM_UPLOAD_SCHEMA)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
 
-    if not isinstance(sbom, dict):
-        return jsonify({"error": "Field 'sbom' must be a JSON object"}), 400
-
+    sbom = body["sbom"]
     detected_format = _detect_sbom_format(sbom)
     if detected_format is None:
-        return jsonify({
-            "error": "Unable to detect SBOM format. "
-            "Provide a CycloneDX or SPDX 2.3 JSON document."
-        }), 400
+        return jsonify(
+            {
+                "error": "Unable to detect SBOM format. "
+                "Provide a CycloneDX or SPDX 2.3 JSON document."
+            }
+        ), 400
 
     persistence = _create_persistence()
 
@@ -358,19 +351,21 @@ def upload_sbom() -> tuple[Response, int]:
                 gitlab_project_url=project_url,
                 json_data=sbom,
             )
-            return jsonify({
-                "status": "ok",
-                "format": "cyclonedx",
-                "app_id": app_id,
-                "public_app_id": public_app_id,
-                "projects_count": len(projects),
-                "dependencies_count": sum(len(d) for d in dep_v.values()),
-                "defects_count": len(defects),
-            }), 201
+            return jsonify(
+                {
+                    "status": "ok",
+                    "format": "cyclonedx",
+                    "app_id": app_id,
+                    "public_app_id": public_app_id,
+                    "projects_count": len(projects),
+                    "dependencies_count": sum(len(d) for d in dep_v.values()),
+                    "defects_count": len(defects),
+                }
+            ), 201
         except CycloneDXValidationError:
             logger.exception("CycloneDX SBOM validation error")
             return jsonify({"error": "CycloneDX validation failed"}), 422
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             logger.exception("Unexpected error processing CycloneDX SBOM")
             return jsonify({"error": "An unexpected error occurred"}), 500
 
@@ -381,25 +376,27 @@ def upload_sbom() -> tuple[Response, int]:
         project_url = body.get("project_url")
 
         try:
-            processor = SPDXProcessor(persistence=persistence)
-            packages, dep_v, defects = processor.process_spdx_json(
+            spdx_processor = SPDXProcessor(persistence=persistence)
+            packages, dep_v, defects = spdx_processor.process_spdx_json(
                 app_id=app_id,
                 public_app_id=public_app_id,
                 project_url=project_url,
                 json_data=sbom,
             )
-            return jsonify({
-                "status": "ok",
-                "format": "spdx",
-                "app_id": app_id,
-                "public_app_id": public_app_id,
-                "projects_count": len(packages),
-                "dependencies_count": sum(len(d) for d in dep_v.values()),
-                "defects_count": len(defects),
-            }), 201
-        except SPDXValidationError as e:
+            return jsonify(
+                {
+                    "status": "ok",
+                    "format": "spdx",
+                    "app_id": app_id,
+                    "public_app_id": public_app_id,
+                    "projects_count": len(packages),
+                    "dependencies_count": sum(len(d) for d in dep_v.values()),
+                    "defects_count": len(defects),
+                }
+            ), 201
+        except SPDXValidationError:
             logger.exception("SPDX validation failed during SBOM upload")
             return jsonify({"error": "SPDX validation failed"}), 422
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             logger.exception("Unexpected error processing SPDX SBOM")
             return jsonify({"error": "An unexpected error occurred"}), 500

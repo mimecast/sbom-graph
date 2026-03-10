@@ -9,7 +9,9 @@ class TestProjectsJsonFormat:
 
     def test_projects_returns_json_when_requested(self, client):
         """Test projects endpoint returns JSON when format=json."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = [
                 {"project_name": "project-a", "version": "1.0.0"},
@@ -24,7 +26,9 @@ class TestProjectsJsonFormat:
 
     def test_projects_json_has_required_fields(self, client):
         """Test projects JSON response has required schema fields."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = [
                 {"project_name": "project-a", "version": "1.0.0"},
@@ -41,7 +45,9 @@ class TestProjectsJsonFormat:
 
     def test_projects_json_has_correct_stats(self, client):
         """Test projects JSON stats are calculated correctly."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = [
                 {"project_name": "project-a", "version": "1.0.0"},
@@ -58,7 +64,9 @@ class TestProjectsJsonFormat:
 
     def test_projects_json_has_content_disposition(self, client):
         """Test projects JSON response has Content-Disposition header."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = []
             mock_get_service.return_value = mock_service
@@ -70,7 +78,9 @@ class TestProjectsJsonFormat:
 
     def test_projects_json_internal_only_filter(self, client):
         """Test projects JSON respects internal_only filter."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = []
             mock_get_service.return_value = mock_service
@@ -86,7 +96,9 @@ class TestSnapshotsJsonFormat:
 
     def test_snapshots_returns_json_when_requested(self, client):
         """Test snapshots endpoint returns JSON when format=json."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_snapshot_dependencies.return_value = [
                 {
@@ -105,7 +117,9 @@ class TestSnapshotsJsonFormat:
 
     def test_snapshots_json_has_required_fields(self, client):
         """Test snapshots JSON response has required schema fields."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_snapshot_dependencies.return_value = []
             mock_get_service.return_value = mock_service
@@ -124,7 +138,9 @@ class TestSelfDependenciesJsonFormat:
 
     def test_self_dependencies_returns_json_when_requested(self, client):
         """Test self-dependencies endpoint returns JSON when format=json."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_self_dependencies.return_value = []
             mock_get_service.return_value = mock_service
@@ -136,7 +152,9 @@ class TestSelfDependenciesJsonFormat:
 
     def test_self_dependencies_json_has_required_fields(self, client):
         """Test self-dependencies JSON response has required schema fields."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_self_dependencies.return_value = []
             mock_get_service.return_value = mock_service
@@ -154,7 +172,9 @@ class TestNonSemverVersionsJsonFormat:
 
     def test_non_semver_returns_json_when_requested(self, client):
         """Test non-semver-versions endpoint returns JSON when format=json."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_non_semver_versions.return_value = []
             mock_get_service.return_value = mock_service
@@ -166,7 +186,9 @@ class TestNonSemverVersionsJsonFormat:
 
     def test_non_semver_json_has_reason_breakdown(self, client):
         """Test non-semver JSON includes reason breakdown in stats."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_non_semver_versions.return_value = [
                 {"project_name": "lib-a", "version": "latest", "reason": "Non-standard format"},
@@ -187,7 +209,9 @@ class TestMultiVersionSourcesJsonFormat:
 
     def test_multi_version_sources_returns_json_when_requested(self, client):
         """Test multi-version-sources endpoint returns JSON when format=json."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_multi_version_dependency_sources.return_value = {
                 "target": {
@@ -206,7 +230,9 @@ class TestMultiVersionSourcesJsonFormat:
 
     def test_multi_version_sources_json_not_found(self, client):
         """Test multi-version-sources returns 404 JSON for missing project."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_multi_version_dependency_sources.return_value = {
                 "target": None,
@@ -226,7 +252,9 @@ class TestVersionDependenciesJsonFormat:
 
     def test_dependencies_returns_json_when_requested(self, client):
         """Test version dependencies report returns JSON when format=json."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.is_project_semver_compliant.return_value = (True, [])
             mock_service.get_latest_semver_version.return_value = "1.0.0"
@@ -241,7 +269,9 @@ class TestVersionDependenciesJsonFormat:
 
     def test_dependencies_json_has_required_fields(self, client):
         """Test version dependencies JSON has required schema fields."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.is_project_semver_compliant.return_value = (True, [])
             mock_service.get_latest_semver_version.return_value = "1.0.0"
@@ -269,7 +299,9 @@ class TestVersionDependenciesJsonFormat:
 
     def test_dependencies_json_includes_semver_info(self, client):
         """Test version dependencies JSON includes SemVer compliance info."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.is_project_semver_compliant.return_value = (True, [])
             mock_service.get_latest_semver_version.return_value = "2.0.0"
@@ -285,7 +317,9 @@ class TestVersionDependenciesJsonFormat:
 
     def test_dependencies_landing_page(self, client):
         """Test version dependencies report landing page."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.is_project_semver_compliant.return_value = (True, [])
             mock_service.get_latest_semver_version.return_value = "1.0.0"
@@ -308,7 +342,9 @@ class TestHtmlReportDownloadLinks:
 
     def test_projects_html_has_json_download_link(self, client):
         """Test projects HTML includes JSON download link."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = []
             mock_get_service.return_value = mock_service
@@ -321,7 +357,9 @@ class TestHtmlReportDownloadLinks:
 
     def test_snapshots_html_has_json_download_link(self, client):
         """Test snapshots HTML includes JSON download link."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_snapshot_dependencies.return_value = []
             mock_get_service.return_value = mock_service

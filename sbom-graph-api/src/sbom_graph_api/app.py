@@ -8,7 +8,7 @@ import logging
 import os
 from datetime import timedelta
 
-from flask import Flask, jsonify, redirect, render_template, session, url_for
+from flask import Flask, Response, jsonify, redirect, render_template, session, url_for
 from flask_jwt_extended import JWTManager
 from flask_wtf.csrf import CSRFError, CSRFProtect
 
@@ -19,11 +19,13 @@ logger = logging.getLogger(__name__)
 
 csrf = CSRFProtect()
 
-_INSECURE_DEFAULT_SECRETS = frozenset({
-    "dev-secret-key-change-in-production",
-    "jwt-secret-key-change-in-production",
-    "db-encryption-key-change-in-production",
-})
+_INSECURE_DEFAULT_SECRETS = frozenset(
+    {
+        "dev-secret-key-change-in-production",
+        "jwt-secret-key-change-in-production",
+        "db-encryption-key-change-in-production",
+    }
+)
 
 
 def create_app() -> Flask:
@@ -88,19 +90,19 @@ def create_app() -> Flask:
 
     # JWT error handlers
     @jwt.expired_token_loader
-    def expired_token_callback(jwt_header, jwt_payload):
+    def expired_token_callback(_jwt_header, _jwt_payload):
         if _is_api_request():
             return jsonify({"error": "Token has expired", "code": "token_expired"}), 401
         return redirect(url_for("auth.login"))
 
     @jwt.invalid_token_loader
-    def invalid_token_callback(error):
+    def invalid_token_callback(_error):
         if _is_api_request():
             return jsonify({"error": "Invalid token", "code": "invalid_token"}), 401
         return redirect(url_for("auth.login"))
 
     @jwt.unauthorized_loader
-    def missing_token_callback(error):
+    def missing_token_callback(_error):
         if _is_api_request():
             return jsonify({"error": "Authorization required", "code": "missing_token"}), 401
         return redirect(url_for("auth.login"))
@@ -117,13 +119,23 @@ def create_app() -> Flask:
     app.register_blueprint(ingest.bp)
     app.register_blueprint(api_v1.bp)
 
-    # Exempt JWT-only endpoints from CSRF (no browser form)
+    # CSRF exemptions — these endpoints authenticate exclusively via JWT
+    # Bearer tokens (not cookies), so CSRF does not apply.  See CWE-352.
     csrf.exempt(app.view_functions["auth.refresh"])
     csrf.exempt(app.view_functions["ingest.upload_cyclonedx"])
     csrf.exempt(app.view_functions["ingest.upload_spdx"])
     csrf.exempt(app.view_functions["ingest.upload_sbom"])
     csrf.exempt(app.view_functions["ingest.upload_vex"])
     csrf.exempt(api_v1.bp)
+
+    @app.after_request
+    def _set_security_headers(response: Response) -> Response:
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault(
+            "Referrer-Policy", "strict-origin-when-cross-origin"
+        )
+        return response
 
     # Health check endpoint (no auth, no CSRF)
     @csrf.exempt
@@ -144,7 +156,7 @@ def create_app() -> Flask:
             # Simple connectivity check
             service.execute_query("RETURN 1", {})
             return jsonify({"status": "ready"})
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Readiness check failed: %s", e)
             return jsonify({"status": "not_ready", "error": "Database connection failed"}), 503
 
@@ -170,13 +182,11 @@ def create_app() -> Flask:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = (
-            "geolocation=(), microphone=(), camera=()"
-        )
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
         return response
 
     @app.errorhandler(CSRFError)
-    def handle_csrf_error(e):
+    def handle_csrf_error(e):  # pylint: disable=unused-argument
         """Return a user-friendly message for CSRF failures."""
         if _is_api_request():
             return jsonify({"error": "CSRF token missing or invalid"}), 400

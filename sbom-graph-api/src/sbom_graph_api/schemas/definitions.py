@@ -304,7 +304,9 @@ MULTI_VERSION_SOURCES_SCHEMA: dict[str, Any] = {
     "$schema": SCHEMA_VERSION,
     "$id": "/schemas/multi-version-sources",
     "title": "Multi-Version Dependency Sources Report",
-    "description": "Report showing dependencies with multiple versions and their contributing applications",
+    "description": (
+        "Report showing dependencies with multiple versions and their contributing applications"
+    ),
     "type": "object",
     "required": ["report_type", "generated_at", "target", "stats", "multi_version_dependencies"],
     "properties": {
@@ -621,7 +623,10 @@ VERSION_DEPENDENCIES_SCHEMA: dict[str, Any] = {
     "$schema": SCHEMA_VERSION,
     "$id": "/schemas/version-dependencies",
     "title": "Version Dependencies Report",
-    "description": "Report of transitive dependencies for a project version, showing what the version depends ON at all depths",
+    "description": (
+        "Report of transitive dependencies for a project version,"
+        " showing what the version depends ON at all depths"
+    ),
     "type": "object",
     "required": ["report_type", "generated_at", "project_name", "version", "summary", "data"],
     "properties": {
@@ -761,7 +766,10 @@ DEPENDANTS_SCHEMA: dict[str, Any] = {
         },
         "longest_only": {
             "type": "boolean",
-            "description": "If true, only longest paths are included (default for vulnerability prioritization)",
+            "description": (
+                "If true, only longest paths are included"
+                " (default for vulnerability prioritization)"
+            ),
         },
         "target": {
             "type": "object",
@@ -1069,8 +1077,8 @@ VULNERABILITY_DEPENDANTS_SCHEMA: dict[str, Any] = {
 # Centrality Schema
 # ============================================================================
 CENTRALITY_SCHEMA: dict[str, Any] = {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://sbom-graph-api/schemas/centrality",
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/centrality",
     "title": "Internal Library Centrality Report",
     "description": "Centrality metrics (inDegree/outDegree) for internal libraries",
     "type": "object",
@@ -1121,7 +1129,13 @@ CENTRALITY_SCHEMA: dict[str, Any] = {
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["project_group", "project_name", "version_name", "inDegree", "outDegree"],
+                "required": [
+                    "project_group",
+                    "project_name",
+                    "version_name",
+                    "inDegree",
+                    "outDegree",
+                ],
                 "properties": {
                     "project_group": {
                         "type": "string",
@@ -1144,6 +1158,530 @@ CENTRALITY_SCHEMA: dict[str, Any] = {
                         "type": "integer",
                         "minimum": 0,
                         "description": "Number of dependencies this library has",
+                    },
+                },
+            },
+        },
+    },
+}
+
+
+# ============================================================================
+# Licenses Report Schema
+# ============================================================================
+LICENSES_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/licenses",
+    "title": "Licenses Report",
+    "description": "All licenses grouped by risk category with usage counts",
+    "type": "object",
+    "required": ["report_type", "generated_at", "total", "licenses"],
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "licenses",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "filter": {
+            "type": "string",
+            "enum": ["all", "internal_only"],
+            "description": "Filter applied to the data",
+        },
+        "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total count of licenses",
+        },
+        "licenses": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["spdx_id", "name", "risk_category"],
+                "properties": {
+                    "spdx_id": {
+                        "type": "string",
+                        "description": "SPDX license identifier",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Full license name",
+                    },
+                    "risk_category": {
+                        "type": "string",
+                        "description": (
+                            "Risk category (Copyleft, Weak Copyleft, Permissive, Unknown)"
+                        ),
+                    },
+                    "usage_count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Number of packages using this license",
+                    },
+                },
+            },
+        },
+    },
+}
+
+# ============================================================================
+# License Summary Report Schema
+# ============================================================================
+LICENSE_SUMMARY_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/license-summary",
+    "title": "License Summary Report",
+    "description": "License BOM for a specific project version including transitive dependencies",
+    "type": "object",
+    "required": [
+        "report_type",
+        "generated_at",
+        "project_name",
+        "version_name",
+        "total",
+        "licenses",
+    ],
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "license-summary",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "project_name": {
+            "type": "string",
+            "description": "The project being analyzed",
+        },
+        "version_name": {
+            "type": "string",
+            "description": "The version being analyzed",
+        },
+        "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total count of license entries",
+        },
+        "licenses": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["project_name", "version"],
+                "properties": {
+                    "project_group": {
+                        "type": ["string", "null"],
+                        "description": "Maven-style project group",
+                    },
+                    "project_name": {
+                        "type": "string",
+                        "description": "Dependency project name",
+                    },
+                    "version": {
+                        "type": "string",
+                        "description": "Dependency version",
+                    },
+                    "purl": {
+                        "type": ["string", "null"],
+                        "description": "Package URL",
+                    },
+                    "spdx_id": {
+                        "type": ["string", "null"],
+                        "description": "SPDX license identifier",
+                    },
+                    "license_name": {
+                        "type": ["string", "null"],
+                        "description": "Full license name",
+                    },
+                    "risk_category": {
+                        "type": ["string", "null"],
+                        "description": (
+                            "Risk category (Copyleft, Weak Copyleft, Permissive, Unknown)"
+                        ),
+                    },
+                },
+            },
+        },
+    },
+}
+
+# ============================================================================
+# License Conflicts Report Schema
+# ============================================================================
+LICENSE_CONFLICTS_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/license-conflicts",
+    "title": "License Conflicts Report",
+    "description": "Projects mixing incompatible license categories in their dependency tree",
+    "type": "object",
+    "required": ["report_type", "generated_at", "total", "conflicts"],
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "license-conflicts",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "filter": {
+            "type": "string",
+            "enum": ["all", "internal_only"],
+            "description": "Filter applied to the data",
+        },
+        "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total count of conflicting projects",
+        },
+        "conflicts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "project_name": {
+                        "type": "string",
+                        "description": "Project with license conflicts",
+                    },
+                    "version": {
+                        "type": "string",
+                        "description": "Project version",
+                    },
+                    "categories": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "License categories found in the dependency tree",
+                    },
+                    "conflicting_licenses": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "spdx_id": {"type": "string"},
+                                "risk_category": {"type": "string"},
+                                "package": {"type": "string"},
+                            },
+                        },
+                        "description": "Specific license conflicts",
+                    },
+                },
+            },
+        },
+    },
+}
+
+# ============================================================================
+# Vulnerability Freshness Report Schema
+# ============================================================================
+VULNERABILITY_FRESHNESS_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/vulnerability-freshness",
+    "title": "Vulnerability Freshness Report",
+    "description": (
+        "Enrichment freshness showing when each package was last scanned for vulnerabilities"
+    ),
+    "type": "object",
+    "required": ["report_type", "generated_at", "stats", "data"],
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "vulnerability-freshness",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "filter": {
+            "type": "string",
+            "enum": ["all", "internal_only"],
+            "description": "Filter applied to the data",
+        },
+        "stats": {
+            "type": "object",
+            "properties": {
+                "total_packages": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Total count of packages",
+                },
+                "never_enriched": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Count of packages never enriched",
+                },
+            },
+            "required": ["total_packages", "never_enriched"],
+        },
+        "data": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["project_name", "version_name"],
+                "properties": {
+                    "project_group": {
+                        "type": ["string", "null"],
+                        "description": "Maven-style project group",
+                    },
+                    "project_name": {
+                        "type": "string",
+                        "description": "Package name",
+                    },
+                    "version_name": {
+                        "type": "string",
+                        "description": "Package version",
+                    },
+                    "purl": {
+                        "type": ["string", "null"],
+                        "description": "Package URL",
+                    },
+                    "last_enriched_at": {
+                        "type": ["string", "null"],
+                        "format": "date-time",
+                        "description": "ISO 8601 timestamp of last enrichment, null if never",
+                    },
+                },
+            },
+        },
+    },
+}
+
+# ============================================================================
+# Policy Violations Report Schema
+# ============================================================================
+POLICY_VIOLATIONS_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/policy-violations",
+    "title": "Policy Violations Report",
+    "description": "Packages with 'bad' policy annotations that are still in use",
+    "type": "object",
+    "required": ["report_type", "generated_at", "stats", "data"],
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "policy-violations",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "filter": {
+            "type": "string",
+            "enum": ["all", "internal_only"],
+            "description": "Filter applied to the data",
+        },
+        "stats": {
+            "type": "object",
+            "properties": {
+                "total_violations": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Total count of policy violations",
+                },
+                "total_affected_dependants": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Total count of dependants affected by violations",
+                },
+            },
+            "required": ["total_violations", "total_affected_dependants"],
+        },
+        "data": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["project_name", "version_name"],
+                "properties": {
+                    "purl": {
+                        "type": ["string", "null"],
+                        "description": "Package URL",
+                    },
+                    "project_name": {
+                        "type": "string",
+                        "description": "Package name",
+                    },
+                    "version_name": {
+                        "type": "string",
+                        "description": "Package version",
+                    },
+                    "justification": {
+                        "type": ["string", "null"],
+                        "description": "Reason for the policy annotation",
+                    },
+                    "created_by": {
+                        "type": ["string", "null"],
+                        "description": "User who created the annotation",
+                    },
+                    "created_at": {
+                        "type": ["string", "null"],
+                        "format": "date-time",
+                        "description": "When the annotation was created",
+                    },
+                    "dependant_count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Number of dependants using this package",
+                    },
+                },
+            },
+        },
+    },
+}
+
+# ============================================================================
+# VEX Coverage Report Schema
+# ============================================================================
+VEX_COVERAGE_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/vex-coverage",
+    "title": "VEX Coverage Report",
+    "description": "VEX coverage statistics across all vulnerabilities",
+    "type": "object",
+    "required": ["report_type", "generated_at", "stats", "data"],
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "vex-coverage",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "filter": {
+            "type": "string",
+            "enum": ["all", "internal_only"],
+            "description": "Filter applied to the data",
+        },
+        "stats": {
+            "type": "object",
+            "properties": {
+                "total_vulnerabilities": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Total count of vulnerabilities",
+                },
+                "with_vex": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Vulnerabilities with VEX statements",
+                },
+                "without_vex": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Vulnerabilities without VEX statements",
+                },
+                "coverage_percent": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100,
+                    "description": "Percentage of vulnerabilities with VEX statements",
+                },
+            },
+            "required": ["total_vulnerabilities", "with_vex", "without_vex"],
+        },
+        "data": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["defect_id", "severity"],
+                "properties": {
+                    "defect_id": {
+                        "type": "string",
+                        "description": "Vulnerability identifier (e.g., CVE-2021-44228)",
+                    },
+                    "severity": {
+                        "type": "string",
+                        "description": "Vulnerability severity level",
+                    },
+                    "description": {
+                        "type": ["string", "null"],
+                        "description": "Description of the vulnerability",
+                    },
+                    "vex_status": {
+                        "type": ["string", "null"],
+                        "description": "VEX status (e.g., not_affected, affected)",
+                    },
+                    "vex_count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Number of VEX statements for this vulnerability",
+                    },
+                },
+            },
+        },
+    },
+}
+
+# ============================================================================
+# Source Repositories Report Schema
+# ============================================================================
+SOURCE_REPOS_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/source-repos",
+    "title": "Source Repositories Report",
+    "description": "All tracked source repositories with linked package counts",
+    "type": "object",
+    "required": ["report_type", "generated_at", "total", "data"],
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "source-repos",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "filter": {
+            "type": "string",
+            "enum": ["all", "internal_only"],
+            "description": "Filter applied to the data",
+        },
+        "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total count of repositories",
+        },
+        "data": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["url"],
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Repository URL",
+                    },
+                    "vcs_type": {
+                        "type": ["string", "null"],
+                        "description": "Version control system type (e.g., git)",
+                    },
+                    "namespace": {
+                        "type": ["string", "null"],
+                        "description": "Repository namespace or organization",
+                    },
+                    "name": {
+                        "type": ["string", "null"],
+                        "description": "Repository name",
+                    },
+                    "package_count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Number of packages sourced from this repository",
                     },
                 },
             },
@@ -1194,7 +1732,9 @@ SCHEMA_INDEX: dict[str, dict[str, Any]] = {
     "version-dependencies": {
         "schema": VERSION_DEPENDENCIES_SCHEMA,
         "endpoint": "/reports/version-dependencies/{project_name}/{version_name}",
-        "description": "Version-to-dependant relationships with SemVer compliance and 'latest' support",
+        "description": (
+            "Version-to-dependant relationships with SemVer compliance and 'latest' support"
+        ),
     },
     "dependants": {
         "schema": DEPENDANTS_SCHEMA,
@@ -1216,7 +1756,56 @@ SCHEMA_INDEX: dict[str, dict[str, Any]] = {
         "endpoint": "/reports/centrality",
         "description": "Centrality metrics for internal libraries",
     },
+    "licenses": {
+        "schema": LICENSES_SCHEMA,
+        "endpoint": "/reports/licenses",
+        "description": "All licenses grouped by risk category",
+    },
+    "license-summary": {
+        "schema": LICENSE_SUMMARY_SCHEMA,
+        "endpoint": "/reports/license-summary",
+        "description": "License BOM for a specific project version",
+    },
+    "license-conflicts": {
+        "schema": LICENSE_CONFLICTS_SCHEMA,
+        "endpoint": "/reports/license-conflicts",
+        "description": "Projects mixing incompatible license categories",
+    },
+    "vulnerability-freshness": {
+        "schema": VULNERABILITY_FRESHNESS_SCHEMA,
+        "endpoint": "/reports/vulnerability-freshness",
+        "description": "Enrichment freshness for vulnerability data",
+    },
+    "policy-violations": {
+        "schema": POLICY_VIOLATIONS_SCHEMA,
+        "endpoint": "/reports/policy-violations",
+        "description": "Packages with bad policy annotations still in use",
+    },
+    "vex-coverage": {
+        "schema": VEX_COVERAGE_SCHEMA,
+        "endpoint": "/reports/vex-coverage",
+        "description": "VEX coverage statistics across vulnerabilities",
+    },
+    "source-repos": {
+        "schema": SOURCE_REPOS_SCHEMA,
+        "endpoint": "/reports/source-repos",
+        "description": "Tracked source repositories with package counts",
+    },
 }
+
+
+def _register_inbound_schemas() -> None:
+    """Register inbound request schemas into SCHEMA_INDEX at import time.
+
+    Kept as a function to avoid circular-import issues with inbound.py
+    importing SCHEMA_VERSION from this module.
+    """
+    from sbom_graph_api.schemas.inbound import INBOUND_SCHEMA_INDEX
+
+    SCHEMA_INDEX.update(INBOUND_SCHEMA_INDEX)
+
+
+_register_inbound_schemas()
 
 
 def get_schema(schema_name: str) -> dict[str, Any] | None:

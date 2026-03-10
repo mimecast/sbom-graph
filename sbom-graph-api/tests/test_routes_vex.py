@@ -10,12 +10,15 @@ class TestUploadVex:
         """Valid OpenVEX document is processed and returns 201."""
         mock_persistence = MagicMock()
 
-        with patch(
-            "sbom_graph_api.routes.ingest._create_persistence",
-            return_value=mock_persistence,
-        ), patch(
-            "sbom_graph_model.vex.VexProcessor.process_vex_document",
-            return_value={"statements_processed": 2, "linked_vulnerabilities": 1},
+        with (
+            patch(
+                "sbom_graph_api.routes.ingest._create_persistence",
+                return_value=mock_persistence,
+            ),
+            patch(
+                "sbom_graph_model.vex.VexProcessor.process_vex_document",
+                return_value={"statements_processed": 2, "linked_vulnerabilities": 1},
+            ),
         ):
             resp = client.post(
                 "/ingest/vex",
@@ -155,7 +158,7 @@ class TestVexCoverageReport:
         ]
 
         with patch(
-            "sbom_graph_api.routes.reports.get_falkordb_service",
+            "sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service",
             return_value=mock_service,
         ):
             resp = client.get("/reports/vex-coverage?format=json")
@@ -179,7 +182,7 @@ class TestVexCoverageReport:
         mock_service.get_vulnerabilities_with_vex.return_value = []
 
         with patch(
-            "sbom_graph_api.routes.reports.get_falkordb_service",
+            "sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service",
             return_value=mock_service,
         ):
             resp = client.get("/reports/vex-coverage")

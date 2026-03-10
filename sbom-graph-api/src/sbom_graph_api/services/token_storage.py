@@ -12,25 +12,19 @@ from datetime import UTC, datetime
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import (
-    Boolean,
-    Column,
-    DateTime,
-    Integer,
-    String,
-    Text,
-    create_engine,
-)
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy import String, Text, create_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from sbom_graph_api.config import DatabaseConfig, get_config
 
 logger = logging.getLogger(__name__)
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):  # pylint: disable=too-few-public-methods
+    """SQLAlchemy declarative base for all models."""
 
 
-class StoredToken(Base):
+class StoredToken(Base):  # pylint: disable=too-few-public-methods
     """SQLAlchemy model for stored tokens."""
 
     __tablename__ = "tokens"
@@ -39,22 +33,20 @@ class StoredToken(Base):
         {"sqlite_autoincrement": True},
     )
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    username = Column(String(255), nullable=False, index=True)
-    token_name = Column(String(255), nullable=False)
-    token_hash = Column(String(64), nullable=False, unique=True)  # SHA-256 hash for lookup
-    encrypted_token = Column(Text, nullable=False)  # Fernet-encrypted token
-    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(UTC))
-    expires_at = Column(DateTime, nullable=True)
-    last_used_at = Column(DateTime, nullable=True)
-    is_revoked = Column(Boolean, nullable=False, default=False)
-    description = Column(Text, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(255), index=True)
+    token_name: Mapped[str] = mapped_column(String(255))
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)  # SHA-256 hash for lookup
+    encrypted_token: Mapped[str] = mapped_column(Text)  # Fernet-encrypted token
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
+    expires_at: Mapped[datetime | None] = mapped_column(default=None)
+    last_used_at: Mapped[datetime | None] = mapped_column(default=None)
+    is_revoked: Mapped[bool] = mapped_column(default=False)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
 
 
 class TokenStorageError(Exception):
     """Raised when token storage operations fail."""
-
-    pass
 
 
 class TokenStorageService:
@@ -107,6 +99,7 @@ class TokenStorageService:
     def _get_session(self) -> Session:
         """Get a new database session."""
         self._get_engine()
+        assert self._session_factory is not None  # Set by _get_engine
         return self._session_factory()
 
     def _hash_token(self, token: str) -> str:
@@ -182,7 +175,7 @@ class TokenStorageService:
                 .filter(
                     StoredToken.username == username,
                     StoredToken.token_name == token_name,
-                    StoredToken.is_revoked == False,  # noqa: E712
+                    StoredToken.is_revoked.is_(False),
                 )
                 .first()
             )
@@ -203,14 +196,14 @@ class TokenStorageService:
 
             session.add(stored_token)
             session.commit()
-            token_id = stored_token.id
+            token_id: int = stored_token.id
             session.close()
 
-            logger.info(f"Stored token '{token_name}' for user {username}")
+            logger.info("Stored token '%s' for user %s", token_name, username)
             return token_id
 
-        except Exception as e:
-            logger.error(f"Failed to store token: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to store token: %s", e)
             raise TokenStorageError(f"Failed to store token: {e}") from e
 
     def get_token(self, token_id: int, username: str) -> dict[str, Any] | None:
@@ -231,7 +224,7 @@ class TokenStorageService:
                 .filter(
                     StoredToken.id == token_id,
                     StoredToken.username == username,
-                    StoredToken.is_revoked == False,  # noqa: E712
+                    StoredToken.is_revoked.is_(False),
                 )
                 .first()
             )
@@ -244,22 +237,40 @@ class TokenStorageService:
             stored.last_used_at = datetime.now(UTC)
             session.commit()
 
+            created = stored.created_at
+            expires = stored.expires_at
+            last_used = stored.last_used_at
+
             result = {
                 "id": stored.id,
                 "username": stored.username,
                 "token_name": stored.token_name,
-                "token": self._decrypt_token(stored.encrypted_token),
-                "created_at": stored.created_at.isoformat() if stored.created_at else None,
-                "expires_at": stored.expires_at.isoformat() if stored.expires_at else None,
-                "last_used_at": stored.last_used_at.isoformat() if stored.last_used_at else None,
+                "token": self._decrypt_token(
+                    str(stored.encrypted_token),
+                ),
+                "created_at": (
+                    created.isoformat()
+                    if created is not None
+                    else None
+                ),
+                "expires_at": (
+                    expires.isoformat()
+                    if expires is not None
+                    else None
+                ),
+                "last_used_at": (
+                    last_used.isoformat()
+                    if last_used is not None
+                    else None
+                ),
                 "description": stored.description,
             }
 
             session.close()
             return result
 
-        except Exception as e:
-            logger.error(f"Failed to retrieve token: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to retrieve token: %s", e)
             return None
 
     def list_tokens(self, username: str, include_revoked: bool = False) -> list[dict[str, Any]]:
@@ -278,40 +289,61 @@ class TokenStorageService:
             # First, let's see all tokens in the database for debugging
             all_tokens = session.query(StoredToken).all()
             all_usernames = {t.username for t in all_tokens}
-            logger.info(f"Database has {len(all_tokens)} total tokens, usernames: {all_usernames}")
-            logger.info(f"Looking for tokens with username='{username}' (type: {type(username)})")
+            logger.info(
+                "Database has %d total tokens, usernames: %s", len(all_tokens), all_usernames
+            )
+            logger.info(
+                "Looking for tokens with username='%s' (type: %s)", username, type(username)
+            )
 
             query = session.query(StoredToken).filter(StoredToken.username == username)
 
             if not include_revoked:
-                query = query.filter(StoredToken.is_revoked == False)  # noqa: E712
+                query = query.filter(StoredToken.is_revoked.is_(False))
 
             tokens = query.order_by(StoredToken.created_at.desc()).all()
 
-            logger.info(f"Found {len(tokens)} tokens for user '{username}'")
+            logger.info("Found %d tokens for user '%s'", len(tokens), username)
 
             # Get current time for expiration check (use naive datetime for SQLite compatibility)
             now = datetime.now(UTC).replace(tzinfo=None)
 
-            result = [
-                {
+            result = []
+            for t in tokens:
+                t_created = t.created_at
+                t_expires = t.expires_at
+                t_last_used = t.last_used_at
+                result.append({
                     "id": t.id,
                     "token_name": t.token_name,
-                    "created_at": t.created_at.isoformat() if t.created_at else None,
-                    "expires_at": t.expires_at.isoformat() if t.expires_at else None,
-                    "last_used_at": t.last_used_at.isoformat() if t.last_used_at else None,
+                    "created_at": (
+                        t_created.isoformat()
+                        if t_created is not None
+                        else None
+                    ),
+                    "expires_at": (
+                        t_expires.isoformat()
+                        if t_expires is not None
+                        else None
+                    ),
+                    "last_used_at": (
+                        t_last_used.isoformat()
+                        if t_last_used is not None
+                        else None
+                    ),
                     "description": t.description,
-                    "is_expired": t.expires_at is not None and t.expires_at < now,
-                    "is_revoked": t.is_revoked,
-                }
-                for t in tokens
-            ]
+                    "is_expired": (
+                        t_expires is not None
+                        and t_expires < now
+                    ),
+                    "is_revoked": bool(t.is_revoked),
+                })
 
             session.close()
             return result
 
-        except Exception as e:
-            logger.error(f"Failed to list tokens for user '{username}': {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to list tokens for user '%s': %s", username, e)
             return []
 
     def revoke_token(self, token_id: int, username: str) -> bool:
@@ -344,11 +376,11 @@ class TokenStorageService:
             session.commit()
             session.close()
 
-            logger.info(f"Revoked token {token_id} for user {username}")
+            logger.info("Revoked token %d for user %s", token_id, username)
             return True
 
-        except Exception as e:
-            logger.error(f"Failed to revoke token: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to revoke token: %s", e)
             return False
 
     def delete_token(self, token_id: int, username: str) -> bool:
@@ -381,11 +413,11 @@ class TokenStorageService:
             session.commit()
             session.close()
 
-            logger.info(f"Deleted token {token_id} for user {username}")
+            logger.info("Deleted token %d for user %s", token_id, username)
             return True
 
-        except Exception as e:
-            logger.error(f"Failed to delete token: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to delete token: %s", e)
             return False
 
     def is_token_valid(self, token: str) -> bool:
@@ -401,28 +433,31 @@ class TokenStorageService:
             session = self._get_session()
             token_hash = self._hash_token(token)
 
-            stored = session.query(StoredToken).filter(StoredToken.token_hash == token_hash).first()
+            stored = (
+                session.query(StoredToken)
+                .filter(StoredToken.token_hash == token_hash)
+                .first()
+            )
 
             if not stored:
                 session.close()
-                # Token not in storage - may be a session token, allow it
                 return True
 
-            if stored.is_revoked:
+            if bool(stored.is_revoked):
                 session.close()
                 return False
 
-            # Use naive datetime for SQLite compatibility
             now = datetime.now(UTC).replace(tzinfo=None)
-            if stored.expires_at and stored.expires_at < now:
+            expires = stored.expires_at
+            if expires is not None and expires < now:
                 session.close()
                 return False
 
             session.close()
             return True
 
-        except Exception as e:
-            logger.error(f"Failed to validate token: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to validate token: %s", e)
             return False
 
     def cleanup_expired(self) -> int:
@@ -441,11 +476,8 @@ class TokenStorageService:
             deleted = (
                 session.query(StoredToken)
                 .filter(
-                    (StoredToken.is_revoked == True)  # noqa: E712
-                    | (
-                        (StoredToken.expires_at.isnot(None))
-                        & (StoredToken.expires_at < now)
-                    )
+                    StoredToken.is_revoked.is_(True)
+                    | ((StoredToken.expires_at.isnot(None)) & (StoredToken.expires_at < now))
                 )
                 .delete(synchronize_session=False)
             )
@@ -454,12 +486,12 @@ class TokenStorageService:
             session.close()
 
             if deleted > 0:
-                logger.info(f"Cleaned up {deleted} expired/revoked tokens")
+                logger.info("Cleaned up %d expired/revoked tokens", deleted)
 
             return deleted
 
-        except Exception as e:
-            logger.error(f"Failed to cleanup tokens: {e}")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error("Failed to cleanup tokens: %s", e)
             return 0
 
 
@@ -469,7 +501,7 @@ _token_storage: TokenStorageService | None = None
 
 def get_token_storage() -> TokenStorageService:
     """Get the token storage service singleton."""
-    global _token_storage
+    global _token_storage  # pylint: disable=global-statement
     if _token_storage is None:
         _token_storage = TokenStorageService()
     return _token_storage
@@ -477,5 +509,5 @@ def get_token_storage() -> TokenStorageService:
 
 def reset_token_storage() -> None:
     """Reset the token storage singleton (useful for testing)."""
-    global _token_storage
+    global _token_storage  # pylint: disable=global-statement
     _token_storage = None

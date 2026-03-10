@@ -19,6 +19,9 @@
     <div class="download-links">
         <a href="{{ url_for('reports.license_summary_report', project_name=project_name, version_name=version_name, format='excel') }}" class="download-link">Download as Excel</a>
         <a href="{{ url_for('reports.license_summary_report', project_name=project_name, version_name=version_name, format='json') }}" class="download-link">Download as JSON</a>
+        {% if schema_url %}
+        <a href="{{ schema_url }}" class="download-link secondary">View JSON Schema</a>
+        {% endif %}
     </div>
 
     <p>Generated at: {{ generated_at }}</p>

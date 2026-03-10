@@ -170,7 +170,8 @@ class LDAPConfig:
             user_groups=user_groups,
             require_group_membership=os.environ.get(
                 "LDAP_REQUIRE_GROUP_MEMBERSHIP", "false"
-            ).lower() == "true",
+            ).lower()
+            == "true",
         )
 
 
@@ -212,7 +213,9 @@ class AppConfig:
         """Load application configuration from environment variables."""
         return cls(
             debug=os.environ.get("FLASK_DEBUG", "false").lower() == "true",
-            host=os.environ.get("FLASK_HOST", "0.0.0.0"),  # nosec B104 - intentional for container deployment
+            host=os.environ.get(  # nosec B104
+                "FLASK_HOST", "0.0.0.0",
+            ),
             port=int(os.environ.get("FLASK_PORT", "8080")),
             secret_key=os.environ.get("FLASK_SECRET_KEY", "dev-secret-key-change-in-production"),
             falkordb=FalkorDBConfig.from_env(),
@@ -230,7 +233,7 @@ _config: AppConfig | None = None
 
 def get_config() -> AppConfig:
     """Get the application configuration singleton."""
-    global _config
+    global _config  # pylint: disable=global-statement
     if _config is None:
         _config = AppConfig.from_env()
     return _config
@@ -238,5 +241,5 @@ def get_config() -> AppConfig:
 
 def reset_config() -> None:
     """Reset the configuration singleton (useful for testing)."""
-    global _config
+    global _config  # pylint: disable=global-statement
     _config = None

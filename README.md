@@ -32,7 +32,7 @@ For a full deployment walkthrough (prerequisites, TLS setup, Helm configuration,
 
 ### Features
 
-- **Multi-Format SBOM Ingestion**: Upload CycloneDX and SPDX 2.3 SBOMs via REST API with automatic format detection
+- **Multi-Format SBOM Ingestion**: Upload CycloneDX and SPDX 2.3 SBOMs via REST API with automatic format detection; all inbound payloads validated against JSON Schema (Draft-07)
 - **Vulnerability Enrichment**: Continuous enrichment from OSV.dev and Sonatype OSS Index catches new CVEs after ingestion
 - **License Tracking and Compliance**: Licenses extracted from SBOMs and enriched via ClearlyDefined, grouped by risk category (Copyleft, Weak Copyleft, Permissive), with conflict detection
 - **VEX Support**: Ingest OpenVEX documents to communicate whether a vulnerability actually affects a product, with coverage statistics

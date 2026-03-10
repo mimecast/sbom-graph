@@ -744,7 +744,7 @@ All ingest endpoints require JWT authentication and are CSRF-exempt.
 | `POST` | `/ingest/sbom` | Auto-detect format (CycloneDX or SPDX) |
 | `POST` | `/ingest/vex` | Upload OpenVEX document |
 
-**Request body (CycloneDX/SPDX):** JSON SBOM document. Content-Length limited to prevent DoS.
+**Request body (CycloneDX/SPDX):** JSON SBOM document wrapped in an envelope validated against the `sbom-upload` JSON Schema (Draft-07). The schema enforces required fields (`sbom`), type constraints, string length limits, and `additionalProperties: false` to prevent mass assignment. The inner SBOM object is validated by the respective format processor. Content-Length limited to prevent DoS.
 
 **Response (CycloneDX):**
 ```json
@@ -1185,6 +1185,8 @@ Both share the same Docker image but use different entry commands.
 
 ### 8.2 Input Validation
 
+All path parameters, query parameters, and response headers that accept user input are validated before use. Raw `int()`/`float()` casts have been replaced with bounded validators to prevent crashes, NaN/Inf acceptance, and DoS from malformed parameters.
+
 `sbom-graph-api` validates all user inputs through `utils/validation.py`:
 
 | Function | Purpose |
@@ -1192,6 +1194,12 @@ Both share the same Docker image but use different entry commands.
 | `validate_project_name()` | Sanitize project name path parameters |
 | `validate_version_name()` | Sanitize version string path parameters |
 | `validate_defect_id()` | Sanitize vulnerability ID parameters |
+| `validate_annotation_id()` | UUID v4 pattern for policy annotation IDs |
+| `validate_schema_name()` | Lowercase alphanumeric + hyphens for schema path params |
+| `validate_username()` | Alphanumeric, hyphens, underscores, dots, @ for admin path params |
+| `validate_url()` | http/https scheme with valid host (e.g. repo_url) |
+| `validate_float_param()` | Safe float parsing with NaN/Inf rejection and bounds |
+| `validate_int_param()` | Safe integer parsing with bounds (max_depth, limit, etc.) |
 | `validate_format()` | Restrict to `html`, `excel`, `json` |
 | `validate_boolean()` | Strict boolean parsing |
 | `validate_max_depth()` | Enforce 1-100 range |
@@ -1199,12 +1207,29 @@ Both share the same Docker image but use different entry commands.
 | `validate_css_dimension()` | Allowlist CSS dimension patterns |
 | `validate_layout()` | Restrict to known layout algorithms |
 | `validate_project_group()` | Sanitize group parameter |
+| `validate_json_body()` | Validate JSON request body against a JSON Schema (Draft-07) |
+| `sanitize_content_disposition()` | Prevent header injection in Content-Disposition headers |
+
+**Inbound JSON Schema validation:**
+
+All POST endpoints validate request bodies against JSON Schema (Draft-07) via `validate_json_body()` before any processing occurs. Schemas are defined in `schemas/inbound.py` and registered in the global `SCHEMA_INDEX`.
+
+| Schema | Validated Endpoints | Key Constraints |
+|--------|-------------------|-----------------|
+| `sbom-upload` | `/ingest/cyclonedx`, `/ingest/spdx`, `/ingest/sbom` | Requires `sbom` (object); optional `app_id`, `public_app_id`, `project_url` (strings with length limits); `additionalProperties: false` |
+| `vex-upload` | `/ingest/vex` | Requires `document` (object); optional `app_id`; `additionalProperties: false` |
+| `enrichment-request` | `/api/v1/enrich/vulnerabilities` | Optional `purls` (array of strings matching `^pkg:` pattern, max 1000 items); `additionalProperties: false` |
+| `policy-annotation` | `/api/v1/policy/annotate` | Requires `purl` (matching `^pkg:`), `type` (enum: bad/good/hold), `justification`; optional `created_by`, `expires_at`; length limits; `additionalProperties: false` |
+| `contact-create` | `/api/v1/contacts` | Requires `email` (format: email), `purl` (matching `^pkg:`); optional `team`, `slack_channel`; length limits; `additionalProperties: false` |
+
+Validation errors return HTTP 400 with a JSON body containing `{"error": "Validation failed", "details": [...]}` where details is a list of human-readable error messages. Error messages avoid leaking internal schema paths.
 
 **SBOM ingestion validation:**
 - Content-Length limits prevent oversized payload DoS.
-- CycloneDX and SPDX documents are structurally validated before processing.
+- JSON Schema envelope validation runs first (structure, types, additional properties).
+- CycloneDX and SPDX documents are then structurally validated by the respective processor.
 - OpenVEX documents are parsed and validated before persistence.
-- Policy annotations validate `type` against the `PolicyType` enum.
+- Policy annotations validate `type` against both the schema enum and the `PolicyType` domain enum.
 
 ### 8.3 Authentication Security
 

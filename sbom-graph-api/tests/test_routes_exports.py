@@ -58,7 +58,9 @@ class TestVersionDependenciesReport:
 
     def test_report_returns_html_by_default(self, client):
         """Test report returns HTML by default."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.is_project_semver_compliant.return_value = (True, [])
             mock_service.get_latest_semver_version.return_value = "1.0.0"
@@ -81,7 +83,9 @@ class TestVersionDependenciesReport:
 
     def test_report_with_specific_version(self, client):
         """Test report with specific version parameter."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.is_project_semver_compliant.return_value = (True, [])
             mock_service.get_latest_semver_version.return_value = "2.0.0"
@@ -104,7 +108,9 @@ class TestVersionDependenciesReport:
 
     def test_report_with_latest_version(self, client):
         """Test report with 'latest' version resolves correctly."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.is_project_semver_compliant.return_value = (True, [])
             mock_service.get_latest_semver_version.return_value = "2.0.0"
@@ -120,7 +126,9 @@ class TestVersionDependenciesReport:
 
     def test_report_latest_fails_for_non_semver_project(self, client):
         """Test that 'latest' returns error for non-SemVer compliant projects."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.is_project_semver_compliant.return_value = (False, ["bad-version-1"])
             mock_service.get_latest_semver_version.return_value = None
@@ -133,7 +141,9 @@ class TestVersionDependenciesReport:
 
     def test_report_returns_json_format(self, client):
         """Test report returns JSON when format=json."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.is_project_semver_compliant.return_value = (True, [])
             mock_service.get_latest_semver_version.return_value = "1.0.0"
@@ -151,7 +161,9 @@ class TestVersionDependenciesReport:
 
     def test_report_shows_semver_compliance_info(self, client):
         """Test report shows SemVer compliance information."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.is_project_semver_compliant.return_value = (True, [])
             mock_service.get_latest_semver_version.return_value = "2.0.0"
@@ -166,7 +178,9 @@ class TestVersionDependenciesReport:
 
     def test_report_returns_404_for_nonexistent_project(self, client):
         """Test report returns 404 for nonexistent project."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.is_project_semver_compliant.return_value = (True, [])
             mock_service.get_latest_semver_version.return_value = None
@@ -179,7 +193,9 @@ class TestVersionDependenciesReport:
 
     def test_report_returns_404_for_nonexistent_version(self, client):
         """Test report returns 404 for nonexistent version."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.is_project_semver_compliant.return_value = (True, [])
             mock_service.get_latest_semver_version.return_value = "1.0.0"
@@ -192,7 +208,9 @@ class TestVersionDependenciesReport:
 
     def test_report_has_toggle_for_internal_only(self, client):
         """Test report has internal_only toggle."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as mock_get_service:
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.is_project_semver_compliant.return_value = (True, [])
             mock_service.get_latest_semver_version.return_value = "1.0.0"

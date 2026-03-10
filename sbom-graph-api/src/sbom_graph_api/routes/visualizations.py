@@ -18,12 +18,8 @@ from sbom_graph_api.visualizations.bipartite import create_bipartite_visualizati
 from sbom_graph_api.visualizations.dependants_graph import (
     create_dependants_graph_visualization,
 )
-from sbom_graph_api.visualizations.dependencies_graph import (
-    create_dependencies_graph_visualization,
-)
 from sbom_graph_api.visualizations.kpartite import create_kpartite_visualization
 from sbom_graph_api.visualizations.multi_layout import (
-    LAYOUT_DISPLAY_NAMES,
     create_dependants_multi_layout_visualization,
     create_dependencies_multi_layout_visualization,
 )

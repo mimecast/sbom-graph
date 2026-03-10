@@ -1,0 +1,32 @@
+[MAIN]
+# Inherit from the project-level configuration.
+load-plugins =
+
+[MESSAGES CONTROL]
+# Standard pytest patterns that are not issues in test code:
+#   missing-function-docstring  — test names are self-documenting
+#   redefined-outer-name        — pytest fixtures redefine outer names by design
+#   protected-access            — tests legitimately verify internal state
+#   unused-argument             — fixtures may set up state without direct use
+#   too-few-public-methods      — test helper classes / dataclasses
+#   too-many-public-methods     — large test classes
+#   invalid-name                — test variables like 'r', 'e' are clear in context
+#   duplicate-code              — test setup often shares patterns
+#   import-outside-toplevel     — conditional/lazy imports in test helpers
+#   too-many-positional-arguments — test helpers with many params
+disable =
+    missing-function-docstring,
+    redefined-outer-name,
+    protected-access,
+    unused-argument,
+    too-few-public-methods,
+    too-many-public-methods,
+    invalid-name,
+    duplicate-code,
+    cyclic-import,
+    import-outside-toplevel,
+    too-many-positional-arguments,
+    too-many-lines,
+
+[FORMAT]
+max-line-length = 100

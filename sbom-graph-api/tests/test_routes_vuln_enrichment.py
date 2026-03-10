@@ -63,8 +63,7 @@ class TestPackageVulnerabilities:
             return_value=mock_service,
         ):
             resp = client.get(
-                "/api/v1/package/pkg:maven/org.example/lib@1.0/vulns"
-                "?include_dependencies=true"
+                "/api/v1/package/pkg:maven/org.example/lib@1.0/vulns?include_dependencies=true"
             )
 
         assert resp.status_code == 200
@@ -210,7 +209,7 @@ class TestVulnerabilityFreshness:
         ]
 
         with patch(
-            "sbom_graph_api.routes.reports.get_falkordb_service",
+            "sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service",
             return_value=mock_service,
         ):
             resp = client.get("/reports/vulnerability-freshness?format=json")
@@ -226,7 +225,7 @@ class TestVulnerabilityFreshness:
         mock_service.get_vulnerability_freshness.return_value = []
 
         with patch(
-            "sbom_graph_api.routes.reports.get_falkordb_service",
+            "sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service",
             return_value=mock_service,
         ):
             resp = client.get("/reports/vulnerability-freshness")
@@ -240,14 +239,10 @@ class TestVulnerabilityFreshness:
         mock_service.get_vulnerability_freshness.return_value = []
 
         with patch(
-            "sbom_graph_api.routes.reports.get_falkordb_service",
+            "sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service",
             return_value=mock_service,
         ):
-            resp = client.get(
-                "/reports/vulnerability-freshness?internal_only=true&format=json"
-            )
+            resp = client.get("/reports/vulnerability-freshness?internal_only=true&format=json")
 
         assert resp.status_code == 200
-        mock_service.get_vulnerability_freshness.assert_called_once_with(
-            internal_only=True
-        )
+        mock_service.get_vulnerability_freshness.assert_called_once_with(internal_only=True)

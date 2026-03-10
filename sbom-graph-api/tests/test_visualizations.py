@@ -231,7 +231,11 @@ class TestCreateKpartiteVisualization:
         )
 
         mock_service.get_transitive_dependencies.assert_called_once_with(
-            "test", "1.0.0", 5, True, project_group=None,
+            "test",
+            "1.0.0",
+            5,
+            True,
+            project_group=None,
         )
 
     # Negative tests
@@ -355,7 +359,11 @@ class TestCreateDependantsGraphVisualization:
         )
 
         mock_service.get_transitive_dependants.assert_called_once_with(
-            "lib", "1.0.0", 10, False, skip_scan_filter=True,
+            "lib",
+            "1.0.0",
+            10,
+            False,
+            skip_scan_filter=True,
             project_group=None,
         )
 
@@ -438,7 +446,7 @@ class TestDependencyVisitor:
 
         visited_nodes = []
         visitor = DependencyVisitor()
-        visitor.traverse_all(G, start_node="a", on_visit=lambda n: visited_nodes.append(n))
+        visitor.traverse_all(G, start_node="a", on_visit=visited_nodes.append)
 
         assert set(visited_nodes) == {"a", "b", "c"}
 
@@ -551,7 +559,8 @@ class TestCreateDependenciesGraphVisualization:
             ],
             [
                 {"source": "app:1.0.0", "target": "lib:1.0.0", "type": "DEPENDENCY_VERSION"},
-                {"source": "lib:1.0.0", "target": "lib:1.0.0", "type": "DEPENDENCY_VERSION"},  # Self-loop
+                # Self-loop
+                {"source": "lib:1.0.0", "target": "lib:1.0.0", "type": "DEPENDENCY_VERSION"},
             ],
         )
 
@@ -582,7 +591,11 @@ class TestCreateDependenciesGraphVisualization:
         )
 
         mock_service.get_transitive_dependencies.assert_called_once_with(
-            "test", "1.0.0", 5, True, project_group=None,
+            "test",
+            "1.0.0",
+            5,
+            True,
+            project_group=None,
         )
 
     # Negative tests

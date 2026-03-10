@@ -10,7 +10,6 @@ import pytest
 
 from sbom_graph_api.utils.validation import validate_defect_id
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -88,9 +87,7 @@ class TestXSSPrevention:
 
     def test_xss_in_project_name_rejected(self, client):
         with patch("sbom_graph_api.routes.visualizations.create_kpartite_visualization"):
-            response = client.get(
-                "/visualizations/kpartite/<script>alert(1)</script>/1.0.0"
-            )
+            response = client.get("/visualizations/kpartite/<script>alert(1)</script>/1.0.0")
             assert response.status_code in (400, 404)
 
     def test_xss_in_version_rejected(self, client):
@@ -101,19 +98,19 @@ class TestXSSPrevention:
             assert response.status_code in (400, 404)
 
     def test_xss_in_report_project_rejected(self, client):
-        response = client.get(
-            "/reports/multi-version-deps/<script>alert(1)</script>"
-        )
+        response = client.get("/reports/multi-version-deps/<script>alert(1)</script>")
         assert response.status_code in (400, 404)
 
     def test_xss_in_css_dimension_sanitized(self, client):
         """CSS dimension parameters reject expression() injection."""
         from sbom_graph_api.utils.validation import validate_css_dimension
+
         assert validate_css_dimension("expression(alert(1))") == "800px"
 
     def test_xss_in_format_parameter_sanitized(self, client):
         """Format parameter rejects arbitrary values."""
         from sbom_graph_api.utils.validation import validate_format
+
         assert validate_format("<script>") == "html"
 
 
@@ -126,23 +123,17 @@ class TestInjectionPrevention:
     """Verify that special characters in inputs are rejected by validation."""
 
     def test_cypher_injection_in_project_name(self, client):
-        response = client.get(
-            "/reports/dependants/'; DROP TABLE users;--/1.0.0"
-        )
+        response = client.get("/reports/dependants/'; DROP TABLE users;--/1.0.0")
         assert response.status_code in (400, 404)
 
     def test_cypher_injection_in_version(self, client):
-        response = client.get(
-            "/reports/version-dependencies/safe-project/' OR 1=1--"
-        )
+        response = client.get("/reports/version-dependencies/safe-project/' OR 1=1--")
         assert response.status_code in (400, 404)
 
     def test_special_chars_in_defect_id(self, client):
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service") as m:
+        with patch("sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service") as m:
             m.return_value = MagicMock()
-            response = client.get(
-                "/reports/vulnerability-dependants/'; DROP TABLE--"
-            )
+            response = client.get("/reports/vulnerability-dependants/'; DROP TABLE--")
             assert response.status_code in (400, 404)
 
 
@@ -156,26 +147,32 @@ class TestOpenRedirectPrevention:
 
     def test_external_url_rejected(self):
         from sbom_graph_api.utils.validation import is_safe_redirect_url
+
         assert is_safe_redirect_url("https://evil.com") is False
 
     def test_protocol_relative_url_rejected(self):
         from sbom_graph_api.utils.validation import is_safe_redirect_url
+
         assert is_safe_redirect_url("//evil.com") is False
 
     def test_backslash_url_rejected(self):
         from sbom_graph_api.utils.validation import is_safe_redirect_url
+
         assert is_safe_redirect_url("/\\evil.com") is False
 
     def test_javascript_url_rejected(self):
         from sbom_graph_api.utils.validation import is_safe_redirect_url
+
         assert is_safe_redirect_url("javascript:alert(1)") is False
 
     def test_data_url_rejected(self):
         from sbom_graph_api.utils.validation import is_safe_redirect_url
+
         assert is_safe_redirect_url("data:text/html,<script>") is False
 
     def test_safe_internal_path_accepted(self):
         from sbom_graph_api.utils.validation import is_safe_redirect_url
+
         assert is_safe_redirect_url("/reports/projects") is True
 
 
@@ -189,18 +186,22 @@ class TestPathTraversalPrevention:
 
     def test_dot_dot_in_project_name(self):
         from sbom_graph_api.utils.validation import validate_project_name
+
         assert validate_project_name("../../etc/passwd") is None
 
     def test_dot_prefix_in_project_name(self):
         from sbom_graph_api.utils.validation import validate_project_name
+
         assert validate_project_name(".hidden") is None
 
     def test_slash_in_project_name(self):
         from sbom_graph_api.utils.validation import validate_project_name
+
         assert validate_project_name("path/traversal") is None
 
     def test_null_byte_in_version(self):
         from sbom_graph_api.utils.validation import validate_version_name
+
         assert validate_version_name("1.0.0\x00.evil") is None
 
 
@@ -250,7 +251,7 @@ class TestAuthEnforcement:
 
     def test_protected_endpoint_returns_401_for_json(self, client):
         """Auth-protected endpoint returns 401 JSON for API requests."""
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service"):
+        with patch("sbom_graph_api.routes.reports.inventory.get_falkordb_service"):
             response = client.get(
                 "/reports/projects",
                 headers={"Accept": "application/json"},
@@ -343,21 +344,25 @@ class TestIsApiRequest:
 
     def test_json_content_type(self, app):
         from sbom_graph_api.app import _is_api_request
+
         with app.test_request_context("/", content_type="application/json"):
             assert _is_api_request() is True
 
     def test_json_accept_header(self, app):
         from sbom_graph_api.app import _is_api_request
+
         with app.test_request_context("/", headers={"Accept": "application/json"}):
             assert _is_api_request() is True
 
     def test_authorization_header(self, app):
         from sbom_graph_api.app import _is_api_request
+
         with app.test_request_context("/", headers={"Authorization": "Bearer xyz"}):
             assert _is_api_request() is True
 
     def test_browser_request_not_api(self, app):
         from sbom_graph_api.app import _is_api_request
+
         with app.test_request_context("/", headers={"Accept": "text/html"}):
             assert _is_api_request() is False
 
@@ -372,6 +377,7 @@ class TestInputValidationBoundaries:
 
     def test_max_depth_boundary_values(self):
         from sbom_graph_api.utils.validation import validate_max_depth
+
         assert validate_max_depth(0) is None
         assert validate_max_depth(1) == 1
         assert validate_max_depth(100) == 100
@@ -379,6 +385,7 @@ class TestInputValidationBoundaries:
 
     def test_limit_boundary_values(self):
         from sbom_graph_api.utils.validation import validate_limit
+
         assert validate_limit(0) == 10000
         assert validate_limit(1) == 1
         assert validate_limit(100000) == 100000
@@ -386,11 +393,13 @@ class TestInputValidationBoundaries:
 
     def test_project_name_max_length(self):
         from sbom_graph_api.utils.validation import validate_project_name
+
         assert validate_project_name("a" * 256) == "a" * 256
         assert validate_project_name("a" * 257) is None
 
     def test_boolean_validation_strict(self):
         from sbom_graph_api.utils.validation import validate_boolean
+
         assert validate_boolean("true") is True
         assert validate_boolean("True") is True
         assert validate_boolean("TRUE") is True

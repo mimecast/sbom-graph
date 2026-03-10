@@ -58,7 +58,11 @@ def create_dependants_graph_visualization(
     # Get reverse dependency graph (dependants)
     # Use skip_scan_filter=True to show raw graph structure in visualization
     nodes, edges = service.get_transitive_dependants(
-        project_name, version_name, max_depth, internal_only, skip_scan_filter=True,
+        project_name,
+        version_name,
+        max_depth,
+        internal_only,
+        skip_scan_filter=True,
         project_group=project_group,
     )
 
@@ -67,7 +71,7 @@ def create_dependants_graph_visualization(
     # Build NetworkX graph for layout calculation
     # Note: We reverse the edges for partition calculation since we want
     # the root on the right and leaf nodes on the left
-    G = nx.DiGraph()
+    graph: nx.DiGraph = nx.DiGraph()
     node_data = {n["id"]: n for n in nodes}
 
     if root_id not in node_data:
@@ -80,13 +84,13 @@ def create_dependants_graph_visualization(
         }
 
     for node in node_data.values():
-        G.add_node(node["id"])
+        graph.add_node(node["id"])
 
     # Reverse edges for visualization (dependants point to dependencies)
     for edge in edges:
         # In the original graph: source depends on target
         # For dependants view: we reverse to show flow from leaf to root
-        G.add_edge(edge["target"], edge["source"])
+        graph.add_edge(edge["target"], edge["source"])
 
     # Remove cycles to allow hierarchical layout
     # Use efficient DFS-based back-edge removal (O(V+E)) instead of
@@ -118,15 +122,15 @@ def create_dependants_graph_visualization(
 
     try:
         # Remove self-loops first
-        self_loops = list(nx.selfloop_edges(G))
-        G.remove_edges_from(self_loops)
+        self_loops = list(nx.selfloop_edges(graph))
+        graph.remove_edges_from(self_loops)
         # Then remove back-edges to break cycles
-        remove_cycles_dfs(G)
+        remove_cycles_dfs(graph)
     except nx.NetworkXError:
         pass  # Graph error, continue with what we have
 
     # Calculate partitions (root at level 0, dependants at higher levels)
-    partitions = calculate_partitions_longest_path(G, root_id)
+    partitions = calculate_partitions_longest_path(graph, root_id)
 
     # Create PyVis network
     net = Network(
@@ -176,8 +180,8 @@ def create_dependants_graph_visualization(
         color = get_partition_color(partition)
 
         # Escape all user-controlled data to prevent XSS
-        safe_project = escape(data['project_name'])
-        safe_version = escape(data['version'])
+        safe_project = escape(data["project_name"])
+        safe_version = escape(data["version"])
         label = f"{safe_project}\n{safe_version}"
 
         labels_str = escape(", ".join(data.get("labels", [])))

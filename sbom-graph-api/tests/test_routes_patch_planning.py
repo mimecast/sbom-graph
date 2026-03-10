@@ -25,7 +25,13 @@ class TestGetPatchPlan:
                             "version": "1.0.0",
                             "purl": "pkg:maven/org/lib-a@1.0.0",
                             "project_group": "org",
-                            "contacts": [{"email": "team@acme.com", "team": "Platform", "slack_channel": "#platform"}],
+                            "contacts": [
+                                {
+                                    "email": "team@acme.com",
+                                    "team": "Platform",
+                                    "slack_channel": "#platform",
+                                }
+                            ],
                         }
                     ],
                 },
@@ -43,7 +49,13 @@ class TestGetPatchPlan:
                 },
             ],
             "total_affected": 2,
-            "contacts": [{"email": "team@acme.com", "team": "Platform", "slack_channel": "#platform"}],
+            "contacts": [
+                {
+                    "email": "team@acme.com",
+                    "team": "Platform",
+                    "slack_channel": "#platform",
+                }
+            ],
         }
 
         with patch(
@@ -101,7 +113,7 @@ class TestGetPatchPlan:
         )
 
     def test_max_depth_capped_at_50(self, client) -> None:
-        """max_depth is clamped to a maximum of 50."""
+        """max_depth above 50 falls back to default (10)."""
         mock_service = MagicMock()
         mock_service.compute_patch_plan.return_value = {
             "defect": {"id": "CVE-1", "severity": "LOW", "aliases": [], "description": ""},
@@ -117,7 +129,7 @@ class TestGetPatchPlan:
             client.get("/api/v1/patch-plan/CVE-1?max_depth=100")
 
         args = mock_service.compute_patch_plan.call_args
-        assert args.kwargs["max_depth"] == 50
+        assert args.kwargs["max_depth"] == 10
 
 
 class TestGetBlastRadius:
@@ -221,12 +233,19 @@ class TestCreateContact:
 
     def test_invalid_email_returns_400(self, client) -> None:
         """Email without @ returns 400."""
-        resp = client.post(
-            "/api/v1/contacts",
-            json={"email": "not-an-email", "purl": "pkg:maven/org/lib@1.0"},
-            content_type="application/json",
-        )
+        mock_service = MagicMock()
+
+        with patch(
+            "sbom_graph_api.routes.api_v1.get_falkordb_service",
+            return_value=mock_service,
+        ):
+            resp = client.post(
+                "/api/v1/contacts",
+                json={"email": "not-an-email", "purl": "pkg:maven/org/lib@1.0"},
+                content_type="application/json",
+            )
         assert resp.status_code == 400
+        mock_service.execute_query.assert_not_called()
 
     def test_missing_purl_returns_400(self, client) -> None:
         """Missing purl returns 400."""

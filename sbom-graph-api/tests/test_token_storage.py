@@ -162,7 +162,7 @@ class TestListTokens:
         assert names == {"Token A", "Token B"}
 
     def test_excludes_revoked_by_default(self, token_service):
-        id1 = token_service.store_token("alice", "t1", "Active")
+        token_service.store_token("alice", "t1", "Active")
         id2 = token_service.store_token("alice", "t2", "Revoked")
         token_service.revoke_token(id2, "alice")
 
@@ -171,7 +171,7 @@ class TestListTokens:
         assert tokens[0]["token_name"] == "Active"
 
     def test_includes_revoked_when_requested(self, token_service):
-        id1 = token_service.store_token("alice", "t1", "Active")
+        token_service.store_token("alice", "t1", "Active")
         id2 = token_service.store_token("alice", "t2", "Revoked")
         token_service.revoke_token(id2, "alice")
 

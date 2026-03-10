@@ -8,7 +8,6 @@ from typing import Any
 
 from flask import (
     Blueprint,
-    Response,
     jsonify,
     make_response,
     redirect,
@@ -17,6 +16,7 @@ from flask import (
     session,
     url_for,
 )
+from flask.typing import ResponseReturnValue
 from flask_jwt_extended import (
     create_access_token,
     create_refresh_token,
@@ -31,11 +31,17 @@ from flask_jwt_extended import (
 from sbom_graph_api.config import get_config
 from sbom_graph_api.services.ldap_service import (
     LDAPAuthenticationError,
+    LDAPUser,
     get_ldap_service,
 )
 from sbom_graph_api.services.token_storage import get_token_storage
-from sbom_graph_api.services.user_storage import get_user_storage
-from sbom_graph_api.utils.validation import get_safe_redirect_url
+from sbom_graph_api.services.user_storage import LocalUser, get_user_storage
+from sbom_graph_api.utils.validation import (
+    MAX_EXPIRES_DAYS,
+    MAX_TOKEN_DESCRIPTION_LENGTH,
+    get_safe_redirect_url,
+    validate_username,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +64,7 @@ def get_current_user() -> str | None:
         identity = get_jwt_identity()
         if identity:
             return identity
-    except Exception:  # nosec B110 - intentional fallback to session auth
+    except Exception:  # nosec B110  # pylint: disable=broad-exception-caught
         pass
 
     # Fall back to session
@@ -120,7 +126,7 @@ def auth_required(fn: Callable) -> Callable:
             identity = get_jwt_identity()
             if identity:
                 return fn(*args, **kwargs)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-exception-caught
             # JWT verification failed - fall back to session auth
             logger.debug("JWT verification failed, trying session auth: %s", e)
 
@@ -139,7 +145,7 @@ def auth_required(fn: Callable) -> Callable:
 
 
 @bp.route("/login", methods=["GET", "POST"])
-def login() -> Response | str:
+def login() -> ResponseReturnValue:
     """Login page and authentication endpoint.
 
     GET: Display login form
@@ -170,6 +176,7 @@ def login() -> Response | str:
             error = "Username and password are required"
         else:
             # Try LDAP authentication if enabled
+            user: LDAPUser | LocalUser | None
             if config.ldap.enabled:
                 try:
                     ldap_service = get_ldap_service()
@@ -187,8 +194,10 @@ def login() -> Response | str:
                         session["login_time"] = datetime.now(UTC).isoformat()
 
                         logger.info(
-                            f"LDAP user {user.username} logged in "
-                            f"(admin={user.is_admin}, groups={user.groups})"
+                            "LDAP user %s logged in (admin=%s, groups=%s)",
+                            user.username,
+                            user.is_admin,
+                            user.groups,
                         )
 
                         # Set JWT cookies for API access
@@ -206,8 +215,7 @@ def login() -> Response | str:
                         set_refresh_cookies(response, refresh_token)
 
                         return response
-                    else:
-                        error = "Invalid username or password"
+                    error = "Invalid username or password"
 
                 except LDAPAuthenticationError as e:
                     # Log the actual error for debugging, show generic message to user
@@ -219,7 +227,7 @@ def login() -> Response | str:
                 if not user_storage.has_any_users():
                     user = user_storage.create_first_user(username, password)
                     if user:
-                        logger.info(f"First user '{username}' created as admin")
+                        logger.info("First user '%s' created as admin", username)
                         # Auto-login the first user
                         session.permanent = True  # Use PERMANENT_SESSION_LIFETIME
                         session["authenticated"] = True
@@ -242,12 +250,11 @@ def login() -> Response | str:
                         set_refresh_cookies(response, refresh_token)
 
                         return response
-                    else:
-                        error = "Failed to create admin account. Please try again."
+                    error = "Failed to create admin account. Please try again."
                 else:
                     # Authenticate against local database
                     user = user_storage.authenticate(username, password)
-                    if user:
+                    if user and isinstance(user, LocalUser):
                         # Check if user must change password
                         if user.must_change_password:
                             session["pending_password_change"] = True
@@ -277,8 +284,7 @@ def login() -> Response | str:
                         set_refresh_cookies(response, refresh_token)
 
                         return response
-                    else:
-                        error = "Invalid username or password"
+                    error = "Invalid username or password"
 
     return render_template(
         "login.html",
@@ -291,7 +297,7 @@ def login() -> Response | str:
 
 
 @bp.route("/logout")
-def logout() -> Response:
+def logout() -> ResponseReturnValue:
     """Logout endpoint - clears session and JWT cookies.
 
     Returns:
@@ -309,13 +315,15 @@ def logout() -> Response:
 
 @bp.route("/refresh", methods=["POST"])
 @jwt_required(refresh=True)
-def refresh() -> Response:
+def refresh() -> ResponseReturnValue:
     """Refresh access token using refresh token.
 
     Returns:
         New access token in JSON response
     """
     identity = get_jwt_identity()
+    if not identity:
+        return jsonify({"error": "Invalid identity"}), 401
     access_token = create_access_token(identity=identity)
 
     if request.is_json:
@@ -329,30 +337,42 @@ def refresh() -> Response:
 
 @bp.route("/tokens", methods=["GET"])
 @auth_required
-def list_tokens() -> Response | str:
+def list_tokens() -> ResponseReturnValue:
     """List user's stored API tokens.
 
     Returns:
         HTML page or JSON list of tokens
     """
     identity = get_current_user()
+    if not identity:
+        return jsonify({"error": "Authentication required"}), 401
     session_username = session.get("username")
-    logger.info(f"Listing tokens - get_current_user(): '{identity}', session username: '{session_username}'")
+    logger.info(
+        "Listing tokens - get_current_user(): '%s', session username: '%s'",
+        identity,
+        session_username,
+    )
 
     token_storage = get_token_storage()
     # Include revoked tokens so users can manage (delete) them
     tokens = token_storage.list_tokens(identity, include_revoked=True)
-    logger.info(f"Found {len(tokens)} tokens for user '{identity}'")
+    logger.info("Found %d tokens for user '%s'", len(tokens), identity)
 
     if request.is_json or request.args.get("format") == "json":
-        return jsonify({"tokens": tokens, "current_user": identity, "session_user": session_username})
+        return jsonify(
+            {
+                "tokens": tokens,
+                "current_user": identity,
+                "session_user": session_username,
+            }
+        )
 
     return render_template("tokens.html", tokens=tokens, username=identity)
 
 
 @bp.route("/tokens/create", methods=["GET", "POST"])
 @auth_required
-def create_token() -> Response | str:
+def create_token() -> ResponseReturnValue:
     """Create a new API token.
 
     GET: Display token creation form
@@ -362,6 +382,8 @@ def create_token() -> Response | str:
         HTML page with form or created token
     """
     identity = get_current_user()
+    if not identity:
+        return jsonify({"error": "Authentication required"}), 401
     config = get_config()
     error = None
     created_token = None
@@ -375,6 +397,10 @@ def create_token() -> Response | str:
             error = "Token name is required"
         elif len(token_name) > 255:
             error = "Token name must be 255 characters or less"
+        elif len(description) > MAX_TOKEN_DESCRIPTION_LENGTH:
+            error = f"Description must be {MAX_TOKEN_DESCRIPTION_LENGTH} characters or less"
+        elif expires_days is not None and (expires_days < 1 or expires_days > MAX_EXPIRES_DAYS):
+            error = f"Expiration must be between 1 and {MAX_EXPIRES_DAYS} days"
         else:
             # Calculate expiration (use naive datetime for SQLite compatibility)
             expires_at = None
@@ -403,7 +429,7 @@ def create_token() -> Response | str:
                     description=description or None,
                 )
                 created_token = access_token
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 # Log the actual error for debugging, show generic message to user
                 logger.error("Failed to store token: %s", e)
                 error = "Failed to create token. Please try again."
@@ -426,7 +452,7 @@ def create_token() -> Response | str:
 
 @bp.route("/tokens/<int:token_id>", methods=["GET"])
 @auth_required
-def get_token(token_id: int) -> Response:
+def get_token(token_id: int) -> ResponseReturnValue:
     """Get a specific token's details (including the token value).
 
     Args:
@@ -436,6 +462,8 @@ def get_token(token_id: int) -> Response:
         JSON with token details
     """
     identity = get_current_user()
+    if not identity:
+        return jsonify({"error": "Authentication required"}), 401
     token_storage = get_token_storage()
     token = token_storage.get_token(token_id, identity)
 
@@ -447,7 +475,7 @@ def get_token(token_id: int) -> Response:
 
 @bp.route("/tokens/<int:token_id>/revoke", methods=["POST"])
 @auth_required
-def revoke_token(token_id: int) -> Response:
+def revoke_token(token_id: int) -> ResponseReturnValue:
     """Revoke a stored token.
 
     Args:
@@ -457,6 +485,8 @@ def revoke_token(token_id: int) -> Response:
         JSON response indicating success or failure
     """
     identity = get_current_user()
+    if not identity:
+        return jsonify({"error": "Authentication required"}), 401
     token_storage = get_token_storage()
 
     if token_storage.revoke_token(token_id, identity):
@@ -469,7 +499,7 @@ def revoke_token(token_id: int) -> Response:
 
 @bp.route("/tokens/<int:token_id>/delete", methods=["POST"])
 @auth_required
-def delete_token(token_id: int) -> Response:
+def delete_token(token_id: int) -> ResponseReturnValue:
     """Permanently delete a stored token.
 
     Args:
@@ -479,6 +509,8 @@ def delete_token(token_id: int) -> Response:
         JSON response indicating success or failure
     """
     identity = get_current_user()
+    if not identity:
+        return jsonify({"error": "Authentication required"}), 401
     token_storage = get_token_storage()
 
     if token_storage.delete_token(token_id, identity):
@@ -491,7 +523,7 @@ def delete_token(token_id: int) -> Response:
 
 @bp.route("/tokens/debug", methods=["GET"])
 @auth_required
-def debug_tokens() -> Response:
+def debug_tokens() -> ResponseReturnValue:
     """Debug endpoint to check token storage state.
 
     Returns:
@@ -500,11 +532,13 @@ def debug_tokens() -> Response:
     from sbom_graph_api.services.token_storage import StoredToken
 
     identity = get_current_user()
+    if not identity:
+        return jsonify({"error": "Authentication required"}), 401
     session_username = session.get("username")
     token_storage = get_token_storage()
 
     # Get raw database access
-    db_session = token_storage._get_session()
+    db_session = token_storage._get_session()  # pylint: disable=protected-access
     all_tokens = db_session.query(StoredToken).all()
 
     debug_info = {
@@ -517,13 +551,19 @@ def debug_tokens() -> Response:
                 "id": t.id,
                 "username": t.username,
                 "token_name": t.token_name,
-                "is_revoked": t.is_revoked,
-                "created_at": t.created_at.isoformat() if t.created_at else None,
+                "is_revoked": t.is_revoked,  # type: ignore[reportGeneralTypeIssues]
+                "created_at": (
+                    t.created_at.isoformat()  # type: ignore[reportGeneralTypeIssues]
+                    if t.created_at
+                    else None
+                ),
             }
             for t in all_tokens
         ],
         "tokens_for_current_user": [
-            t.token_name for t in all_tokens if t.username == identity
+            t.token_name  # type: ignore[reportGeneralTypeIssues]
+            for t in all_tokens
+            if t.username == identity
         ],
     }
 
@@ -532,7 +572,7 @@ def debug_tokens() -> Response:
 
 
 @bp.route("/status")
-def auth_status() -> Response:
+def auth_status() -> ResponseReturnValue:
     """Get current authentication status.
 
     Returns:
@@ -540,7 +580,7 @@ def auth_status() -> Response:
     """
     config = get_config()
 
-    status = {
+    status: dict[str, Any] = {
         "auth_enabled": config.auth_enabled,
         "ldap_enabled": config.ldap.enabled,
         "authenticated": False,
@@ -555,7 +595,7 @@ def auth_status() -> Response:
             status["authenticated"] = True
             status["username"] = identity
             status["auth_method"] = "jwt"
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-exception-caught
         # JWT not present or invalid - will check session next
         logger.debug("JWT check failed in auth_status: %s", e)
 
@@ -575,7 +615,7 @@ def auth_status() -> Response:
 
 
 @bp.route("/change-password-required", methods=["GET", "POST"])
-def change_password_required() -> Response | str:
+def change_password_required() -> ResponseReturnValue:
     """Force password change for users with temporary passwords.
 
     This page is shown after login when must_change_password is True.
@@ -634,8 +674,7 @@ def change_password_required() -> Response | str:
                     return response
 
                 return redirect(url_for("auth.login"))
-            else:
-                error = "Current password is incorrect"
+            error = "Current password is incorrect"
 
     return render_template(
         "change_password_required.html",
@@ -646,7 +685,7 @@ def change_password_required() -> Response | str:
 
 @bp.route("/change-password", methods=["GET", "POST"])
 @auth_required
-def change_password() -> Response | str:
+def change_password() -> ResponseReturnValue:
     """Allow authenticated users to change their password."""
     config = get_config()
 
@@ -659,6 +698,8 @@ def change_password() -> Response | str:
         ), 400
 
     username = session.get("username")
+    if not username:
+        return jsonify({"error": "Authentication required"}), 401
     error = None
     success = None
 
@@ -697,7 +738,7 @@ def change_password() -> Response | str:
 
 @bp.route("/admin/users")
 @admin_required
-def admin_users() -> Response | str:
+def admin_users() -> ResponseReturnValue:
     """Admin page for managing users."""
     config = get_config()
 
@@ -721,7 +762,7 @@ def admin_users() -> Response | str:
 
 @bp.route("/admin/users/create", methods=["GET", "POST"])
 @admin_required
-def admin_create_user() -> Response | str:
+def admin_create_user() -> ResponseReturnValue:
     """Admin page to create a new user."""
     config = get_config()
 
@@ -762,9 +803,8 @@ def admin_create_user() -> Response | str:
                         user=user,
                         temp_password=temp_password,
                     )
-                else:
-                    error = "Failed to create user"
-            except Exception as e:
+                error = "Failed to create user"
+            except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.error("Failed to create user: %s", e)
                 error = str(e) if "already exists" in str(e) else "Failed to create user"
 
@@ -776,15 +816,27 @@ def admin_create_user() -> Response | str:
 
 @bp.route("/admin/users/<username>/toggle-admin", methods=["POST"])
 @admin_required
-def admin_toggle_admin(username: str) -> Response:
+def admin_toggle_admin(  # pylint: disable=too-many-return-statements
+    username: str,
+) -> ResponseReturnValue:
     """Toggle admin status for a user."""
+    if not validate_username(username):
+        if request.is_json:
+            return jsonify({"error": "Invalid username"}), 400
+        return redirect(url_for("auth.admin_users"))
+
     config = get_config()
 
     if config.ldap.enabled:
         return jsonify({"error": "Not available with LDAP"}), 400
 
     # Prevent removing own admin status
-    if username == session.get("username"):
+    admin_username = get_current_user()
+    if not admin_username:
+        if request.is_json:
+            return jsonify({"error": "Authentication required"}), 401
+        return redirect(url_for("auth.login"))
+    if username == admin_username:
         if request.is_json:
             return jsonify({"error": "Cannot change your own admin status"}), 400
         return redirect(url_for("auth.admin_users"))
@@ -798,7 +850,7 @@ def admin_toggle_admin(username: str) -> Response:
         return redirect(url_for("auth.admin_users"))
 
     new_admin_status = not user.is_admin
-    if user_storage.set_admin(username, new_admin_status, session.get("username")):
+    if user_storage.set_admin(username, new_admin_status, admin_username):
         if request.is_json:
             return jsonify({"message": "Admin status updated", "is_admin": new_admin_status})
         return redirect(url_for("auth.admin_users"))
@@ -810,15 +862,27 @@ def admin_toggle_admin(username: str) -> Response:
 
 @bp.route("/admin/users/<username>/toggle-active", methods=["POST"])
 @admin_required
-def admin_toggle_active(username: str) -> Response:
+def admin_toggle_active(  # pylint: disable=too-many-return-statements
+    username: str,
+) -> ResponseReturnValue:
     """Toggle active status for a user."""
+    if not validate_username(username):
+        if request.is_json:
+            return jsonify({"error": "Invalid username"}), 400
+        return redirect(url_for("auth.admin_users"))
+
     config = get_config()
 
     if config.ldap.enabled:
         return jsonify({"error": "Not available with LDAP"}), 400
 
     # Prevent disabling own account
-    if username == session.get("username"):
+    admin_username = get_current_user()
+    if not admin_username:
+        if request.is_json:
+            return jsonify({"error": "Authentication required"}), 401
+        return redirect(url_for("auth.login"))
+    if username == admin_username:
         if request.is_json:
             return jsonify({"error": "Cannot disable your own account"}), 400
         return redirect(url_for("auth.admin_users"))
@@ -832,7 +896,7 @@ def admin_toggle_active(username: str) -> Response:
         return redirect(url_for("auth.admin_users"))
 
     new_active_status = not user.is_active
-    if user_storage.set_active(username, new_active_status, session.get("username")):
+    if user_storage.set_active(username, new_active_status, admin_username):
         if request.is_json:
             return jsonify({"message": "Active status updated", "is_active": new_active_status})
         return redirect(url_for("auth.admin_users"))
@@ -844,15 +908,26 @@ def admin_toggle_active(username: str) -> Response:
 
 @bp.route("/admin/users/<username>/reset-password", methods=["POST"])
 @admin_required
-def admin_reset_password(username: str) -> Response | str:
+def admin_reset_password(username: str) -> ResponseReturnValue:
     """Reset a user's password (admin action)."""
+    if not validate_username(username):
+        if request.is_json:
+            return jsonify({"error": "Invalid username"}), 400
+        return redirect(url_for("auth.admin_users"))
+
     config = get_config()
 
     if config.ldap.enabled:
         return jsonify({"error": "Not available with LDAP"}), 400
 
+    admin_username = get_current_user()
+    if not admin_username:
+        if request.is_json:
+            return jsonify({"error": "Authentication required"}), 401
+        return redirect(url_for("auth.login"))
+
     user_storage = get_user_storage()
-    temp_password = user_storage.reset_password(username, session.get("username"))
+    temp_password = user_storage.reset_password(username, admin_username)
 
     if temp_password:
         if request.is_json:
@@ -870,21 +945,31 @@ def admin_reset_password(username: str) -> Response | str:
 
 @bp.route("/admin/users/<username>/delete", methods=["POST"])
 @admin_required
-def admin_delete_user(username: str) -> Response:
+def admin_delete_user(username: str) -> ResponseReturnValue:
     """Delete a user account."""
+    if not validate_username(username):
+        if request.is_json:
+            return jsonify({"error": "Invalid username"}), 400
+        return redirect(url_for("auth.admin_users"))
+
     config = get_config()
 
     if config.ldap.enabled:
         return jsonify({"error": "Not available with LDAP"}), 400
 
     # Prevent deleting own account
-    if username == session.get("username"):
+    admin_username = get_current_user()
+    if not admin_username:
+        if request.is_json:
+            return jsonify({"error": "Authentication required"}), 401
+        return redirect(url_for("auth.login"))
+    if username == admin_username:
         if request.is_json:
             return jsonify({"error": "Cannot delete your own account"}), 400
         return redirect(url_for("auth.admin_users"))
 
     user_storage = get_user_storage()
-    if user_storage.delete_user(username, session.get("username")):
+    if user_storage.delete_user(username, admin_username):
         if request.is_json:
             return jsonify({"message": "User deleted"})
         return redirect(url_for("auth.admin_users"))

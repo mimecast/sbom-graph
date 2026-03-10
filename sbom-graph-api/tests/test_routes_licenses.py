@@ -10,10 +10,18 @@ class TestLicensesReport:
         mock_service = MagicMock()
         mock_service.get_all_licenses.return_value = [
             {"spdx_id": "MIT", "name": "MIT", "risk_category": "permissive", "usage_count": 42},
-            {"spdx_id": "GPL-3.0-only", "name": "GPL-3.0-only", "risk_category": "strong_copyleft", "usage_count": 3},
+            {
+                "spdx_id": "GPL-3.0-only",
+                "name": "GPL-3.0-only",
+                "risk_category": "strong_copyleft",
+                "usage_count": 3,
+            },
         ]
 
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service", return_value=mock_service):
+        with patch(
+            "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
+            return_value=mock_service,
+        ):
             resp = client.get("/reports/licenses?format=json")
 
         assert resp.status_code == 200
@@ -25,7 +33,10 @@ class TestLicensesReport:
         mock_service = MagicMock()
         mock_service.get_all_licenses.return_value = []
 
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service", return_value=mock_service):
+        with patch(
+            "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
+            return_value=mock_service,
+        ):
             resp = client.get("/reports/licenses")
 
         assert resp.status_code == 200
@@ -35,7 +46,10 @@ class TestLicensesReport:
         mock_service = MagicMock()
         mock_service.get_all_licenses.return_value = []
 
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service", return_value=mock_service):
+        with patch(
+            "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
+            return_value=mock_service,
+        ):
             resp = client.get("/reports/licenses?internal_only=false&format=json")
 
         assert resp.status_code == 200
@@ -63,8 +77,13 @@ class TestLicenseSummaryReport:
             },
         ]
 
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service", return_value=mock_service):
-            resp = client.get("/reports/license-summary?project_name=my-lib&version_name=1.0.0&format=json")
+        with patch(
+            "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
+            return_value=mock_service,
+        ):
+            resp = client.get(
+                "/reports/license-summary?project_name=my-lib&version_name=1.0.0&format=json",
+            )
 
         assert resp.status_code == 200
         data = resp.get_json()
@@ -87,7 +106,10 @@ class TestLicenseConflictsReport:
             },
         ]
 
-        with patch("sbom_graph_api.routes.reports.get_falkordb_service", return_value=mock_service):
+        with patch(
+            "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
+            return_value=mock_service,
+        ):
             resp = client.get("/reports/license-conflicts?format=json")
 
         assert resp.status_code == 200
@@ -102,7 +124,12 @@ class TestPackageLicensesApi:
     def test_returns_licenses(self, client) -> None:
         mock_service = MagicMock()
         mock_service.get_package_licenses.return_value = [
-            {"spdx_id": "Apache-2.0", "name": "Apache-2.0", "risk_category": "permissive", "url": ""},
+            {
+                "spdx_id": "Apache-2.0",
+                "name": "Apache-2.0",
+                "risk_category": "permissive",
+                "url": "",
+            },
         ]
 
         with patch("sbom_graph_api.routes.api_v1.get_falkordb_service", return_value=mock_service):

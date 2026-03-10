@@ -20,12 +20,12 @@ class TestSourceRepoPackages:
         with patch("sbom_graph_api.routes.api_v1.get_falkordb_service"):
             response = client.get(
                 "/api/v1/source/packages",
-                query_string={"repo_url": "x" * 2049},
+                query_string={"repo_url": "https://example.com/" + "x" * 2048},
             )
 
         assert response.status_code == 400
         data = response.get_json()
-        assert "length" in data["error"].lower() or "exceeds" in data["error"].lower()
+        assert "invalid" in data["error"].lower() or "repo_url" in data["error"].lower()
 
     def test_200_returns_packages_list(self, client):
         """Valid repo_url returns 200 with packages list."""
@@ -33,9 +33,7 @@ class TestSourceRepoPackages:
             {"purl": "pkg:maven/org/foo@1.0", "project_name": "foo", "version": "1.0"},
         ]
 
-        with patch(
-            "sbom_graph_api.routes.api_v1.get_falkordb_service"
-        ) as mock_get_svc:
+        with patch("sbom_graph_api.routes.api_v1.get_falkordb_service") as mock_get_svc:
             mock_svc = MagicMock()
             mock_svc.get_packages_by_source_repo.return_value = mock_packages
             mock_get_svc.return_value = mock_svc
@@ -74,9 +72,7 @@ class TestSourceRepoVulnerabilities:
             },
         ]
 
-        with patch(
-            "sbom_graph_api.routes.api_v1.get_falkordb_service"
-        ) as mock_get_svc:
+        with patch("sbom_graph_api.routes.api_v1.get_falkordb_service") as mock_get_svc:
             mock_svc = MagicMock()
             mock_svc.get_vulnerabilities_by_source_repo.return_value = mock_vulns
             mock_get_svc.return_value = mock_svc
@@ -108,9 +104,7 @@ class TestSourceReposReport:
             },
         ]
 
-        with patch(
-            "sbom_graph_api.routes.reports.get_falkordb_service"
-        ) as mock_get_svc:
+        with patch("sbom_graph_api.routes.reports.inventory.get_falkordb_service") as mock_get_svc:
             mock_svc = MagicMock()
             mock_svc.get_all_source_repos.return_value = mock_repos
             mock_get_svc.return_value = mock_svc
@@ -133,9 +127,7 @@ class TestSourceReposReport:
             },
         ]
 
-        with patch(
-            "sbom_graph_api.routes.reports.get_falkordb_service"
-        ) as mock_get_svc:
+        with patch("sbom_graph_api.routes.reports.inventory.get_falkordb_service") as mock_get_svc:
             mock_svc = MagicMock()
             mock_svc.get_all_source_repos.return_value = mock_repos
             mock_get_svc.return_value = mock_svc

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from flask import Blueprint, Response, abort, jsonify, redirect, request, url_for
+from flask.typing import ResponseReturnValue
 
 from sbom_graph_api.routes.auth import auth_required
 from sbom_graph_api.utils.validation import (
@@ -46,7 +47,7 @@ EXPORT_TEMPLATE = "export.html"
 
 @bp.route("/dependencies/<project_name>/excel")
 @auth_required
-def download_dependencies_excel(project_name: str) -> Response:
+def download_dependencies_excel(project_name: str) -> ResponseReturnValue:
     """Endpoint 3: Download Excel file with version dependencies.
 
     DEPRECATED: Use /reports/version-dependencies/{project_name}?format=excel instead.
@@ -79,7 +80,7 @@ def download_dependencies_excel(project_name: str) -> Response:
 
 @bp.route("/dependencies/<project_name>/json")
 @auth_required
-def download_dependencies_json(project_name: str) -> Response:
+def download_dependencies_json(project_name: str) -> ResponseReturnValue:
     """Download JSON file with version dependencies.
 
     DEPRECATED: Use /reports/version-dependencies/{project_name}?format=json instead.
@@ -111,7 +112,7 @@ def download_dependencies_json(project_name: str) -> Response:
 
 @bp.route("/dependencies/<project_name>")
 @auth_required
-def dependencies_export(project_name: str) -> Response:
+def dependencies_export(project_name: str) -> ResponseReturnValue:
     """Export version dependencies with format selection.
 
     DEPRECATED: Use /reports/version-dependencies/{project_name} instead,

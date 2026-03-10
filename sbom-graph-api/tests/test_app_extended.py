@@ -1,7 +1,5 @@
 """Extended tests for app.py - JWT error handlers, _is_api_request, index with auth."""
 
-from unittest.mock import patch
-
 import pytest
 
 
@@ -11,21 +9,25 @@ class TestIsApiRequest:
     def test_json_content_type(self, app):
         with app.test_request_context("/", content_type="application/json"):
             from sbom_graph_api.app import _is_api_request
+
             assert _is_api_request() is True
 
     def test_json_accept_header(self, app):
         with app.test_request_context("/", headers={"Accept": "application/json"}):
             from sbom_graph_api.app import _is_api_request
+
             assert _is_api_request() is True
 
     def test_authorization_header(self, app):
         with app.test_request_context("/", headers={"Authorization": "Bearer token"}):
             from sbom_graph_api.app import _is_api_request
+
             assert _is_api_request() is True
 
     def test_browser_request(self, app):
         with app.test_request_context("/", headers={"Accept": "text/html"}):
             from sbom_graph_api.app import _is_api_request
+
             assert _is_api_request() is False
 
 
@@ -44,8 +46,7 @@ class TestIndexWithAuth:
         reset_config()
         reset_service()
 
-        mock_config = pytest.importorskip("sbom_graph_api.config").AppConfig
-        # This is tested through the auth_app fixture in test_routes_auth.py
+        pytest.importorskip("sbom_graph_api.config")
 
 
 class TestGetGraphContext:
@@ -53,12 +54,18 @@ class TestGetGraphContext:
 
     def test_get_graph_yields_graph(self):
         from unittest.mock import MagicMock
-        from sbom_graph_api.services.falkordb_service import FalkorDBService
+
         from sbom_graph_api.config import FalkorDBConfig
+        from sbom_graph_api.services.falkordb_service import FalkorDBService
 
         config = FalkorDBConfig(
-            host="test", port=6379, password="", graph_name="test",
-            socket_timeout=30.0, socket_connect_timeout=10.0, internal_label="INTERNAL",
+            host="test",
+            port=6379,
+            password="",
+            graph_name="test",
+            socket_timeout=30.0,
+            socket_connect_timeout=10.0,
+            internal_label="INTERNAL",
             ssl=False,
             ssl_ca_certs=None,
         )

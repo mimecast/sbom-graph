@@ -8,11 +8,42 @@ from io import BytesIO
 from typing import Any
 
 import pandas as pd
+from flask import Response as FlaskResponse
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 
-from sbom_graph_api.services.falkordb_service import FalkorDBService, get_falkordb_service
+from sbom_graph_api.services.falkordb_service import (
+    FalkorDBService,
+    get_falkordb_service,
+)
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def excel_response(
+    buffer: BytesIO,
+    filename: str,
+) -> FlaskResponse:
+    """Wrap a BytesIO Excel buffer in a downloadable Flask response.
+
+    Args:
+        buffer: In-memory workbook produced by an ``create_*``
+            function.
+        filename: Suggested download filename (e.g.
+            ``"all_projects.xlsx"``).
+
+    Returns:
+        Flask response with correct MIME type and
+        ``Content-Disposition`` header.
+    """
+    return FlaskResponse(
+        buffer.getvalue(),
+        mimetype=XLSX_MIME,
+        headers={
+            "Content-Disposition": (f"attachment; filename={filename}"),
+        },
+    )
 
 
 def style_header_row(ws, num_cols: int) -> None:
@@ -42,8 +73,7 @@ def auto_adjust_column_widths(ws) -> None:
         column_letter = column[0].column_letter
         for cell in column:
             try:
-                if len(str(cell.value)) > max_length:
-                    max_length = len(str(cell.value))
+                max_length = max(max_length, len(str(cell.value)))
             except (TypeError, AttributeError):
                 pass
         adjusted_width = min(max_length + 2, 50)
@@ -77,6 +107,7 @@ def create_version_dependencies_excel(
     # Create workbook
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Version Dependencies"
 
     # Create DataFrame from dependants data
@@ -89,7 +120,7 @@ def create_version_dependencies_excel(
                 "dependant_version": "Dependant Version",
             }
         )
-        df = df[["Version", "Dependant Project", "Dependant Version"]]
+        df = df[["Version", "Dependant Project", "Dependant Version"]]  # pylint: disable=unsubscriptable-object
         df = df.sort_values(["Version", "Dependant Project", "Dependant Version"])
 
         # Write to worksheet
@@ -151,7 +182,8 @@ def create_version_dependencies_report_excel(
     Args:
         project_name: The project name
         version_name: The version being analyzed
-        dependencies: List of dependency records with depth, dependency_project, dependency_version, is_internal
+        dependencies: List of dependency records with depth, dependency_project,
+            dependency_version, is_internal
         is_semver_compliant: Whether the project is fully SemVer compliant
         latest_version: The latest SemVer version if compliant
         internal_only: If True, data was filtered to internal-labeled nodes only
@@ -162,6 +194,7 @@ def create_version_dependencies_report_excel(
     """
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Version Dependencies"
 
     # Create DataFrame from dependencies data
@@ -179,8 +212,8 @@ def create_version_dependencies_report_excel(
         cols = ["Depth", "Dependency Project", "Dependency Version", "Is Internal"]
         for col in cols:
             if col not in df.columns:
-                df[col] = ""
-        df = df[cols]
+                df[col] = ""  # pylint: disable=unsupported-assignment-operation
+        df = df[cols]  # pylint: disable=unsubscriptable-object
         df = df.sort_values(["Depth", "Dependency Project", "Dependency Version"])
 
         # Write to worksheet
@@ -292,6 +325,7 @@ def create_all_projects_excel(
 
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Internal Projects" if internal_only else "All Projects"
 
     # Headers
@@ -351,6 +385,7 @@ def create_applications_excel(
 
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
 
     title_parts = []
     if internal_only:
@@ -425,6 +460,7 @@ def create_snapshot_report_excel(
     """
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "SNAPSHOT Dependencies"
 
     # Headers
@@ -476,6 +512,7 @@ def create_self_dependency_report_excel(
     """
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Self Dependencies"
 
     # Headers
@@ -525,6 +562,7 @@ def create_multi_version_dependency_report_excel(
     """
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Multi-Version Dependencies"
 
     # Headers
@@ -635,6 +673,7 @@ def create_multi_version_deps_excel(
     """
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Version Usage"
 
     # Headers
@@ -729,6 +768,7 @@ def create_non_semver_report_excel(
     """
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Non-SemVer Versions"
 
     # Headers
@@ -810,6 +850,7 @@ def create_dependants_report_excel(
     """
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Dependants"
 
     # Headers
@@ -902,6 +943,7 @@ def create_vulnerabilities_excel(
     """
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Vulnerabilities"
 
     # Headers
@@ -1002,6 +1044,7 @@ def create_vulnerability_dependants_excel(
     """
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Affected Dependants"
 
     # Headers
@@ -1110,6 +1153,7 @@ def create_centrality_excel(
     """
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Centrality"
 
     # Headers
@@ -1200,10 +1244,9 @@ def create_generic_excel(
     Returns:
         A Flask ``Response`` with the Excel file attached.
     """
-    from flask import Response as FlaskResponse
-
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = sheet_name
 
     ws.append(columns)
@@ -1218,8 +1261,4 @@ def create_generic_excel(
     wb.save(buf)
     buf.seek(0)
 
-    return FlaskResponse(
-        buf.getvalue(),
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
-    )
+    return excel_response(buf, filename)

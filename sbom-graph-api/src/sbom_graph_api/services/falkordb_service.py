@@ -23,9 +23,9 @@ from contextlib import contextmanager
 from typing import Any
 
 from falkordb import FalkorDB, Graph
+from sbom_graph_model import LicenseRiskCategory
 
 from sbom_graph_api.config import FalkorDBConfig, get_config
-from sbom_graph_model import LicenseRiskCategory
 
 # Default maximum depth for transitive queries to prevent runaway traversals
 # Set high enough to capture deep dependency chains (some graphs have 20+ levels)
@@ -289,16 +289,18 @@ class FalkorDBService:
 
         applications = []
         for row in result:
-            applications.append({
-                "project_name": row[0],
-                "version": row[1],
-                "scan_id": row[2],
-                "app_id": row[3],
-                "public_id": row[4],
-                "repo_url": row[5],
-                "labels": row[6] if row[6] else [],
-                "is_internal": self.internal_label in (row[6] or []),
-            })
+            applications.append(
+                {
+                    "project_name": row[0],
+                    "version": row[1],
+                    "scan_id": row[2],
+                    "app_id": row[3],
+                    "public_id": row[4],
+                    "repo_url": row[5],
+                    "labels": row[6] if row[6] else [],
+                    "is_internal": self.internal_label in (row[6] or []),
+                }
+            )
 
         if latest_only:
             # Group by project_name and get the latest version for each
@@ -313,9 +315,7 @@ class FalkorDBService:
             latest_apps = []
             for project_name, versions in project_versions.items():
                 # Try to find the latest semver version
-                latest_version = self.get_latest_semver_version(
-                    project_name, internal_only
-                )
+                latest_version = self.get_latest_semver_version(project_name, internal_only)
 
                 if latest_version:
                     # Find the app with the latest version
@@ -354,7 +354,8 @@ class FalkorDBService:
 
         if version_name:
             query = f"""
-                MATCH (dep:{dep_label})-[r]->(v:{target_label} {{project_name: $project_name, name: $version_name}})
+                MATCH (dep:{dep_label})-[r]->(v:{target_label}
+                    {{project_name: $project_name, name: $version_name}})
                 RETURN DISTINCT dep.project_name as dependant_project,
                        dep.name as dependant_version,
                        v.project_name as target_project,
@@ -519,7 +520,10 @@ class FalkorDBService:
         """
         # Use the existing transitive dependencies method
         nodes, edges = self.get_transitive_dependencies(
-            project_name, version_name, max_depth, internal_only,
+            project_name,
+            version_name,
+            max_depth,
+            internal_only,
             project_group=project_group,
         )
 
@@ -692,7 +696,7 @@ class FalkorDBService:
                 RETURN src, tgt, type(r) as rel_type
                 LIMIT $query_limit
             """
-        elif filter_mode == "any":
+        if filter_mode == "any":
             # Library node: filter by ANY of the scan_ids
             # Include dependants that share at least one scan_id with root
             return f"""
@@ -702,14 +706,13 @@ class FalkorDBService:
                 RETURN src, tgt, type(r) as rel_type
                 LIMIT $query_limit
             """
-        else:
-            # No filtering - include all dependants
-            return f"""
-                MATCH (src:{node_label})-[r]->(tgt:{node_label})
-                WHERE {where_clause}
-                RETURN src, tgt, type(r) as rel_type
-                LIMIT $query_limit
-            """
+        # No filtering - include all dependants
+        return f"""
+            MATCH (src:{node_label})-[r]->(tgt:{node_label})
+            WHERE {where_clause}
+            RETURN src, tgt, type(r) as rel_type
+            LIMIT $query_limit
+        """
 
     def get_transitive_dependencies(
         self,
@@ -1195,22 +1198,25 @@ class FalkorDBService:
 
         # Get transitive dependants
         nodes, edges = self.get_transitive_dependants(
-            project_name, version_name, max_depth, internal_only,
+            project_name,
+            version_name,
+            max_depth,
+            internal_only,
             project_group=project_group,
         )
 
         root_id = f"{project_name}:{version_name}"
 
         # Build NetworkX graph for path analysis
-        G = nx.DiGraph()
+        graph: nx.DiGraph = nx.DiGraph()
         node_data = {n["id"]: n for n in nodes}
 
         for node in node_data.values():
-            G.add_node(node["id"])
+            graph.add_node(node["id"])
 
         # Add edges (dependant -> target direction)
         for edge in edges:
-            G.add_edge(edge["source"], edge["target"])
+            graph.add_edge(edge["source"], edge["target"])
 
         # Remove cycles to prevent infinite loops
         # Use efficient DFS-based back-edge removal (O(V+E)) instead of
@@ -1242,21 +1248,21 @@ class FalkorDBService:
 
         try:
             # Also remove self-loops first
-            self_loops = list(nx.selfloop_edges(G))
-            G.remove_edges_from(self_loops)
+            self_loops = list(nx.selfloop_edges(graph))
+            graph.remove_edges_from(self_loops)
             # Then remove back-edges to break cycles
-            remove_cycles_dfs(G)
+            remove_cycles_dfs(graph)
         except nx.NetworkXError:
             pass  # Graph error, continue with what we have
 
         # Calculate partitions using LONGEST path from root to each dependant
         # Use proper DAG longest path algorithm (topological sort based)
-        # Since G has edges dependant -> target, we work on the reversed graph
-        G_reversed = G.reverse(copy=True)
+        # Since graph has edges dependant -> target, we work on the reversed graph
+        graph_reversed = graph.reverse(copy=True)
 
         # For DAG longest path: use topological sort and dynamic programming
         # Initialize distances from root
-        partitions = dict.fromkeys(G_reversed.nodes(), -1)
+        partitions = dict.fromkeys(graph_reversed.nodes(), -1)
         partitions[root_id] = 0
 
         # Get topological order starting from root (BFS-based for nodes reachable from root)
@@ -1264,14 +1270,14 @@ class FalkorDBService:
         from collections import deque
 
         # Use BFS to get nodes in level order, then process
-        visited_order = []
+        visited_order: list[str] = []
         queue = deque([root_id])
         visited_for_order = {root_id}
 
         while queue:
-            node = queue.popleft()
-            visited_order.append(node)
-            for successor in G_reversed.successors(node):
+            current_node = queue.popleft()
+            visited_order.append(current_node)
+            for successor in graph_reversed.successors(current_node):
                 if successor not in visited_for_order:
                     visited_for_order.add(successor)
                     queue.append(successor)
@@ -1280,16 +1286,16 @@ class FalkorDBService:
         # Repeat until no changes (handles the DAG properly)
         changed = True
         iterations = 0
-        max_iterations = len(G_reversed.nodes()) + 1
+        max_iterations = len(graph_reversed.nodes()) + 1
 
         while changed and iterations < max_iterations:
             changed = False
             iterations += 1
-            for node in visited_order:
-                if partitions[node] < 0:
+            for current_node in visited_order:
+                if partitions[current_node] < 0:
                     continue
-                for successor in G_reversed.successors(node):
-                    new_dist = partitions[node] + 1
+                for successor in graph_reversed.successors(current_node):
+                    new_dist = partitions[current_node] + 1
                     if new_dist > partitions[successor]:
                         partitions[successor] = new_dist
                         changed = True
@@ -1318,7 +1324,7 @@ class FalkorDBService:
                 # Use partition as the cutoff - this is the known longest path length
                 # Add small buffer in case of rounding/edge cases
                 path_cutoff = partition + 2
-                all_paths = nx.all_simple_paths(G, node_id, root_id, cutoff=path_cutoff)
+                all_paths = nx.all_simple_paths(graph, node_id, root_id, cutoff=path_cutoff)
                 # Collect paths, sort by length descending (longest first)
                 raw_paths = list(all_paths)
                 raw_paths.sort(key=len, reverse=True)
@@ -1682,7 +1688,10 @@ class FalkorDBService:
         # proper scan_id filtering (ANY for library nodes, single for Application nodes)
         # This ensures all returned dependencies share at least one scan_id with the root
         nodes, _ = self.get_transitive_dependencies(
-            project_name, version_name, max_depth, internal_only,
+            project_name,
+            version_name,
+            max_depth,
+            internal_only,
             project_group=project_group,
         )
 
@@ -1812,23 +1821,27 @@ class FalkorDBService:
             for dep in dependants_raw:
                 if dep:
                     dep_labels = dep.get("labels", [])
-                    dependants_list.append({
-                        "project_name": dep.get("project_name", ""),
-                        "version": dep.get("version", ""),
-                        "project_group": dep.get("project_group", ""),
-                        "is_internal": internal_label in dep_labels,
-                    })
+                    dependants_list.append(
+                        {
+                            "project_name": dep.get("project_name", ""),
+                            "version": dep.get("version", ""),
+                            "project_group": dep.get("project_group", ""),
+                            "is_internal": internal_label in dep_labels,
+                        }
+                    )
 
             # Sort dependants by project name
             dependants_list.sort(key=lambda x: (x["project_name"], x["version"]))
 
-            versions.append({
-                "version": version_name,
-                "project_group": project_group,
-                "is_internal": is_internal,
-                "dependant_count": dependant_count,
-                "dependants": dependants_list,
-            })
+            versions.append(
+                {
+                    "version": version_name,
+                    "project_group": project_group,
+                    "is_internal": is_internal,
+                    "dependant_count": dependant_count,
+                    "dependants": dependants_list,
+                }
+            )
 
             total_dependants += dependant_count
 
@@ -1973,9 +1986,7 @@ class FalkorDBService:
 
         return list(nodes_dict.values()), edges
 
-    def get_all_vulnerabilities(
-        self, internal_only: bool = False
-    ) -> list[dict[str, Any]]:
+    def get_all_vulnerabilities(self, internal_only: bool = False) -> list[dict[str, Any]]:
         """Get all vulnerabilities with their affected versions.
 
         Args:
@@ -2054,19 +2065,21 @@ class FalkorDBService:
 
         vulnerabilities = []
         for row in result:
-            vulnerabilities.append({
-                "defect_id": row[0],
-                "title": row[1],
-                "description": row[2],
-                "severity": row[3],
-                "cvss_score": row[4],
-                "cwe_id": row[5],
-                "published_date": row[6],
-                "last_enriched_at": row[7],
-                "aliases": row[8] or [],
-                "enrichment_source": row[9],
-                "affected_versions": row[10] if row[10] else [],
-            })
+            vulnerabilities.append(
+                {
+                    "defect_id": row[0],
+                    "title": row[1],
+                    "description": row[2],
+                    "severity": row[3],
+                    "cvss_score": row[4],
+                    "cwe_id": row[5],
+                    "published_date": row[6],
+                    "last_enriched_at": row[7],
+                    "aliases": row[8] or [],
+                    "enrichment_source": row[9],
+                    "affected_versions": row[10] if row[10] else [],
+                }
+            )
 
         return vulnerabilities
 
@@ -2201,10 +2214,12 @@ class FalkorDBService:
                         "version": dep["version"],
                         "partition": partition,
                         "is_internal": is_internal,
-                        "affected_by": [{
-                            "project_name": project_name,
-                            "version": version,
-                        }],
+                        "affected_by": [
+                            {
+                                "project_name": project_name,
+                                "version": version,
+                            }
+                        ],
                     }
                 else:
                     # Update partition to minimum (closest path)
@@ -2279,13 +2294,15 @@ class FalkorDBService:
 
         centrality_data = []
         for row in result:
-            centrality_data.append({
-                "project_group": row[0] or "",
-                "project_name": row[1] or "",
-                "version_name": row[2] or "",
-                "inDegree": row[3] or 0,
-                "outDegree": row[4] or 0,
-            })
+            centrality_data.append(
+                {
+                    "project_group": row[0] or "",
+                    "project_name": row[1] or "",
+                    "version_name": row[2] or "",
+                    "inDegree": row[3] or 0,
+                    "outDegree": row[4] or 0,
+                }
+            )
 
         return centrality_data
 
@@ -2345,7 +2362,8 @@ class FalkorDBService:
         """
         if project_group:
             root_match = (
-                "MATCH (root:Version {project_name: $project_name, name: $version_name, project_group: $project_group})"
+                "MATCH (root:Version {project_name: $project_name,"
+                " name: $version_name, project_group: $project_group})"
             )
             params: dict[str, Any] = {
                 "project_name": project_name,
@@ -2353,9 +2371,7 @@ class FalkorDBService:
                 "project_group": project_group,
             }
         else:
-            root_match = (
-                "MATCH (root:Version {project_name: $project_name, name: $version_name})"
-            )
+            root_match = "MATCH (root:Version {project_name: $project_name, name: $version_name})"
             params = {
                 "project_name": project_name,
                 "version_name": version_name,
@@ -2387,15 +2403,17 @@ class FalkorDBService:
                 key = f"{purl}|{spdx}"
                 if key not in seen_keys:
                     seen_keys.add(key)
-                    results.append({
-                        "project_group": row[0] or "",
-                        "project_name": row[1] or "",
-                        "version": row[2] or "",
-                        "purl": purl,
-                        "spdx_id": spdx or "",
-                        "license_name": row[5] or "",
-                        "risk_category": LicenseRiskCategory.from_str(row[6]),
-                    })
+                    results.append(
+                        {
+                            "project_group": row[0] or "",
+                            "project_name": row[1] or "",
+                            "version": row[2] or "",
+                            "purl": purl,
+                            "spdx_id": spdx or "",
+                            "license_name": row[5] or "",
+                            "risk_category": LicenseRiskCategory.from_str(row[6]),
+                        }
+                    )
 
         visited: set[str] = set(frontier_purls)
         for _depth in range(max_depth):
@@ -2426,21 +2444,27 @@ class FalkorDBService:
                     key = f"{child_purl}|{spdx}"
                     if key not in seen_keys:
                         seen_keys.add(key)
-                        results.append({
-                            "project_group": row[0] or "",
-                            "project_name": row[1] or "",
-                            "version": row[2] or "",
-                            "purl": child_purl,
-                            "spdx_id": spdx or "",
-                            "license_name": row[5] or "",
-                            "risk_category": LicenseRiskCategory.from_str(row[6]),
-                        })
+                        results.append(
+                            {
+                                "project_group": row[0] or "",
+                                "project_name": row[1] or "",
+                                "version": row[2] or "",
+                                "purl": child_purl,
+                                "spdx_id": spdx or "",
+                                "license_name": row[5] or "",
+                                "risk_category": LicenseRiskCategory.from_str(row[6]),
+                            }
+                        )
             frontier_purls = next_frontier
 
         results.sort(key=lambda r: (r["risk_category"], r["project_name"]))
         return results
 
-    def get_license_conflicts(self, internal_only: bool = True, max_depth: int = DEFAULT_MAX_DEPTH) -> list[dict[str, Any]]:
+    def get_license_conflicts(
+        self,
+        internal_only: bool = True,
+        max_depth: int = DEFAULT_MAX_DEPTH,
+    ) -> list[dict[str, Any]]:
         """Find projects that mix strong-copyleft with permissive licenses.
 
         Performs a single combined BFS from *all* application purls to build
@@ -2470,7 +2494,14 @@ class FalkorDBService:
             purl = row[3]
             if not purl:
                 continue
-            app_infos.append({"pg": row[0] or "", "pn": row[1] or "", "vn": row[2] or "", "purl": purl})
+            app_infos.append(
+                {
+                    "pg": row[0] or "",
+                    "pn": row[1] or "",
+                    "vn": row[2] or "",
+                    "purl": purl,
+                }
+            )
             seed_purls.add(purl)
 
         if not app_infos:
@@ -2493,9 +2524,7 @@ class FalkorDBService:
         for row in self.execute_query(lic_query, {"purls": list(frontier)}):
             vpurl = row[0]
             if vpurl and row[1]:
-                lic_map.setdefault(vpurl, set()).add(
-                    (row[1], LicenseRiskCategory.from_str(row[2]))
-                )
+                lic_map.setdefault(vpurl, set()).add((row[1], LicenseRiskCategory.from_str(row[2])))
 
         # Combined BFS: one query per depth level across all apps
         for _depth in range(max_depth):
@@ -2552,14 +2581,18 @@ class FalkorDBService:
                     if child not in app_visited:
                         stack.append(child)
 
-            if LicenseRiskCategory.STRONG_COPYLEFT in app_categories and LicenseRiskCategory.PERMISSIVE in app_categories:
-                conflicts.append({
-                    "project_group": app["pg"],
-                    "project_name": app["pn"],
-                    "version_name": app["vn"],
-                    "licenses": sorted(app_licenses),
-                    "risk_categories": sorted(app_categories),
-                })
+            has_copyleft = LicenseRiskCategory.STRONG_COPYLEFT in app_categories
+            has_permissive = LicenseRiskCategory.PERMISSIVE in app_categories
+            if has_copyleft and has_permissive:
+                conflicts.append(
+                    {
+                        "project_group": app["pg"],
+                        "project_name": app["pn"],
+                        "version_name": app["vn"],
+                        "licenses": sorted(app_licenses),
+                        "risk_categories": sorted(app_categories),
+                    }
+                )
 
         conflicts.sort(key=lambda c: c["project_name"])
         return conflicts
@@ -2592,9 +2625,7 @@ class FalkorDBService:
             for row in result
         ]
 
-    def get_vulnerability_freshness(
-        self, internal_only: bool = False
-    ) -> list[dict[str, Any]]:
+    def get_vulnerability_freshness(self, internal_only: bool = False) -> list[dict[str, Any]]:
         """Return packages with enrichment freshness status.
 
         Each row contains the package purl, project info, and the most recent
@@ -2618,13 +2649,15 @@ class FalkorDBService:
         result = self.execute_query(query, {})
         rows = []
         for row in result:
-            rows.append({
-                "project_group": row[0] or "",
-                "project_name": row[1] or "",
-                "version_name": row[2] or "",
-                "purl": row[3] or "",
-                "last_enriched_at": row[4],
-            })
+            rows.append(
+                {
+                    "project_group": row[0] or "",
+                    "project_name": row[1] or "",
+                    "version_name": row[2] or "",
+                    "purl": row[3] or "",
+                    "last_enriched_at": row[4],
+                }
+            )
         return rows
 
     def get_package_vulnerabilities(
@@ -2658,16 +2691,18 @@ class FalkorDBService:
         direct_result = self.execute_query(direct_query, {"purl": purl})
         direct_vulns = []
         for row in direct_result:
-            direct_vulns.append({
-                "id": row[0],
-                "severity": row[1],
-                "cvss": row[2],
-                "cvss_vector": row[3],
-                "description": row[4],
-                "aliases": row[5] or [],
-                "source": row[6],
-                "last_enriched_at": row[7],
-            })
+            direct_vulns.append(
+                {
+                    "id": row[0],
+                    "severity": row[1],
+                    "cvss": row[2],
+                    "cvss_vector": row[3],
+                    "description": row[4],
+                    "aliases": row[5] or [],
+                    "source": row[6],
+                    "last_enriched_at": row[7],
+                }
+            )
 
         result: dict[str, Any] = {
             "package": purl,
@@ -2718,14 +2753,16 @@ class FalkorDBService:
                     """
                     tv_result = self.execute_query(tv_query, {"purls": batch})
                     for tv_row in tv_result:
-                        trans_vulns.append({
-                            "package": tv_row[0],
-                            "id": tv_row[1],
-                            "severity": tv_row[2],
-                            "description": tv_row[3],
-                            "aliases": tv_row[4] or [],
-                            "source": tv_row[5],
-                        })
+                        trans_vulns.append(
+                            {
+                                "package": tv_row[0],
+                                "id": tv_row[1],
+                                "severity": tv_row[2],
+                                "description": tv_row[3],
+                                "aliases": tv_row[4] or [],
+                                "source": tv_row[5],
+                            }
+                        )
 
             result["transitive_vulnerabilities"] = trans_vulns
             result["transitive_count"] = len(trans_vulns)
@@ -2767,23 +2804,23 @@ class FalkorDBService:
         result = self.execute_query(query, params)
         annotations: list[dict[str, Any]] = []
         for row in result:
-            annotations.append({
-                "annotation_id": row[0],
-                "type": row[1],
-                "justification": row[2],
-                "created_by": row[3],
-                "created_at": row[4],
-                "expires_at": row[5],
-                "purl": row[6],
-                "project_name": row[7] or "",
-                "version_name": row[8] or "",
-                "project_group": row[9] or "",
-            })
+            annotations.append(
+                {
+                    "annotation_id": row[0],
+                    "type": row[1],
+                    "justification": row[2],
+                    "created_by": row[3],
+                    "created_at": row[4],
+                    "expires_at": row[5],
+                    "purl": row[6],
+                    "project_name": row[7] or "",
+                    "version_name": row[8] or "",
+                    "project_group": row[9] or "",
+                }
+            )
         return annotations
 
-    def get_policy_violations(
-        self, internal_only: bool = False
-    ) -> list[dict[str, Any]]:
+    def get_policy_violations(self, internal_only: bool = False) -> list[dict[str, Any]]:
         """Return all 'bad' policy annotations that are still in use.
 
         For each bad-annotated package, returns the count of dependant
@@ -2809,17 +2846,19 @@ class FalkorDBService:
         result = self.execute_query(query, {})
         violations: list[dict[str, Any]] = []
         for row in result:
-            violations.append({
-                "annotation_id": row[0],
-                "justification": row[1],
-                "created_by": row[2],
-                "created_at": row[3],
-                "expires_at": row[4],
-                "purl": row[5],
-                "project_name": row[6] or "",
-                "version_name": row[7] or "",
-                "dependant_count": row[8] or 0,
-            })
+            violations.append(
+                {
+                    "annotation_id": row[0],
+                    "justification": row[1],
+                    "created_by": row[2],
+                    "created_at": row[3],
+                    "expires_at": row[4],
+                    "purl": row[5],
+                    "project_name": row[6] or "",
+                    "version_name": row[7] or "",
+                    "dependant_count": row[8] or 0,
+                }
+            )
         return violations
 
     def check_policy(self, purl: str) -> dict[str, Any]:
@@ -2846,14 +2885,16 @@ class FalkorDBService:
         result = self.execute_query(query, {"purl": purl})
         annotations = []
         for row in result:
-            annotations.append({
-                "annotation_id": row[0],
-                "type": row[1],
-                "justification": row[2],
-                "created_by": row[3],
-                "created_at": row[4],
-                "expires_at": row[5],
-            })
+            annotations.append(
+                {
+                    "annotation_id": row[0],
+                    "type": row[1],
+                    "justification": row[2],
+                    "created_by": row[3],
+                    "created_at": row[4],
+                    "expires_at": row[5],
+                }
+            )
 
         if any(a["type"] == "bad" for a in annotations):
             status = "fail"
@@ -2969,13 +3010,15 @@ class FalkorDBService:
                     next_purls.add(purl)
                     contacts = self._get_contacts_for_purl(purl)
                     all_contacts.extend(contacts)
-                    level_packages.append({
-                        "project_name": row[0] or "",
-                        "version": row[1] or "",
-                        "purl": purl,
-                        "project_group": row[3] or "",
-                        "contacts": contacts,
-                    })
+                    level_packages.append(
+                        {
+                            "project_name": row[0] or "",
+                            "version": row[1] or "",
+                            "purl": purl,
+                            "project_group": row[3] or "",
+                            "contacts": contacts,
+                        }
+                    )
 
             if level_packages:
                 frontiers.append({"level": level, "packages": level_packages})
@@ -3059,12 +3102,14 @@ class FalkorDBService:
                 if p and p not in visited:
                     visited.add(p)
                     next_frontier.add(p)
-                    level_packages.append({
-                        "project_name": row[0] or "",
-                        "version": row[1] or "",
-                        "purl": p,
-                        "project_group": row[3] or "",
-                    })
+                    level_packages.append(
+                        {
+                            "project_name": row[0] or "",
+                            "version": row[1] or "",
+                            "purl": p,
+                            "project_group": row[3] or "",
+                        }
+                    )
 
             if level_packages:
                 frontiers.append({"depth": depth, "packages": level_packages})
@@ -3108,21 +3153,24 @@ class FalkorDBService:
         result = self.execute_query(query, {"purl": purl})
         statements = []
         for row in result:
-            statements.append({
-                "statement_id": row[0],
-                "status": row[1],
-                "justification": row[2],
-                "impact_statement": row[3],
-                "action_statement": row[4],
-                "source_document": row[5],
-                "timestamp": row[6],
-                "vulnerability_id": row[7],
-                "vulnerability_severity": row[8],
-            })
+            statements.append(
+                {
+                    "statement_id": row[0],
+                    "status": row[1],
+                    "justification": row[2],
+                    "impact_statement": row[3],
+                    "action_statement": row[4],
+                    "source_document": row[5],
+                    "timestamp": row[6],
+                    "vulnerability_id": row[7],
+                    "vulnerability_severity": row[8],
+                }
+            )
         return statements
 
     def get_vex_coverage(
-        self, internal_only: bool = False,
+        self,
+        internal_only: bool = False,
     ) -> dict[str, Any]:
         """Return VEX coverage statistics.
 
@@ -3158,7 +3206,8 @@ class FalkorDBService:
     # Source repository queries
 
     def get_all_source_repos(
-        self, internal_only: bool = False,
+        self,
+        internal_only: bool = False,
     ) -> list[dict[str, Any]]:
         """Return all source repositories with linked package counts.
 
@@ -3183,13 +3232,15 @@ class FalkorDBService:
         result = self.execute_query(query, {})
         repos = []
         for row in result:
-            repos.append({
-                "url": row[0],
-                "vcs_type": row[1],
-                "namespace": row[2],
-                "name": row[3],
-                "package_count": row[4],
-            })
+            repos.append(
+                {
+                    "url": row[0],
+                    "vcs_type": row[1],
+                    "namespace": row[2],
+                    "name": row[3],
+                    "package_count": row[4],
+                }
+            )
         return repos
 
     def get_packages_by_source_repo(self, repo_url: str) -> list[dict[str, Any]]:
@@ -3214,13 +3265,15 @@ class FalkorDBService:
         result = self.execute_query(query, {"repo_url": repo_url})
         packages = []
         for row in result:
-            packages.append({
-                "project_name": row[0],
-                "project_group": row[1],
-                "version": row[2],
-                "purl": row[3],
-                "sbom_format": row[4],
-            })
+            packages.append(
+                {
+                    "project_name": row[0],
+                    "project_group": row[1],
+                    "version": row[2],
+                    "purl": row[3],
+                    "sbom_format": row[4],
+                }
+            )
         return packages
 
     def get_vulnerabilities_by_source_repo(self, repo_url: str) -> list[dict[str, Any]]:
@@ -3253,17 +3306,20 @@ class FalkorDBService:
         result = self.execute_query(query, {"repo_url": repo_url})
         vulns = []
         for row in result:
-            vulns.append({
-                "defect_id": row[0],
-                "severity": row[1],
-                "description": row[2],
-                "affected_project": row[3],
-                "affected_version": row[4],
-            })
+            vulns.append(
+                {
+                    "defect_id": row[0],
+                    "severity": row[1],
+                    "description": row[2],
+                    "affected_project": row[3],
+                    "affected_version": row[4],
+                }
+            )
         return vulns
 
     def get_vulnerabilities_with_vex(
-        self, internal_only: bool = False,
+        self,
+        internal_only: bool = False,
     ) -> list[dict[str, Any]]:
         """Return all vulnerabilities with their latest VEX status.
 
@@ -3300,14 +3356,16 @@ class FalkorDBService:
         result = self.execute_query(query, {})
         vulns = []
         for row in result:
-            vulns.append({
-                "defect_id": row[0],
-                "severity": row[1],
-                "description": row[2],
-                "vex_status": row[3],
-                "vex_count": row[4],
-                "affected_versions": row[5] or [],
-            })
+            vulns.append(
+                {
+                    "defect_id": row[0],
+                    "severity": row[1],
+                    "description": row[2],
+                    "vex_status": row[3],
+                    "vex_count": row[4],
+                    "affected_versions": row[5] or [],
+                }
+            )
         return vulns
 
     # Trust Score methods
@@ -3386,13 +3444,15 @@ class FalkorDBService:
         result = self.execute_query(query, {"purl": purl, "limit": limit})
         paths = []
         for row in result:
-            paths.append({
-                "purl": row[0],
-                "direct_score": row[1],
-                "effective_score": row[2],
-                "min_path_score": row[3],
-                "depth": row[4],
-            })
+            paths.append(
+                {
+                    "purl": row[0],
+                    "direct_score": row[1],
+                    "effective_score": row[2],
+                    "min_path_score": row[3],
+                    "depth": row[4],
+                }
+            )
         return paths
 
     def get_application_supply_chain_risk(self, purl: str) -> dict[str, Any]:
@@ -3485,14 +3545,16 @@ class FalkorDBService:
         result = self.execute_query(query, {"limit": limit})
         priorities = []
         for row in result:
-            priorities.append({
-                "purl": row[0],
-                "effective_score": row[1],
-                "direct_score": row[2],
-                "min_path_score": row[3],
-                "confidence": row[4],
-                "dependents_count": row[5],
-            })
+            priorities.append(
+                {
+                    "purl": row[0],
+                    "effective_score": row[1],
+                    "direct_score": row[2],
+                    "min_path_score": row[3],
+                    "confidence": row[4],
+                    "dependents_count": row[5],
+                }
+            )
         return priorities
 
     def get_trust_score_gaps(self, limit: int = 20) -> list[dict[str, Any]]:
@@ -3523,13 +3585,15 @@ class FalkorDBService:
         result = self.execute_query(query, {"limit": limit})
         gaps = []
         for row in result:
-            gaps.append({
-                "purl": row[0],
-                "confidence": row[1],
-                "sources_used": row[2],
-                "direct_score": row[3],
-                "dependents_count": row[4],
-            })
+            gaps.append(
+                {
+                    "purl": row[0],
+                    "confidence": row[1],
+                    "sources_used": row[2],
+                    "direct_score": row[3],
+                    "dependents_count": row[4],
+                }
+            )
         return gaps
 
 
@@ -3539,7 +3603,7 @@ _service: FalkorDBService | None = None
 
 def get_falkordb_service() -> FalkorDBService:
     """Get the FalkorDB service singleton."""
-    global _service
+    global _service  # pylint: disable=global-statement
     if _service is None:
         _service = FalkorDBService()
     return _service
@@ -3547,5 +3611,5 @@ def get_falkordb_service() -> FalkorDBService:
 
 def reset_service() -> None:
     """Reset the service singleton (useful for testing)."""
-    global _service
+    global _service  # pylint: disable=global-statement
     _service = None

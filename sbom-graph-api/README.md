@@ -251,6 +251,8 @@ All JSON outputs conform to documented JSON Schema specifications. Schemas are a
 
 #### Available Schemas
 
+**Output Report Schemas:**
+
 | Schema Name | Description | Report Endpoint |
 |-------------|-------------|-----------------|
 | `projects` | All projects with versions | `/reports/projects` |
@@ -264,6 +266,16 @@ All JSON outputs conform to documented JSON Schema specifications. Schemas are a
 | `non-semver-versions` | Non-SemVer version detection | `/reports/non-semver-versions` |
 | `version-dependencies` | Version dependency export | `/exports/dependencies/{project}` |
 | `dependants` | Dependants with partitions and paths | `/reports/dependants/{project}/{version}` |
+
+**Inbound Request Schemas:**
+
+| Schema Name | Description | Validated Endpoint |
+|-------------|-------------|-------------------|
+| `sbom-upload` | SBOM upload envelope (CycloneDX/SPDX) | `POST /ingest/cyclonedx`, `/ingest/spdx`, `/ingest/sbom` |
+| `vex-upload` | OpenVEX document upload | `POST /ingest/vex` |
+| `enrichment-request` | On-demand enrichment trigger | `POST /api/v1/enrich/vulnerabilities` |
+| `policy-annotation` | Policy annotation creation | `POST /api/v1/policy/annotate` |
+| `contact-create` | Point of contact creation | `POST /api/v1/contacts` |
 
 #### Example: Fetching JSON with Schema Validation
 
@@ -280,15 +292,21 @@ npx ajv validate -s projects.schema.json -d projects.json
 
 ### SBOM Ingestion Endpoints
 
+All ingestion endpoints validate request bodies against JSON Schema (Draft-07) before processing. Validation errors return `400` with a list of human-readable error messages. Schemas enforce `additionalProperties: false` to prevent mass assignment.
+
 | Endpoint | Description |
 |----------|-------------|
 | `POST /ingest/cyclonedx` | Upload and process a CycloneDX SBOM |
+| `POST /ingest/spdx` | Upload and process an SPDX 2.3 SBOM |
+| `POST /ingest/sbom` | Upload SBOM with automatic format detection |
+| `POST /ingest/vex` | Upload an OpenVEX document |
 
 #### POST /ingest/cyclonedx
 
 Accepts a CycloneDX SBOM as a JSON body and persists the parsed projects,
 dependencies, and defects to the graph database via the `sbom-graph-model`
-library. Requires JWT authentication.
+library. Requires JWT authentication. The request body is validated against the
+`sbom-upload` JSON Schema.
 
 **Request** (`Content-Type: application/json`):
 
@@ -325,7 +343,7 @@ library. Requires JWT authentication.
 
 | Status | Condition |
 |--------|-----------|
-| `400` | Missing or invalid request body, missing `sbom` field |
+| `400` | JSON Schema validation failed (e.g., missing `sbom`, unexpected fields, type mismatch) |
 | `415` | Content-Type is not `application/json` |
 | `422` | CycloneDX structural validation failed |
 | `500` | Unexpected processing error |
@@ -338,6 +356,16 @@ curl -X POST http://localhost:8080/ingest/cyclonedx \
   -H "Authorization: Bearer <jwt-token>" \
   -d '{"sbom": <cyclonedx-json>}'
 ```
+
+#### Programmatic API Endpoints with JSON Schema Validation
+
+The following `POST` endpoints also validate request bodies against JSON Schema:
+
+| Endpoint | Schema | Description |
+|----------|--------|-------------|
+| `POST /api/v1/enrich/vulnerabilities` | `enrichment-request` | Trigger on-demand vulnerability enrichment |
+| `POST /api/v1/policy/annotate` | `policy-annotation` | Create a policy annotation (bad/good/hold) |
+| `POST /api/v1/contacts` | `contact-create` | Create a point of contact for a package |
 
 ### Health Endpoints
 
@@ -836,7 +864,8 @@ sbom-graph-api/
 │       │   └── schemas.py      # JSON Schema endpoints
 │       ├── schemas/
 │       │   ├── __init__.py
-│       │   └── definitions.py  # JSON Schema definitions
+│       │   ├── definitions.py  # Output report JSON Schema definitions
+│       │   └── inbound.py      # Inbound request body JSON Schemas
 │       ├── services/
 │       │   ├── falkordb_service.py
 │       │   ├── ldap_service.py # LDAP authentication

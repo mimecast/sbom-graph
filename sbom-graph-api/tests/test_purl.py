@@ -68,13 +68,13 @@ class TestResolvePurl:
     def test_empty_purl_returns_400(self):
         result = resolve_purl("")
 
-        msg, code = result
+        _msg, code = result
         assert code == 400
 
     def test_none_purl_returns_400(self):
         result = resolve_purl(None)
 
-        msg, code = result
+        _msg, code = result
         assert code == 400
 
     @patch("sbom_graph_api.utils.purl.get_falkordb_service")
@@ -156,7 +156,7 @@ class TestResolvePurlProject:
 
         result = resolve_purl_project("pkg:maven/com.example/missing")
 
-        msg, code = result
+        _msg, code = result
         assert code == 404
 
     def test_invalid_purl_returns_400(self):

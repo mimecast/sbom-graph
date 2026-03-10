@@ -32,7 +32,7 @@ class TestPasswordHashing:
     """Tests for password hashing and verification."""
 
     def test_hash_produces_salt_colon_hash_format(self, user_service):
-        combined, salt = user_service._hash_password("mypassword")
+        combined, _salt = user_service._hash_password("mypassword")
         assert ":" in combined
         parts = combined.split(":")
         assert len(parts) == 2
@@ -347,9 +347,7 @@ class TestUpdateUser:
 
     def test_update_both(self, user_service):
         user_service.create_user("alice", "pass")
-        result = user_service.update_user(
-            "alice", email="a@b.com", display_name="A"
-        )
+        result = user_service.update_user("alice", email="a@b.com", display_name="A")
         assert result is True
 
     def test_update_nonexistent_user(self, user_service):

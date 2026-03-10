@@ -1,10 +1,9 @@
 """Tests for authentication routes."""
 
 from datetime import timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-from flask import Flask
 
 from sbom_graph_api.config import (
     AppConfig,
@@ -15,7 +14,6 @@ from sbom_graph_api.config import (
     TLSConfig,
     reset_config,
 )
-from sbom_graph_api.routes.auth import auth_required, admin_required, bp as auth_bp
 from sbom_graph_api.services.falkordb_service import reset_service
 from sbom_graph_api.services.token_storage import reset_token_storage
 from sbom_graph_api.services.user_storage import reset_user_storage
@@ -29,9 +27,13 @@ def _make_app_config(auth_enabled=True, ldap_enabled=False):
         port=8080,
         secret_key="test-secret-key-for-testing",
         falkordb=FalkorDBConfig(
-            host="test-host", port=6379, password="test",
-            graph_name="test", socket_timeout=30.0,
-            socket_connect_timeout=10.0, internal_label="INTERNAL",
+            host="test-host",
+            port=6379,
+            password="test",
+            graph_name="test",
+            socket_timeout=30.0,
+            socket_connect_timeout=10.0,
+            internal_label="INTERNAL",
             ssl=False,
             ssl_ca_certs=None,
         ),
@@ -44,13 +46,20 @@ def _make_app_config(auth_enabled=True, ldap_enabled=False):
             token_location=["headers", "cookies"],
         ),
         ldap=LDAPConfig(
-            enabled=ldap_enabled, server="localhost", port=389,
-            use_ssl=False, base_dn="dc=example,dc=com",
+            enabled=ldap_enabled,
+            server="localhost",
+            port=389,
+            use_ssl=False,
+            base_dn="dc=example,dc=com",
             user_dn_template="uid={username},ou=users,dc=example,dc=com",
-            bind_dn=None, bind_password=None,
-            search_filter="(uid={username})", group_search_base=None,
-            required_group=None, allowed_groups=[],
-            admin_groups=[], user_groups=[],
+            bind_dn=None,
+            bind_password=None,
+            search_filter="(uid={username})",
+            group_search_base=None,
+            required_group=None,
+            allowed_groups=[],
+            admin_groups=[],
+            user_groups=[],
             require_group_membership=False,
         ),
         database=DatabaseConfig(path="/tmp/test-auth.db", encryption_key="test-enc-key"),
@@ -74,6 +83,7 @@ def auth_app(tmp_path):
 
     with patch("sbom_graph_api.config.AppConfig.from_env", return_value=config):
         from sbom_graph_api.app import create_app
+
         app = create_app()
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
@@ -105,6 +115,7 @@ def noauth_app(tmp_path):
 
     with patch("sbom_graph_api.config.AppConfig.from_env", return_value=config):
         from sbom_graph_api.app import create_app
+
         app = create_app()
         app.config["TESTING"] = True
         app.config["WTF_CSRF_ENABLED"] = False
@@ -379,9 +390,7 @@ class TestChangePasswordRequired:
     """Tests for forced password change flow."""
 
     def test_redirect_if_no_pending_change(self, auth_client):
-        response = auth_client.get(
-            "/auth/change-password-required", follow_redirects=False
-        )
+        response = auth_client.get("/auth/change-password-required", follow_redirects=False)
         assert response.status_code in (302, 303)
 
 

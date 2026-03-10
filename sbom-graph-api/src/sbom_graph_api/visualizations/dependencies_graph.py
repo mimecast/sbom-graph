@@ -10,6 +10,8 @@ doesn't require a hierarchical structure and naturally spreads nodes apart
 based on their connectivity.
 """
 
+from collections.abc import Callable
+
 import networkx as nx
 from markupsafe import escape
 from pyvis.network import Network
@@ -42,7 +44,7 @@ class DependencyVisitor:
         self,
         graph: nx.DiGraph,
         node: str,
-        on_visit: callable | None = None,
+        on_visit: Callable[[str], None] | None = None,
     ) -> None:
         """Visit a node and its successors, detecting cycles.
 
@@ -73,7 +75,7 @@ class DependencyVisitor:
         self,
         graph: nx.DiGraph,
         start_node: str | None = None,
-        on_visit: callable | None = None,
+        on_visit: Callable[[str], None] | None = None,
     ) -> None:
         """Traverse all nodes in the graph, starting from a specific node if provided.
 
@@ -174,7 +176,10 @@ def create_dependencies_graph_visualization(
 
     # Get dependency graph
     nodes, edges = service.get_transitive_dependencies(
-        project_name, version_name, max_depth, internal_only,
+        project_name,
+        version_name,
+        max_depth,
+        internal_only,
         project_group=project_group,
     )
 
@@ -194,25 +199,25 @@ def create_dependencies_graph_visualization(
         }
 
     # Build NetworkX graph
-    G = nx.DiGraph()
+    graph: nx.DiGraph = nx.DiGraph()
 
     for node in node_data.values():
-        G.add_node(node["id"])
+        graph.add_node(node["id"])
 
     for edge in edges:
-        G.add_edge(edge["source"], edge["target"])
+        graph.add_edge(edge["source"], edge["target"])
 
     # Use visitor pattern to detect cycles
     visitor = DependencyVisitor()
-    visitor.traverse_all(G, start_node=root_id)
+    visitor.traverse_all(graph, start_node=root_id)
 
     cycle_edges_set = set(visitor.get_cycle_edges())
 
     # Also detect self-loops (simple cycles)
-    self_loops = set(nx.selfloop_edges(G))
+    self_loops = set(nx.selfloop_edges(graph))
 
     # Calculate depths for coloring (using BFS for shortest path)
-    depths = calculate_depths_with_cycles(G, root_id)
+    depths = calculate_depths_with_cycles(graph, root_id)
 
     # Create PyVis network with spring layout
     net = Network(
@@ -273,14 +278,11 @@ def create_dependencies_graph_visualization(
         color = get_partition_color(depth)
 
         # Check if this node has any cycle edges (self-loop or back-edge)
-        is_in_cycle = any(
-            node_id == e[0] or node_id == e[1]
-            for e in cycle_edges_set | self_loops
-        )
+        is_in_cycle = any(node_id in (e[0], e[1]) for e in cycle_edges_set | self_loops)
 
         # Escape all user-controlled data to prevent XSS
-        safe_project = escape(data['project_name'])
-        safe_version = escape(data['version'])
+        safe_project = escape(data["project_name"])
+        safe_version = escape(data["version"])
         label = f"{safe_project}\n{safe_version}"
 
         labels_str = escape(", ".join(data.get("labels", [])))
@@ -307,14 +309,15 @@ def create_dependencies_graph_visualization(
         border_width = 4 if is_in_cycle else 2
         border_color = "#ff0000" if is_in_cycle else None
 
+        node_color: dict[str, str] | str = {
+            "background": color,
+            "border": border_color if border_color else color,
+        }
         net.add_node(
             node_id,
             label=label,
             title=title,
-            color={
-                "background": color,
-                "border": border_color if border_color else color,
-            },
+            color=node_color,  # type: ignore[arg-type]
             borderWidth=border_width,
             group=depth,
         )

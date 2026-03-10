@@ -3,7 +3,6 @@
 from io import BytesIO
 
 import openpyxl
-import pytest
 
 from sbom_graph_api.exports.excel import (
     create_applications_excel,
@@ -12,9 +11,9 @@ from sbom_graph_api.exports.excel import (
     create_multi_version_dependency_report_excel,
     create_multi_version_deps_excel,
     create_non_semver_report_excel,
+    create_version_dependencies_report_excel,
     create_vulnerabilities_excel,
     create_vulnerability_dependants_excel,
-    create_version_dependencies_report_excel,
 )
 
 
@@ -28,10 +27,18 @@ class TestCreateApplicationsExcel:
 
     def test_returns_valid_excel(self):
         from unittest.mock import MagicMock
+
         mock_service = MagicMock()
         mock_service.get_all_applications.return_value = [
-            {"project_name": "app-a", "version": "1.0.0", "scan_id": "s1",
-             "app_id": "a1", "public_id": "p1", "repo_url": "https://git", "is_internal": True},
+            {
+                "project_name": "app-a",
+                "version": "1.0.0",
+                "scan_id": "s1",
+                "app_id": "a1",
+                "public_id": "p1",
+                "repo_url": "https://git",
+                "is_internal": True,
+            },
         ]
         buffer = create_applications_excel(mock_service, limit=100)
         wb = _load_wb(buffer)
@@ -40,6 +47,7 @@ class TestCreateApplicationsExcel:
 
     def test_internal_only_title(self):
         from unittest.mock import MagicMock
+
         mock_service = MagicMock()
         mock_service.get_all_applications.return_value = []
         buffer = create_applications_excel(mock_service, internal_only=True)
@@ -48,6 +56,7 @@ class TestCreateApplicationsExcel:
 
     def test_latest_only_title(self):
         from unittest.mock import MagicMock
+
         mock_service = MagicMock()
         mock_service.get_all_applications.return_value = []
         buffer = create_applications_excel(mock_service, latest_only=True)
@@ -60,13 +69,25 @@ class TestCreateVersionDependenciesReportExcel:
 
     def test_with_dependencies(self):
         deps = [
-            {"depth": 1, "dependency_project": "lib-a", "dependency_version": "1.0",
-             "is_internal": True},
-            {"depth": 2, "dependency_project": "lib-b", "dependency_version": "2.0",
-             "is_internal": False},
+            {
+                "depth": 1,
+                "dependency_project": "lib-a",
+                "dependency_version": "1.0",
+                "is_internal": True,
+            },
+            {
+                "depth": 2,
+                "dependency_project": "lib-b",
+                "dependency_version": "2.0",
+                "is_internal": False,
+            },
         ]
         buffer = create_version_dependencies_report_excel(
-            "my-proj", "1.0.0", deps, True, "1.0.0",
+            "my-proj",
+            "1.0.0",
+            deps,
+            True,
+            "1.0.0",
         )
         wb = _load_wb(buffer)
         ws = wb["Version Dependencies"]
@@ -75,16 +96,31 @@ class TestCreateVersionDependenciesReportExcel:
 
     def test_empty_dependencies(self):
         buffer = create_version_dependencies_report_excel(
-            "my-proj", "1.0.0", [], False, None,
+            "my-proj",
+            "1.0.0",
+            [],
+            False,
+            None,
         )
         wb = _load_wb(buffer)
         ws = wb["Version Dependencies"]
         assert ws.cell(row=2, column=2).value == "(no dependencies)"
 
     def test_summary_has_semver_info(self):
-        deps = [{"depth": 1, "dependency_project": "lib", "dependency_version": "1.0", "is_internal": False}]
+        deps = [
+            {
+                "depth": 1,
+                "dependency_project": "lib",
+                "dependency_version": "1.0",
+                "is_internal": False,
+            },
+        ]
         buffer = create_version_dependencies_report_excel(
-            "proj", "1.0.0", deps, True, "2.0.0",
+            "proj",
+            "1.0.0",
+            deps,
+            True,
+            "2.0.0",
         )
         wb = _load_wb(buffer)
         summary = wb["Summary"]
@@ -103,10 +139,18 @@ class TestCreateMultiVersionDependencyReportExcel:
                     "dependency_project": "lib",
                     "version_count": 2,
                     "versions": [
-                        {"version": "1.0", "scan_ids_intersection": ["s1"],
-                         "contributing_applications": [{"project_name": "app-a", "version": "1.0"}]},
-                        {"version": "2.0", "scan_ids_intersection": [],
-                         "contributing_applications": []},
+                        {
+                            "version": "1.0",
+                            "scan_ids_intersection": ["s1"],
+                            "contributing_applications": [
+                                {"project_name": "app-a", "version": "1.0"},
+                            ],
+                        },
+                        {
+                            "version": "2.0",
+                            "scan_ids_intersection": [],
+                            "contributing_applications": [],
+                        },
                     ],
                 },
             ],
@@ -132,11 +176,25 @@ class TestCreateMultiVersionDepsExcel:
             "library": {"project_name": "my-lib", "total_versions": 2},
             "total_dependants": 3,
             "versions": [
-                {"version": "1.0", "dependant_count": 2, "is_internal": True,
-                 "dependants": [
-                     {"project_name": "app-a", "version": "1.0", "project_group": "g", "is_internal": True},
-                     {"project_name": "app-b", "version": "2.0", "project_group": "g", "is_internal": False},
-                 ]},
+                {
+                    "version": "1.0",
+                    "dependant_count": 2,
+                    "is_internal": True,
+                    "dependants": [
+                        {
+                            "project_name": "app-a",
+                            "version": "1.0",
+                            "project_group": "g",
+                            "is_internal": True,
+                        },
+                        {
+                            "project_name": "app-b",
+                            "version": "2.0",
+                            "project_group": "g",
+                            "is_internal": False,
+                        },
+                    ],
+                },
                 {"version": "2.0", "dependant_count": 0, "is_internal": False, "dependants": []},
             ],
         }
@@ -152,10 +210,18 @@ class TestCreateNonSemverReportExcel:
 
     def test_with_data(self):
         data = [
-            {"project_name": "proj-a", "version": "latest", "reason": "No numeric component",
-             "labels": ["Version"]},
-            {"project_name": "proj-b", "version": "20230101", "reason": "Date-based version (YYYYMMDD)",
-             "labels": ["Version", "INTERNAL"]},
+            {
+                "project_name": "proj-a",
+                "version": "latest",
+                "reason": "No numeric component",
+                "labels": ["Version"],
+            },
+            {
+                "project_name": "proj-b",
+                "version": "20230101",
+                "reason": "Date-based version (YYYYMMDD)",
+                "labels": ["Version", "INTERNAL"],
+            },
         ]
         buffer = create_non_semver_report_excel(data)
         wb = _load_wb(buffer)
@@ -177,10 +243,15 @@ class TestCreateDependantsReportExcel:
             "target": {"project_name": "lib", "version": "1.0"},
             "stats": {"total_dependants": 1, "max_partition": 2, "unique_projects": 1},
             "dependants": [
-                {"project_name": "app-a", "version": "1.0", "partition": 1,
-                 "max_path_edges": 1, "path_count": 1,
-                 "labels": ["Version", "INTERNAL"],
-                 "paths": [["app-a@1.0", "lib@1.0"]]},
+                {
+                    "project_name": "app-a",
+                    "version": "1.0",
+                    "partition": 1,
+                    "max_path_edges": 1,
+                    "path_count": 1,
+                    "labels": ["Version", "INTERNAL"],
+                    "paths": [["app-a@1.0", "lib@1.0"]],
+                },
             ],
         }
         buffer = create_dependants_report_excel(data, longest_only=True)
@@ -205,12 +276,24 @@ class TestCreateVulnerabilitiesExcel:
 
     def test_with_vulnerabilities(self):
         vulns = [
-            {"defect_id": "CVE-2024-001", "severity": "CRITICAL", "cvss_score": 9.8,
-             "title": "Critical Bug", "cwe_id": "CWE-79", "published_date": "2024-01-01",
-             "affected_versions": [{"project_name": "lib", "version": "1.0"}]},
-            {"defect_id": "CVE-2024-002", "severity": "LOW", "cvss_score": 2.0,
-             "title": "Info Leak", "cwe_id": None, "published_date": None,
-             "affected_versions": []},
+            {
+                "defect_id": "CVE-2024-001",
+                "severity": "CRITICAL",
+                "cvss_score": 9.8,
+                "title": "Critical Bug",
+                "cwe_id": "CWE-79",
+                "published_date": "2024-01-01",
+                "affected_versions": [{"project_name": "lib", "version": "1.0"}],
+            },
+            {
+                "defect_id": "CVE-2024-002",
+                "severity": "LOW",
+                "cvss_score": 2.0,
+                "title": "Info Leak",
+                "cwe_id": None,
+                "published_date": None,
+                "affected_versions": [],
+            },
         ]
         buffer = create_vulnerabilities_excel(vulns, internal_only=False)
         wb = _load_wb(buffer)
@@ -228,14 +311,30 @@ class TestCreateVulnerabilityDependantsExcel:
     """Tests for vulnerability dependants Excel."""
 
     def test_with_data(self):
-        vuln = {"defect_id": "CVE-2024-001", "severity": "HIGH", "cvss_score": 7.5,
-                "title": "XSS", "cwe_id": "CWE-79", "published_date": "2024-01-01",
-                "description": "Cross-site scripting vulnerability"}
+        vuln = {
+            "defect_id": "CVE-2024-001",
+            "severity": "HIGH",
+            "cvss_score": 7.5,
+            "title": "XSS",
+            "cwe_id": "CWE-79",
+            "published_date": "2024-01-01",
+            "description": "Cross-site scripting vulnerability",
+        }
         dependants = [
-            {"project_name": "app-a", "version": "1.0", "partition": 1,
-             "is_internal": True, "affected_by": [{"project_name": "lib", "version": "1.0"}]},
-            {"project_name": "app-b", "version": "2.0", "partition": 2,
-             "is_internal": False, "affected_by": [{"project_name": "lib", "version": "1.0"}]},
+            {
+                "project_name": "app-a",
+                "version": "1.0",
+                "partition": 1,
+                "is_internal": True,
+                "affected_by": [{"project_name": "lib", "version": "1.0"}],
+            },
+            {
+                "project_name": "app-b",
+                "version": "2.0",
+                "partition": 2,
+                "is_internal": False,
+                "affected_by": [{"project_name": "lib", "version": "1.0"}],
+            },
         ]
         buffer = create_vulnerability_dependants_excel(vuln, dependants)
         wb = _load_wb(buffer)
@@ -249,10 +348,20 @@ class TestCreateCentralityExcel:
 
     def test_with_data(self):
         data = [
-            {"inDegree": 10, "outDegree": 5, "project_name": "lib-a",
-             "project_group": "com.example", "version_name": "1.0.0"},
-            {"inDegree": 8, "outDegree": 3, "project_name": "lib-b",
-             "project_group": "com.example", "version_name": "2.0.0"},
+            {
+                "inDegree": 10,
+                "outDegree": 5,
+                "project_name": "lib-a",
+                "project_group": "com.example",
+                "version_name": "1.0.0",
+            },
+            {
+                "inDegree": 8,
+                "outDegree": 3,
+                "project_name": "lib-b",
+                "project_group": "com.example",
+                "version_name": "2.0.0",
+            },
         ]
         buffer = create_centrality_excel(data)
         wb = _load_wb(buffer)

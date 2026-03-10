@@ -4,8 +4,14 @@ This module provides functions for validating and sanitizing user input
 to prevent security vulnerabilities like XSS and injection attacks.
 """
 
+from __future__ import annotations
+
+import math
 import re
+from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
+
+from jsonschema import Draft7Validator, FormatChecker, ValidationError
 
 # Allowed CSS dimension patterns (e.g., "800px", "100%", "50em", "auto")
 CSS_DIMENSION_PATTERN = re.compile(r"^(\d+)(px|%|em|rem|vh|vw|pt)?$|^auto$", re.IGNORECASE)
@@ -20,6 +26,10 @@ ALLOWED_LAYOUTS = frozenset({"spring", "radial", "shell", "bfs", "circular"})
 MAX_DEPTH = 100
 MAX_LIMIT = 100000
 MAX_DIMENSION_VALUE = 10000
+MAX_URL_LENGTH = 2048
+MAX_USERNAME_LENGTH = 255
+MAX_TOKEN_DESCRIPTION_LENGTH = 1000
+MAX_EXPIRES_DAYS = 3650
 
 # Project name pattern - alphanumeric, hyphens, underscores, dots
 # This prevents path traversal and injection attacks
@@ -41,6 +51,22 @@ PURL_PATTERN = re.compile(
     r"[a-zA-Z0-9._~:@!$&'()*+,;=%/-]+"  # path (namespace/name@version)
     r"$"
 )
+
+# UUID v4 pattern for annotation IDs
+UUID_PATTERN = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+# Schema name pattern - lowercase alphanumeric, hyphens only
+SCHEMA_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9-]*$")
+
+# Username pattern - alphanumeric, hyphens, underscores, dots, @
+# Accommodates email-style usernames (LDAP) and simple local usernames
+USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._@-]*$")
+
+# URL pattern - must start with http:// or https://
+URL_SCHEME_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
 
 
 def validate_css_dimension(value: str, default: str = "800px") -> str:
@@ -201,7 +227,6 @@ def validate_project_name(value: str) -> str | None:
     return value
 
 
-
 def validate_version_name(value: str) -> str | None:
     """Validate a version name for safe use in URLs.
 
@@ -306,6 +331,194 @@ def validate_project_group(value: str | None) -> str | None:
     return value
 
 
+def validate_annotation_id(value: str) -> str | None:
+    """Validate a policy annotation ID (UUID v4 format).
+
+    Args:
+        value: The annotation ID to validate
+
+    Returns:
+        The validated annotation ID, or None if invalid
+    """
+    if not value:
+        return None
+
+    value = str(value).strip()
+    if len(value) > 64:
+        return None
+
+    if not UUID_PATTERN.match(value):
+        return None
+
+    return value
+
+
+def validate_schema_name(value: str) -> str | None:
+    """Validate a schema name for safe use in URLs and HTTP headers.
+
+    Prevents header injection by restricting to lowercase alphanumeric
+    characters and hyphens only.
+
+    Args:
+        value: The schema name to validate
+
+    Returns:
+        The validated schema name, or None if invalid
+    """
+    if not value:
+        return None
+
+    value = str(value).strip()
+    if len(value) > 128:
+        return None
+
+    if not SCHEMA_NAME_PATTERN.match(value):
+        return None
+
+    return value
+
+
+def validate_username(value: str) -> str | None:
+    """Validate a username path parameter for safe use.
+
+    Accepts alphanumeric characters, hyphens, underscores, dots, and @
+    to accommodate both local and LDAP/email-style usernames.
+
+    Args:
+        value: The username to validate
+
+    Returns:
+        The validated username, or None if invalid
+    """
+    if not value:
+        return None
+
+    value = str(value).strip()
+    if len(value) > MAX_USERNAME_LENGTH:
+        return None
+
+    if not USERNAME_PATTERN.match(value):
+        return None
+
+    return value
+
+
+def validate_url(value: str | None) -> str | None:
+    """Validate a URL query parameter (must be http or https).
+
+    Args:
+        value: The URL to validate
+
+    Returns:
+        The validated URL, or None if absent or invalid
+    """
+    if not value:
+        return None
+
+    value = str(value).strip()
+    if len(value) > MAX_URL_LENGTH:
+        return None
+
+    if not URL_SCHEME_PATTERN.match(value):
+        return None
+
+    parsed = urlparse(value)
+    if not parsed.netloc:
+        return None
+
+    return value
+
+
+def validate_float_param(
+    value: str | None,
+    *,
+    default: float,
+    min_val: float = 0.0,
+    max_val: float = 10.0,
+) -> float:
+    """Validate a float query parameter with bounds checking.
+
+    Returns the default if the value is absent, non-numeric, NaN,
+    infinite, or outside the specified range.
+
+    Args:
+        value: Raw query string value (may be None)
+        default: Default when absent or invalid
+        min_val: Minimum allowed value (inclusive)
+        max_val: Maximum allowed value (inclusive)
+
+    Returns:
+        Validated float value or default
+    """
+    if value is None:
+        return default
+
+    try:
+        result = float(value)
+    except (ValueError, TypeError):
+        return default
+
+    if math.isnan(result) or math.isinf(result):
+        return default
+
+    if result < min_val or result > max_val:
+        return default
+
+    return result
+
+
+def validate_int_param(
+    value: str | None,
+    *,
+    default: int,
+    min_val: int = 1,
+    max_val: int = MAX_LIMIT,
+) -> int:
+    """Validate an integer query parameter with bounds checking.
+
+    Returns the default if the value is absent, non-numeric, or outside
+    the specified range.
+
+    Args:
+        value: Raw query string value (may be None)
+        default: Default when absent or invalid
+        min_val: Minimum allowed value (inclusive)
+        max_val: Maximum allowed value (inclusive)
+
+    Returns:
+        Validated integer value or default
+    """
+    if value is None:
+        return default
+
+    try:
+        result = int(value)
+    except (ValueError, TypeError):
+        return default
+
+    if result < min_val or result > max_val:
+        return default
+
+    return result
+
+
+def sanitize_content_disposition(filename: str) -> str:
+    """Produce a safe Content-Disposition header value.
+
+    Strips any characters that could enable header injection (newlines,
+    carriage returns, null bytes) and escapes quotes in the filename.
+
+    Args:
+        filename: The filename to include in the header
+
+    Returns:
+        A safe ``inline; filename="..."`` header value
+    """
+    safe = filename.replace("\r", "").replace("\n", "").replace("\0", "")
+    safe = safe.replace('"', "'")
+    return f'inline; filename="{safe}"'
+
+
 def is_safe_redirect_url(url: str | None) -> bool:
     """Check if a redirect URL is safe (internal, relative path only).
 
@@ -388,7 +601,7 @@ def get_safe_redirect_url(default_endpoint: str = "index") -> str:
     return url_for(default_endpoint)
 
 
-def build_url_params(
+def build_url_params(  # pylint: disable=redefined-builtin
     format: str | None = None,
     limit: int | None = None,
     max_depth: int | None = None,
@@ -426,7 +639,7 @@ def build_url_params(
     return urlencode(params) if params else ""
 
 
-def build_url_with_params(
+def build_url_with_params(  # pylint: disable=redefined-builtin
     base_url: str,
     format: str | None = None,
     limit: int | None = None,
@@ -460,3 +673,34 @@ def build_url_with_params(
     if query_string:
         return f"{base_url}?{query_string}"
     return base_url
+
+
+def validate_json_body(body: dict[str, Any], schema: dict[str, Any]) -> list[str] | None:
+    """Validate a JSON request body against a JSON Schema (Draft-07).
+
+    Returns ``None`` when validation succeeds, or a list of concise,
+    caller-safe error messages describing each violation. Error messages
+    avoid leaking internal schema paths.
+
+    Args:
+        body: Parsed JSON request body (must already be a ``dict``).
+        schema: JSON Schema definition to validate against.
+
+    Returns:
+        ``None`` if valid, or a ``list[str]`` of human-readable error strings.
+    """
+    validator = Draft7Validator(schema, format_checker=FormatChecker())
+    errors: list[ValidationError] = sorted(
+        validator.iter_errors(body), key=lambda e: list(e.absolute_path)
+    )
+
+    if not errors:
+        return None
+
+    messages: list[str] = []
+    for err in errors:
+        path = ".".join(str(p) for p in err.absolute_path)
+        field = f"'{path}'" if path else "root"
+        messages.append(f"{field}: {err.message}")
+
+    return messages

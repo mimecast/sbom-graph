@@ -4,6 +4,10 @@ from flask import Blueprint, Response, jsonify
 
 from sbom_graph_api.routes.auth import auth_required
 from sbom_graph_api.schemas import get_schema, get_schema_list
+from sbom_graph_api.utils.validation import (
+    sanitize_content_disposition,
+    validate_schema_name,
+)
 
 bp = Blueprint("schemas", __name__, url_prefix="/schemas")
 
@@ -36,6 +40,9 @@ def get_schema_endpoint(schema_name: str) -> Response | tuple[Response, int]:
     Returns:
         JSON Schema document
     """
+    if not validate_schema_name(schema_name):
+        return jsonify({"error": "Invalid schema name"}), 400
+
     schema = get_schema(schema_name)
     if schema is None:
         return jsonify(
@@ -45,12 +52,11 @@ def get_schema_endpoint(schema_name: str) -> Response | tuple[Response, int]:
             }
         ), 404
 
-    # Return with proper JSON Schema content type
     return Response(
         response=jsonify(schema).get_data(),
         status=200,
         mimetype="application/schema+json",
         headers={
-            "Content-Disposition": f'inline; filename="{schema_name}.schema.json"',
+            "Content-Disposition": sanitize_content_disposition(f"{schema_name}.schema.json"),
         },
     )

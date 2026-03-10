@@ -15,9 +15,9 @@ The visualization includes an interactive layout switcher that allows
 users to change layouts without reloading the page.
 """
 
+import json
 from typing import Any
 
-import json
 import networkx as nx
 from markupsafe import escape
 from pyvis.network import Network
@@ -139,7 +139,7 @@ def get_layout_options(layout: str, direction: str = "LR") -> str:
     Returns:
         JSON string of PyVis options
     """
-    base_options = {
+    base_options: dict[str, Any] = {
         "nodes": {
             "font": {"size": 12},
             "shape": "box",
@@ -199,8 +199,6 @@ def get_layout_options(layout: str, direction: str = "LR") -> str:
         # These layouts use pre-calculated positions, so disable physics
         base_options["physics"] = {"enabled": False}
         base_options["edges"]["smooth"] = {"enabled": True, "type": "continuous"}
-
-    import json
 
     return json.dumps(base_options)
 
@@ -319,9 +317,7 @@ def get_layout_switcher_html(
         selected = 'selected="selected"' if layout_id == current_layout else ""
         safe_layout_id = escape(layout_id)
         safe_display_name = escape(display_name)
-        options.append(
-            f'<option value="{safe_layout_id}" {selected}>{safe_display_name}</option>'
-        )
+        options.append(f'<option value="{safe_layout_id}" {selected}>{safe_display_name}</option>')
 
     options_html = "\n".join(options)
 
@@ -373,7 +369,8 @@ def get_layout_switcher_html(
     </div>
     <script>
         function switchLayout(layout) {{
-            var baseUrl = '/visualizations/' + {safe_endpoint_js} + '/' + {safe_project_js} + '/' + {safe_version_js};
+            var baseUrl = '/visualizations/' + {safe_endpoint_js}
+                + '/' + {safe_project_js} + '/' + {safe_version_js};
             var url = baseUrl + '?layout=' + encodeURIComponent(layout) + {safe_param_js};
             window.location.href = url;
         }}
@@ -431,26 +428,26 @@ def create_multi_layout_visualization(
         }
 
     # Build NetworkX graph
-    G = nx.DiGraph()
+    graph: nx.DiGraph = nx.DiGraph()
 
     for node in node_data.values():
-        G.add_node(node["id"])
+        graph.add_node(node["id"])
 
     for edge in edges:
         if direction == "dependants":
             # Reverse edges for dependants view (flow from leaves to root)
-            G.add_edge(edge["target"], edge["source"])
+            graph.add_edge(edge["target"], edge["source"])
         else:
-            G.add_edge(edge["source"], edge["target"])
+            graph.add_edge(edge["source"], edge["target"])
 
     # Detect cycles
     detector = CycleDetector()
-    detector.detect_cycles(G, root_id)
+    detector.detect_cycles(graph, root_id)
     cycle_edges = set(detector.get_cycle_edges())
     nodes_in_cycles = detector.get_nodes_in_cycles()
 
     # Also detect self-loops
-    self_loops = set(nx.selfloop_edges(G))
+    self_loops = set(nx.selfloop_edges(graph))
     for u, _ in self_loops:
         nodes_in_cycles.add(u)
 
@@ -458,20 +455,20 @@ def create_multi_layout_visualization(
     # calculate_partitions_longest_path has no visited tracking and will loop
     # infinitely on cyclic graphs. Cycle information is already captured in
     # cycle_edges/nodes_in_cycles above and used for edge/node styling.
-    G_acyclic = G.copy()
-    G_acyclic.remove_edges_from(self_loops)
-    G_acyclic.remove_edges_from(cycle_edges)
+    graph_acyclic = graph.copy()
+    graph_acyclic.remove_edges_from(self_loops)
+    graph_acyclic.remove_edges_from(cycle_edges)
 
     # Calculate depths
     if direction == "dependants":
-        depths = calculate_partitions_longest_path(G_acyclic, root_id)
+        depths = calculate_partitions_longest_path(graph_acyclic, root_id)
     else:
-        depths = calculate_depths_bfs(G_acyclic, root_id)
+        depths = calculate_depths_bfs(graph_acyclic, root_id)
 
     # Calculate positions for non-physics layouts
     positions = None
     if layout in ("radial", "shell", "circular"):
-        positions = calculate_layout_positions(G_acyclic, layout, root_id, depths)
+        positions = calculate_layout_positions(graph_acyclic, layout, root_id, depths)
 
     # Create PyVis network
     net = Network(
@@ -493,8 +490,8 @@ def create_multi_layout_visualization(
         is_in_cycle = node_id in nodes_in_cycles
 
         # Escape all user-controlled data to prevent XSS
-        safe_project = escape(data['project_name'])
-        safe_version = escape(data['version'])
+        safe_project = escape(data["project_name"])
+        safe_version = escape(data["version"])
         label = f"{safe_project}\n{safe_version}"
         labels_str = escape(", ".join(data.get("labels", [])))
         properties = data.get("properties", {})
@@ -627,7 +624,11 @@ def create_dependants_multi_layout_visualization(
     # Get dependants graph data
     # Use skip_scan_filter=True to show raw graph structure in visualization
     nodes, edges = service.get_transitive_dependants(
-        project_name, version_name, max_depth, internal_only, skip_scan_filter=True,
+        project_name,
+        version_name,
+        max_depth,
+        internal_only,
+        skip_scan_filter=True,
         project_group=project_group,
     )
 
@@ -690,7 +691,10 @@ def create_dependencies_multi_layout_visualization(
 
     # Get dependencies graph data
     nodes, edges = service.get_transitive_dependencies(
-        project_name, version_name, max_depth, internal_only,
+        project_name,
+        version_name,
+        max_depth,
+        internal_only,
         project_group=project_group,
     )
 

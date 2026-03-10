@@ -82,11 +82,13 @@ The primary risks identified were around credential management (hardcoded defaul
 | 12 | Sensitive data in error responses | I | Server internals | Low | Medium | **Low** | **MITIGATED** | Generic error messages returned to users. `/ready` endpoint sanitized to return only "Database connection failed" (full error logged server-side). Stack traces never exposed. |
 | 13 | DoS via deep graph traversal | D | Application availability | Medium | Medium | **Medium** | **MITIGATED** | `DEFAULT_MAX_DEPTH=50`, `MAX_TRANSITIVE_NODES=50000`. Iterative BFS with cycle detection. Gunicorn timeout 300s. `max-requests=1000` recycles workers. |
 | 14 | Token/user database file permission exposure | I | tokens.db | Low | High | **Low** | **MITIGATED** | Directory created with `mode=0o700`. Container runs as non-root UID 65532. PVC mounted at `/data`. |
-| 15 | Elevation of privilege via mass assignment | E | Admin status | Low | High | **Low** | **MITIGATED** | `admin_required` decorator on all admin endpoints. `is_admin` set from LDAP group membership or local user record, never from request data. |
+| 15 | Elevation of privilege via mass assignment | E | Admin status | Low | High | **Low** | **MITIGATED** | `admin_required` decorator on all admin endpoints. `is_admin` set from LDAP group membership or local user record, never from request data. All POST endpoints validate request bodies against JSON Schema (Draft-07) with `additionalProperties: false`, rejecting unexpected fields before processing. |
 | 16 | Log injection via user-controlled data | T | Audit trail integrity | Low | Low | **Low** | **MITIGATED** | Username and group names removed from LDAP log messages. Only counts and exception messages logged. |
 | 17 | Dependency supply chain compromise | T | Application integrity | Low | Critical | **Medium** | **MITIGATED** | `uv.lock` pins exact versions. Internal Nexus registry. Snyk and SonaType SCA scanning in CI/CD pipeline. |
 | 18 | Container escape / privilege escalation | E | Kubernetes node | Low | Critical | **Low** | **MITIGATED** | Distroless base image. Non-root user. Helm chart includes `securityContext`. PodDisruptionBudget configured. |
 | 19 | Missing security response headers | I | Browser security | Low | Medium | **Low** | **MITIGATED** | `after_request` handler adds `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy`. |
+| 20 | Content-Disposition header injection via schema_name | T | Browser, response headers | Low | Medium | **Low** | **MITIGATED** | `schema_name` path parameter validated with `validate_schema_name()`; Content-Disposition header sanitized via `sanitize_content_disposition()` before use. |
+| 21 | ValueError/DoS from unvalidated query parameters | D, T | Application availability | Medium | Medium | **Medium** | **MITIGATED** | All `max_depth`, `limit`, `min_score`, `min_confidence` use `validate_int_param()`/`validate_float_param()` with bounds and NaN/Inf rejection. Boolean and URL params use `validate_boolean()` and `validate_url()`. Admin `username` path params use `validate_username()`; `expires_days` and `description` bounded. |
 
 ## Security Controls Summary
 
@@ -100,11 +102,17 @@ The primary risks identified were around credential management (hardcoded defaul
 ### Input Validation
 - **Project/version names**: `[A-Za-z0-9._+-]` regex, max length 256/128
 - **Defect IDs**: `[A-Za-z0-9._-]` regex, max length 128
+- **Annotation IDs**: UUID v4 pattern via `validate_annotation_id()`
+- **Schema names**: Lowercase alphanumeric + hyphens via `validate_schema_name()`; Content-Disposition header sanitized with `sanitize_content_disposition()` to prevent header injection
+- **Admin usernames**: Alphanumeric, hyphens, underscores, dots, @ via `validate_username()`
+- **URLs** (e.g. `repo_url`): Must be http:// or https:// with valid host via `validate_url()`
 - **CSS dimensions**: Allowlist pattern, max value 10000
 - **Formats**: Strict allowlist (`html`, `excel`, `json`)
 - **Layouts**: Strict allowlist (`spring`, `radial`, `shell`, `bfs`, `circular`)
-- **Numeric params**: Range-checked (max_depth 1-100, limit 1-100000)
+- **Numeric params**: `validate_int_param()`/`validate_float_param()` with bounds, NaN/Inf rejection (max_depth, limit, min_score, min_confidence, expires_days)
+- **Boolean params**: `validate_boolean()` for internal_only, include_dependencies, longest_only
 - **Redirect URLs**: Single leading `/`, no `//`, `\`, `@`, CRLF, null bytes
+- **Inbound JSON bodies**: All POST endpoints validated against JSON Schema (Draft-07) via `validate_json_body()`; schemas enforce required fields, type constraints, string length limits, enum values, pattern matching (e.g., `^pkg:` for purls), and `additionalProperties: false` to prevent mass assignment
 
 ### Transport & Cryptography
 - **TLS**: Configurable via environment (Gunicorn SSL context, Ingress termination)
@@ -149,3 +157,4 @@ All dependencies are actively maintained with established user bases and compati
 |------|--------|---------|
 | 2026-02-28 | AI-assisted threat model | Initial threat model with STRIDE analysis |
 | 2026-02-28 | Implementation | Mitigated findings #1, #4, #12, #19 via code changes |
+| 2026-03-10 | Parameter validation hardening | Added threats #20 (Content-Disposition header injection), #21 (unvalidated query params); expanded Input Validation controls with new validators and sanitizers |

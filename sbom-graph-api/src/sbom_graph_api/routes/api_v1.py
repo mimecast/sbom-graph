@@ -4,18 +4,31 @@ All endpoints return JSON and require JWT authentication.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from flask import Blueprint, Response, jsonify, request
 
 from sbom_graph_api.routes.auth import auth_required
+from sbom_graph_api.schemas.inbound import (
+    CONTACT_CREATE_SCHEMA,
+    ENRICHMENT_REQUEST_SCHEMA,
+    POLICY_ANNOTATION_SCHEMA,
+)
 from sbom_graph_api.services.falkordb_service import get_falkordb_service
+from sbom_graph_api.utils.validation import (
+    validate_annotation_id,
+    validate_boolean,
+    validate_defect_id,
+    validate_float_param,
+    validate_int_param,
+    validate_json_body,
+    validate_url,
+)
 
 bp = Blueprint("api_v1", __name__, url_prefix="/api/v1")
 
 
 _MAX_PURL_LENGTH = 512
-_MAX_JUSTIFICATION_LENGTH = 2000
 
 
 def _validate_purl(purl: str) -> tuple[Response, int] | None:
@@ -44,11 +57,13 @@ def package_licenses(purl: str) -> tuple[Response, int]:
     service = get_falkordb_service()
     licenses = service.get_package_licenses(purl)
 
-    return jsonify({
-        "purl": purl,
-        "licenses": licenses,
-        "count": len(licenses),
-    }), 200
+    return jsonify(
+        {
+            "purl": purl,
+            "licenses": licenses,
+            "count": len(licenses),
+        }
+    ), 200
 
 
 @bp.route("/package/<path:purl>/vulns")
@@ -63,7 +78,7 @@ def package_vulnerabilities(purl: str) -> tuple[Response, int]:
     if err:
         return err
 
-    include_deps = request.args.get("include_dependencies", "false").lower() == "true"
+    include_deps = validate_boolean(request.args.get("include_dependencies"))
     service = get_falkordb_service()
     result = service.get_package_vulnerabilities(purl, include_dependencies=include_deps)
 
@@ -79,26 +94,30 @@ def trigger_enrichment() -> tuple[Response, int]:
     Dispatches Celery tasks and returns 202 Accepted.
     """
     try:
-        from sbom_graph_enrichment.tasks import enrich_package, enrich_all_packages
+        from sbom_graph_enrichment.tasks import (  # type: ignore[import-not-found]
+            enrich_all_packages,
+            enrich_package,
+        )
     except ImportError:
         return jsonify({"error": "Enrichment pipeline not available"}), 503
 
     body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+
+    errors = validate_json_body(body, ENRICHMENT_REQUEST_SCHEMA)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
+
     purls = body.get("purls")
 
     if purls:
-        if not isinstance(purls, list):
-            return jsonify({"error": "purls must be a list"}), 400
-        if len(purls) > 1000:
-            return jsonify({"error": "Maximum 1000 purls per request"}), 400
         for p in purls:
-            if not isinstance(p, str) or not p.startswith("pkg:"):
-                return jsonify({"error": f"Invalid purl: {p}"}), 400
             enrich_package.delay(p)
         return jsonify({"status": "accepted", "dispatched": len(purls)}), 202
-    else:
-        task = enrich_all_packages.delay()
-        return jsonify({"status": "accepted", "task_id": str(task.id)}), 202
+
+    task = enrich_all_packages.delay()
+    return jsonify({"status": "accepted", "task_id": str(task.id)}), 202
 
 
 @bp.route("/policy/annotate", methods=["POST"])
@@ -109,27 +128,20 @@ def create_policy_annotation() -> tuple[Response, int]:
     Body: ``{purl, type: "bad"|"good"|"hold", justification, expires_at?}``.
     """
     body = request.get_json(silent=True)
-    if not body:
-        return jsonify({"error": "JSON body required"}), 400
+    if not isinstance(body, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
 
-    purl = body.get("purl", "")
-    policy_type = body.get("type", "")
-    justification = body.get("justification", "")
+    errors = validate_json_body(body, POLICY_ANNOTATION_SCHEMA)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
+
+    purl = body["purl"]
+    policy_type = body["type"]
+    justification = body["justification"]
     expires_at = body.get("expires_at")
 
-    if not purl or not isinstance(purl, str) or not purl.startswith("pkg:"):
-        return jsonify({"error": "Valid purl is required"}), 400
-    if len(purl) > _MAX_PURL_LENGTH:
-        return jsonify({"error": "purl exceeds maximum length"}), 400
-    if policy_type not in ("bad", "good", "hold"):
-        return jsonify({"error": "type must be 'bad', 'good', or 'hold'"}), 400
-    if not justification or not isinstance(justification, str):
-        return jsonify({"error": "justification is required"}), 400
-    if len(justification) > _MAX_JUSTIFICATION_LENGTH:
-        return jsonify({"error": "justification exceeds maximum length"}), 400
-
     annotation_id = str(uuid.uuid4())
-    created_at = datetime.now(timezone.utc).isoformat()
+    created_at = datetime.now(UTC).isoformat()
 
     service = get_falkordb_service()
     version_exists = service.execute_query(
@@ -174,20 +186,22 @@ def create_policy_annotation() -> tuple[Response, int]:
         {"purl": purl, "annotation_id": annotation_id},
     )
 
-    return jsonify({
-        "annotation_id": annotation_id,
-        "purl": purl,
-        "type": policy_type,
-        "created_at": created_at,
-    }), 201
+    return jsonify(
+        {
+            "annotation_id": annotation_id,
+            "purl": purl,
+            "type": policy_type,
+            "created_at": created_at,
+        }
+    ), 201
 
 
 @bp.route("/policy/annotate/<annotation_id>", methods=["DELETE"])
 @auth_required
 def delete_policy_annotation(annotation_id: str) -> tuple[Response, int]:
     """Revoke a policy annotation by ID."""
-    if not annotation_id:
-        return jsonify({"error": "annotation_id is required"}), 400
+    if not validate_annotation_id(annotation_id):
+        return jsonify({"error": "Invalid annotation_id (expected UUID)"}), 400
 
     service = get_falkordb_service()
     result = service.execute_write(
@@ -214,14 +228,17 @@ def get_patch_plan(defect_id: str) -> tuple[Response, int]:
     """Return frontier-level patch plan for a vulnerability.
 
     Query params:
-        max_depth: Maximum BFS depth (default 10).
+        max_depth: Maximum BFS depth (default 10, max 50).
         internal_only: "true" to restrict to internal packages.
     """
-    if not defect_id:
-        return jsonify({"error": "defect_id is required"}), 400
+    if not validate_defect_id(defect_id):
+        return jsonify({"error": "Invalid defect_id"}), 400
 
-    max_depth = min(int(request.args.get("max_depth", "10")), 50)
-    internal_only = request.args.get("internal_only", "false").lower() == "true"
+    max_depth = validate_int_param(
+        request.args.get("max_depth"),
+        default=10, min_val=1, max_val=50,
+    )
+    internal_only = validate_boolean(request.args.get("internal_only"))
 
     service = get_falkordb_service()
     result = service.compute_patch_plan(
@@ -249,8 +266,11 @@ def get_blast_radius(purl: str) -> tuple[Response, int]:
     if err:
         return err
 
-    max_depth = min(int(request.args.get("max_depth", "10")), 50)
-    internal_only = request.args.get("internal_only", "false").lower() == "true"
+    max_depth = validate_int_param(
+        request.args.get("max_depth"),
+        default=10, min_val=1, max_val=50,
+    )
+    internal_only = validate_boolean(request.args.get("internal_only"))
 
     service = get_falkordb_service()
     result = service.compute_blast_radius(
@@ -262,10 +282,6 @@ def get_blast_radius(purl: str) -> tuple[Response, int]:
     return jsonify(result), 200
 
 
-_MAX_EMAIL_LENGTH = 254
-_MAX_TEAM_LENGTH = 200
-
-
 @bp.route("/contacts", methods=["POST"])
 @auth_required
 def create_contact() -> tuple[Response, int]:
@@ -274,24 +290,17 @@ def create_contact() -> tuple[Response, int]:
     Body: ``{email, purl, team?, slack_channel?}``.
     """
     body = request.get_json(silent=True)
-    if not body:
-        return jsonify({"error": "JSON body required"}), 400
+    if not isinstance(body, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
 
-    email = body.get("email", "")
-    purl = body.get("purl", "")
+    errors = validate_json_body(body, CONTACT_CREATE_SCHEMA)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
+
+    email = body["email"]
+    purl = body["purl"]
     team = body.get("team")
     slack_channel = body.get("slack_channel")
-
-    if not email or not isinstance(email, str) or "@" not in email:
-        return jsonify({"error": "Valid email is required"}), 400
-    if len(email) > _MAX_EMAIL_LENGTH:
-        return jsonify({"error": "email exceeds maximum length"}), 400
-    if not purl or not isinstance(purl, str) or not purl.startswith("pkg:"):
-        return jsonify({"error": "Valid purl is required"}), 400
-    if len(purl) > _MAX_PURL_LENGTH:
-        return jsonify({"error": "purl exceeds maximum length"}), 400
-    if team and len(team) > _MAX_TEAM_LENGTH:
-        return jsonify({"error": "team exceeds maximum length"}), 400
 
     service = get_falkordb_service()
     version_exists = service.execute_query(
@@ -318,12 +327,14 @@ def create_contact() -> tuple[Response, int]:
         {"email": email, "purl": purl},
     )
 
-    return jsonify({
-        "email": email,
-        "purl": purl,
-        "team": team,
-        "slack_channel": slack_channel,
-    }), 201
+    return jsonify(
+        {
+            "email": email,
+            "purl": purl,
+            "team": team,
+            "slack_channel": slack_channel,
+        }
+    ), 201
 
 
 @bp.route("/package/<path:purl>/vex")
@@ -337,11 +348,13 @@ def package_vex(purl: str) -> tuple[Response, int]:
     service = get_falkordb_service()
     statements = service.get_vex_for_package(purl)
 
-    return jsonify({
-        "purl": purl,
-        "statements": statements,
-        "count": len(statements),
-    }), 200
+    return jsonify(
+        {
+            "purl": purl,
+            "statements": statements,
+            "count": len(statements),
+        }
+    ), 200
 
 
 @bp.route("/package/<path:purl>/policy")
@@ -370,22 +383,22 @@ def source_repo_packages() -> tuple[Response, int]:
     """Return all packages sourced from a given repository URL.
 
     Query Parameters:
-        repo_url (str): Required. The source repository URL.
+        repo_url (str): Required. The source repository URL (http/https).
     """
-    repo_url = request.args.get("repo_url", "").strip()
+    repo_url = validate_url(request.args.get("repo_url", "").strip())
     if not repo_url:
-        return jsonify({"error": "Missing required query parameter: repo_url"}), 400
-    if len(repo_url) > 2048:
-        return jsonify({"error": "repo_url exceeds maximum length"}), 400
+        return jsonify({"error": "Missing or invalid repo_url (must be http/https URL)"}), 400
 
     service = get_falkordb_service()
     packages = service.get_packages_by_source_repo(repo_url)
 
-    return jsonify({
-        "repo_url": repo_url,
-        "packages": packages,
-        "count": len(packages),
-    }), 200
+    return jsonify(
+        {
+            "repo_url": repo_url,
+            "packages": packages,
+            "count": len(packages),
+        }
+    ), 200
 
 
 @bp.route("/source/vulnerabilities")
@@ -394,22 +407,22 @@ def source_repo_vulnerabilities() -> tuple[Response, int]:
     """Return all vulnerabilities in packages sourced from a repository.
 
     Query Parameters:
-        repo_url (str): Required. The source repository URL.
+        repo_url (str): Required. The source repository URL (http/https).
     """
-    repo_url = request.args.get("repo_url", "").strip()
+    repo_url = validate_url(request.args.get("repo_url", "").strip())
     if not repo_url:
-        return jsonify({"error": "Missing required query parameter: repo_url"}), 400
-    if len(repo_url) > 2048:
-        return jsonify({"error": "repo_url exceeds maximum length"}), 400
+        return jsonify({"error": "Missing or invalid repo_url (must be http/https URL)"}), 400
 
     service = get_falkordb_service()
     vulns = service.get_vulnerabilities_by_source_repo(repo_url)
 
-    return jsonify({
-        "repo_url": repo_url,
-        "vulnerabilities": vulns,
-        "count": len(vulns),
-    }), 200
+    return jsonify(
+        {
+            "repo_url": repo_url,
+            "vulnerabilities": vulns,
+            "count": len(vulns),
+        }
+    ), 200
 
 
 @bp.route("/package/<path:purl>/trust-score")
@@ -445,15 +458,17 @@ def package_risk_path(purl: str) -> tuple[Response, int]:
     if err:
         return err
 
-    limit = min(int(request.args.get("limit", "10")), 50)
+    limit = validate_int_param(request.args.get("limit"), default=10, min_val=1, max_val=50)
     service = get_falkordb_service()
     paths = service.get_trust_score_risk_path(purl, limit=limit)
 
-    return jsonify({
-        "purl": purl,
-        "risk_path": paths,
-        "count": len(paths),
-    }), 200
+    return jsonify(
+        {
+            "purl": purl,
+            "risk_path": paths,
+            "count": len(paths),
+        }
+    ), 200
 
 
 @bp.route("/application/<path:purl>/supply-chain-risk")
@@ -484,9 +499,11 @@ def trust_score_distribution() -> tuple[Response, int]:
     service = get_falkordb_service()
     distribution = service.get_trust_score_distribution()
 
-    return jsonify({
-        "distribution": distribution,
-    }), 200
+    return jsonify(
+        {
+            "distribution": distribution,
+        }
+    ), 200
 
 
 @bp.route("/analysis/remediation-priorities")
@@ -497,14 +514,16 @@ def remediation_priorities() -> tuple[Response, int]:
     Query params:
         limit: Maximum packages to return (default 20, max 100).
     """
-    limit = min(int(request.args.get("limit", "20")), 100)
+    limit = validate_int_param(request.args.get("limit"), default=20, min_val=1, max_val=100)
     service = get_falkordb_service()
     priorities = service.get_remediation_priorities(limit=limit)
 
-    return jsonify({
-        "priorities": priorities,
-        "count": len(priorities),
-    }), 200
+    return jsonify(
+        {
+            "priorities": priorities,
+            "count": len(priorities),
+        }
+    ), 200
 
 
 @bp.route("/package/<path:purl>/trust-check")
@@ -523,18 +542,24 @@ def package_trust_check(purl: str) -> tuple[Response, int]:
     if err:
         return err
 
-    min_score = float(request.args.get("min_score", "5.0"))
-    min_confidence = float(request.args.get("min_confidence", "0.25"))
+    min_score = validate_float_param(
+        request.args.get("min_score"), default=5.0, min_val=0.0, max_val=10.0
+    )
+    min_confidence = validate_float_param(
+        request.args.get("min_confidence"), default=0.25, min_val=0.0, max_val=1.0
+    )
 
     service = get_falkordb_service()
     score = service.get_trust_score_for_purl(purl)
 
     if score is None:
-        return jsonify({
-            "pass": False,
-            "purl": purl,
-            "reason": "No trust score available",
-        }), 200
+        return jsonify(
+            {
+                "pass": False,
+                "purl": purl,
+                "reason": "No trust score available",
+            }
+        ), 200
 
     effective = score.get("effective_score") or score.get("direct_score") or 0
     confidence = score.get("confidence") or 0
@@ -550,11 +575,13 @@ def package_trust_check(purl: str) -> tuple[Response, int]:
             reason_parts.append(f"confidence {confidence:.2f} < {min_confidence:.2f}")
         reason = "; ".join(reason_parts)
 
-    return jsonify({
-        "pass": passed,
-        "purl": purl,
-        "effective_score": effective,
-        "direct_score": score.get("direct_score"),
-        "confidence": confidence,
-        "reason": reason,
-    }), 200
+    return jsonify(
+        {
+            "pass": passed,
+            "purl": purl,
+            "effective_score": effective,
+            "direct_score": score.get("direct_score"),
+            "confidence": confidence,
+            "reason": reason,
+        }
+    ), 200

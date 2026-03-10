@@ -92,6 +92,7 @@ SBOM Graph API is a Flask application that provides data visualizations of graph
 - **Token Storage**: SQLite with Fernet encryption
 - **Authentication**: Flask-JWT-Extended, Flask-Login, ldap3
 - **Encryption**: cryptography (Fernet)
+- **Validation**: jsonschema (Draft-07 JSON Schema validation for inbound payloads)
 - **Visualization**: PyVis, NetworkX
 - **Excel Generation**: openpyxl, pandas
 - **Container**: Distroless Python image
@@ -152,10 +153,15 @@ SBOM Graph API is a Flask application that provides data visualizations of graph
 ### Input Validation & Security
 
 - All user inputs are validated using `utils/validation.py`
+- **Inbound JSON payloads** on all POST endpoints are validated against JSON Schema (Draft-07) using the `validate_json_body()` utility in `utils/validation.py`
+- Inbound schemas are defined in `schemas/inbound.py` and registered in the global `SCHEMA_INDEX`
+- Schemas enforce `additionalProperties: false` to prevent mass assignment
 - CSS dimensions are validated with allowlist patterns
 - Format parameters are limited to allowed values (html, excel, json)
 - Boolean parameters use strict validation
 - URL parameters are properly encoded
+
+**Validation utilities** (`utils/validation.py`): `validate_project_name`, `validate_version_name`, `validate_defect_id`, `validate_annotation_id` (UUID v4), `validate_schema_name` (lowercase alphanumeric + hyphens), `validate_username` (alphanumeric, hyphens, underscores, dots, @), `validate_url` (http/https with valid host), `validate_float_param` (safe float parsing with NaN/Inf/bounds), `validate_int_param` (safe integer parsing with bounds), `validate_max_depth`, `validate_limit`, `validate_boolean`, `validate_format`, `validate_layout`, `validate_css_dimension`, `validate_project_group`, `validate_json_body`, `sanitize_content_disposition` (prevents header injection in Content-Disposition). All path parameters, query parameters, and headers that accept user input are validated before use; raw `int()`/`float()` casts have been replaced with bounded validators to prevent crashes and NaN/Inf acceptance.
 
 ### HTML Templates
 
@@ -186,7 +192,8 @@ src/sbom_graph_api/
 │   └── user_storage.py       # Local user storage with password hashing
 ├── schemas/                  # JSON Schema definitions
 │   ├── __init__.py
-│   └── definitions.py        # All schema definitions
+│   ├── definitions.py        # Output report schema definitions & SCHEMA_INDEX
+│   └── inbound.py            # Inbound request body schemas (SBOM upload, VEX, enrichment, policy, contacts)
 ├── visualizations/           # Visualization generators
 │   ├── kpartite.py           # K-partite dependency graphs
 │   ├── bipartite.py          # Bi-partite version/dependant graphs
@@ -407,11 +414,12 @@ This is a mandatory step before completing any task. Failing to update documenta
 
 1. Create route in appropriate blueprint (`routes/`)
 2. Use validation utilities from `utils/validation.py`
-3. Add service methods if needed (`services/falkordb_service.py`)
-4. Add visualization/export logic if needed
-5. Add JSON Schema in `schemas/definitions.py`
-6. Update the index documentation in `app.py`
-7. Update `README.md` and `AGENTS.md`
+3. For POST endpoints that accept JSON bodies, define an inbound JSON Schema in `schemas/inbound.py` and use `validate_json_body()` for request validation
+4. Add service methods if needed (`services/falkordb_service.py`)
+5. Add visualization/export logic if needed
+6. Add output JSON Schema in `schemas/definitions.py` (for report endpoints)
+7. Update the index documentation in `app.py`
+8. Update `README.md` and `AGENTS.md`
 
 ### Adding New Visualizations
 
@@ -689,8 +697,8 @@ The `/reports/centrality` endpoint shows inDegree and outDegree for all internal
 ### JSON Schema Validation Errors
 
 - Schemas use Draft-07 standard
-- Check `report_type` or `export_type` const values
-- Verify required fields are present in response
+- **Output schemas**: Check `report_type` or `export_type` const values; verify required fields are present in response
+- **Inbound schemas**: All POST endpoints validate request bodies against JSON Schema before processing; validation errors return 400 with a list of human-readable error messages; schemas are defined in `schemas/inbound.py`
 
 ### Dependants Report - Partition and Paths
 

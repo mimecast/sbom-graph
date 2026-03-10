@@ -1,1 +1,1 @@
-"""Export modules for generating Excel and other file formats."""
+"""Export modules for generating Excel, JSON, and other file formats."""

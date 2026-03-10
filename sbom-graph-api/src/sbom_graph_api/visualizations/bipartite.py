@@ -110,8 +110,8 @@ def create_bipartite_visualization(
 
         if dep_id not in added_dependants:
             # Escape all user-controlled data to prevent XSS
-            safe_dep_project = escape(dep['dependant_project'])
-            safe_dep_version = escape(dep['dependant_version'])
+            safe_dep_project = escape(dep["dependant_project"])
+            safe_dep_version = escape(dep["dependant_version"])
             label = f"{safe_dep_project}\n{safe_dep_version}"
             net.add_node(
                 dep_id,

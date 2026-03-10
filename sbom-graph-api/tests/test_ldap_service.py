@@ -75,7 +75,10 @@ def ldap_config_legacy_group(ldap_config):
 
 
 def _make_mock_entry(
-    mail=None, display_name=None, cn=None, member_of=None,
+    mail=None,
+    display_name=None,
+    cn=None,
+    member_of=None,
 ):
     """Create a mock LDAP search entry."""
     entry = MagicMock()
@@ -110,9 +113,7 @@ class TestExtractGroupNames:
 
     def test_full_dn_extracts_cn(self, ldap_config):
         service = LDAPService(config=ldap_config)
-        result = service._extract_group_names(
-            ["CN=admins,OU=groups,DC=example,DC=com"]
-        )
+        result = service._extract_group_names(["CN=admins,OU=groups,DC=example,DC=com"])
         assert result == ["admins"]
 
     def test_lowercase_cn(self, ldap_config):
@@ -127,16 +128,18 @@ class TestExtractGroupNames:
 
     def test_multiple_groups(self, ldap_config):
         service = LDAPService(config=ldap_config)
-        result = service._extract_group_names([
-            "CN=admins,OU=groups,DC=example,DC=com",
-            "CN=developers,OU=groups,DC=example,DC=com",
-            "users",
-        ])
+        result = service._extract_group_names(
+            [
+                "CN=admins,OU=groups,DC=example,DC=com",
+                "CN=developers,OU=groups,DC=example,DC=com",
+                "users",
+            ]
+        )
         assert result == ["admins", "developers", "users"]
 
     def test_empty_list(self, ldap_config):
         service = LDAPService(config=ldap_config)
-        assert service._extract_group_names([]) == []
+        assert not service._extract_group_names([])
 
     def test_dn_without_cn_uses_full_string(self, ldap_config):
         service = LDAPService(config=ldap_config)
@@ -145,9 +148,7 @@ class TestExtractGroupNames:
 
     def test_cn_with_spaces(self, ldap_config):
         service = LDAPService(config=ldap_config)
-        result = service._extract_group_names(
-            [" CN=admins , OU=groups , DC=example"]
-        )
+        result = service._extract_group_names([" CN=admins , OU=groups , DC=example"])
         assert result == ["admins"]
 
 
@@ -185,11 +186,13 @@ class TestAuthenticate:
     def test_successful_auth(self, mock_server_cls, mock_conn_cls, ldap_config):
         mock_conn = MagicMock()
         mock_conn_cls.return_value = mock_conn
-        mock_conn.entries = [_make_mock_entry(
-            mail="alice@example.com",
-            display_name="Alice Smith",
-            member_of=["CN=users,OU=groups,DC=example,DC=com"],
-        )]
+        mock_conn.entries = [
+            _make_mock_entry(
+                mail="alice@example.com",
+                display_name="Alice Smith",
+                member_of=["CN=users,OU=groups,DC=example,DC=com"],
+            )
+        ]
 
         service = LDAPService(config=ldap_config)
         user = service.authenticate("alice", "password123")
@@ -206,9 +209,11 @@ class TestAuthenticate:
     def test_admin_group_grants_admin(self, mock_server_cls, mock_conn_cls, ldap_config):
         mock_conn = MagicMock()
         mock_conn_cls.return_value = mock_conn
-        mock_conn.entries = [_make_mock_entry(
-            member_of=["CN=admins,OU=groups,DC=example,DC=com"],
-        )]
+        mock_conn.entries = [
+            _make_mock_entry(
+                member_of=["CN=admins,OU=groups,DC=example,DC=com"],
+            )
+        ]
 
         service = LDAPService(config=ldap_config)
         user = service.authenticate("admin_user", "password")
@@ -221,9 +226,11 @@ class TestAuthenticate:
     def test_non_admin_group_no_admin(self, mock_server_cls, mock_conn_cls, ldap_config):
         mock_conn = MagicMock()
         mock_conn_cls.return_value = mock_conn
-        mock_conn.entries = [_make_mock_entry(
-            member_of=["CN=users,OU=groups,DC=example,DC=com"],
-        )]
+        mock_conn.entries = [
+            _make_mock_entry(
+                member_of=["CN=users,OU=groups,DC=example,DC=com"],
+            )
+        ]
 
         service = LDAPService(config=ldap_config)
         user = service.authenticate("regular_user", "password")
@@ -233,9 +240,7 @@ class TestAuthenticate:
 
     @patch("sbom_graph_api.services.ldap_service.Connection")
     @patch("sbom_graph_api.services.ldap_service.Server")
-    def test_fallback_to_cn_for_display_name(
-        self, mock_server_cls, mock_conn_cls, ldap_config
-    ):
+    def test_fallback_to_cn_for_display_name(self, mock_server_cls, mock_conn_cls, ldap_config):
         mock_conn = MagicMock()
         mock_conn_cls.return_value = mock_conn
         mock_conn.entries = [_make_mock_entry(cn="Alice")]
@@ -265,9 +270,7 @@ class TestAuthenticate:
 
     @patch("sbom_graph_api.services.ldap_service.Connection")
     @patch("sbom_graph_api.services.ldap_service.Server")
-    def test_ldap_exception_returns_none(
-        self, mock_server_cls, mock_conn_cls, ldap_config
-    ):
+    def test_ldap_exception_returns_none(self, mock_server_cls, mock_conn_cls, ldap_config):
         mock_conn_cls.side_effect = LDAPException("Connection refused")
 
         service = LDAPService(config=ldap_config)
@@ -276,9 +279,7 @@ class TestAuthenticate:
 
     @patch("sbom_graph_api.services.ldap_service.Connection")
     @patch("sbom_graph_api.services.ldap_service.Server")
-    def test_unexpected_error_raises(
-        self, mock_server_cls, mock_conn_cls, ldap_config
-    ):
+    def test_unexpected_error_raises(self, mock_server_cls, mock_conn_cls, ldap_config):
         mock_conn_cls.side_effect = RuntimeError("Unexpected failure")
 
         service = LDAPService(config=ldap_config)
@@ -291,14 +292,14 @@ class TestGroupMembershipRequired:
 
     @patch("sbom_graph_api.services.ldap_service.Connection")
     @patch("sbom_graph_api.services.ldap_service.Server")
-    def test_allowed_group_passes(
-        self, mock_server_cls, mock_conn_cls, ldap_config_group_required
-    ):
+    def test_allowed_group_passes(self, mock_server_cls, mock_conn_cls, ldap_config_group_required):
         mock_conn = MagicMock()
         mock_conn_cls.return_value = mock_conn
-        mock_conn.entries = [_make_mock_entry(
-            member_of=["CN=users,OU=groups,DC=example,DC=com"],
-        )]
+        mock_conn.entries = [
+            _make_mock_entry(
+                member_of=["CN=users,OU=groups,DC=example,DC=com"],
+            )
+        ]
 
         service = LDAPService(config=ldap_config_group_required)
         user = service.authenticate("alice", "password")
@@ -311,9 +312,11 @@ class TestGroupMembershipRequired:
     ):
         mock_conn = MagicMock()
         mock_conn_cls.return_value = mock_conn
-        mock_conn.entries = [_make_mock_entry(
-            member_of=["CN=other-group,OU=groups,DC=example,DC=com"],
-        )]
+        mock_conn.entries = [
+            _make_mock_entry(
+                member_of=["CN=other-group,OU=groups,DC=example,DC=com"],
+            )
+        ]
 
         service = LDAPService(config=ldap_config_group_required)
         user = service.authenticate("alice", "password")
@@ -331,9 +334,11 @@ class TestLegacyRequiredGroup:
     ):
         mock_conn = MagicMock()
         mock_conn_cls.return_value = mock_conn
-        mock_conn.entries = [_make_mock_entry(
-            member_of=["app-users"],
-        )]
+        mock_conn.entries = [
+            _make_mock_entry(
+                member_of=["app-users"],
+            )
+        ]
 
         service = LDAPService(config=ldap_config_legacy_group)
         user = service.authenticate("alice", "password")
@@ -346,9 +351,11 @@ class TestLegacyRequiredGroup:
     ):
         mock_conn = MagicMock()
         mock_conn_cls.return_value = mock_conn
-        mock_conn.entries = [_make_mock_entry(
-            member_of=["other-group"],
-        )]
+        mock_conn.entries = [
+            _make_mock_entry(
+                member_of=["other-group"],
+            )
+        ]
 
         service = LDAPService(config=ldap_config_legacy_group)
         user = service.authenticate("alice", "password")
@@ -382,9 +389,7 @@ class TestTestConnection:
 
     @patch("sbom_graph_api.services.ldap_service.Connection")
     @patch("sbom_graph_api.services.ldap_service.Server")
-    def test_uses_bind_dn_when_configured(
-        self, mock_server_cls, mock_conn_cls, ldap_config
-    ):
+    def test_uses_bind_dn_when_configured(self, mock_server_cls, mock_conn_cls, ldap_config):
         ldap_config.bind_dn = "cn=service,dc=example"
         ldap_config.bind_password = "service-pass"
         mock_conn = MagicMock()
