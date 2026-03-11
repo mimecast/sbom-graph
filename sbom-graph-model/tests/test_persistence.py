@@ -189,7 +189,7 @@ class TestPersistenceInit:
             mock_fdb_instance.select_graph.return_value = mock_graph
             mock_fdb.return_value = mock_fdb_instance
 
-            p = Persistence(
+            _ = Persistence(
                 host="db.example.com",
                 port=6380,
                 graph_name="prod",

@@ -301,7 +301,6 @@ class SonaTypeClient:
             )
             logger.error(error_message)
             raise NotFound(error_message)
-        return None
 
 
 def process_release_scan(

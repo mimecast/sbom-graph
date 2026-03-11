@@ -404,7 +404,7 @@ def create_token() -> ResponseReturnValue:
         else:
             # Calculate expiration (use naive datetime for SQLite compatibility)
             expires_at = None
-            if expires_days and expires_days > 0:
+            if expires_days:
                 expires_at = (datetime.now(UTC) + timedelta(days=expires_days)).replace(tzinfo=None)
 
             # Create the JWT token
