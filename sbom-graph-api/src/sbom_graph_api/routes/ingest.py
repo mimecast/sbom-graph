@@ -10,7 +10,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -111,13 +110,38 @@ def _extract_cyclonedx_tool_info(sbom: dict) -> tuple[str | None, str | None]:
     return None, None
 
 
-_SPDX_TOOL_CREATOR_RE = re.compile(r"^[Tt]ool:\s*(.+?)(?:-(\d[\d.]*))?$")
+def _parse_spdx_tool_creator(value: str) -> tuple[str | None, str | None]:
+    """Parse a single SPDX creator string after the ``Tool:`` prefix.
+
+    Splits on the last hyphen where the suffix starts with a digit,
+    e.g. ``"syft-1.2.3"`` -> ``("syft", "1.2.3")``.
+    Uses plain string operations to avoid ReDoS (CWE-1333).
+
+    Args:
+        value: The text after the ``Tool:`` prefix, already stripped.
+
+    Returns:
+        Tuple of (tool_name, tool_version). Either may be None.
+    """
+    if not value:
+        return None, None
+
+    dash_idx = value.rfind("-")
+    if 0 < dash_idx < len(value) - 1:
+        candidate = value[dash_idx + 1:]
+        if candidate[0].isdigit() and all(
+            c.isdigit() or c == "." for c in candidate
+        ):
+            name = value[:dash_idx].strip() or None
+            return name, candidate
+
+    return value or None, None
 
 
 def _extract_spdx_tool_info(sbom: dict) -> tuple[str | None, str | None]:
     """Extract tool name and version from SPDX creationInfo.creators.
 
-    Creators are strings like "Tool: syft-1.2.3" or "Tool: trivy".
+    Creators are strings like ``"Tool: syft-1.2.3"`` or ``"Tool: trivy"``.
 
     Args:
         sbom: The SPDX SBOM dict.
@@ -136,10 +160,12 @@ def _extract_spdx_tool_info(sbom: dict) -> tuple[str | None, str | None]:
     for creator in creators:
         if not isinstance(creator, str):
             continue
-        match = _SPDX_TOOL_CREATOR_RE.match(creator.strip())
-        if match:
-            name = match.group(1).strip() or None
-            version = match.group(2) if match.group(2) else None
+        stripped = creator.strip()
+        if not stripped.lower().startswith("tool:"):
+            continue
+        tool_value = stripped[5:].strip()
+        name, version = _parse_spdx_tool_creator(tool_value)
+        if name:
             return name, version
     return None, None
 
