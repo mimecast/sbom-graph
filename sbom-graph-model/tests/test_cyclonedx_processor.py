@@ -5,10 +5,6 @@ parsing, and full processing of CycloneDX SBOM data. Exercises both synthetic
 minimal fixtures and the customer_portal SBOM resource (acme_corp demo data).
 """
 
-import copy
-import json
-from unittest.mock import MagicMock
-
 import pytest
 
 from sbom_graph_model.cyclonedx.processor import (

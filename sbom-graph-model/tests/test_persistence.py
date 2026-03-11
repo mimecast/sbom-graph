@@ -5,15 +5,13 @@ node creation, edge creation, labeling, querying, centrality, and indexing.
 All database calls are mocked via the mock_graph fixture.
 """
 
-from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from sbom_graph_model.model import (
     Defect,
     Project,
-    RiskStatus,
     Version,
     VersionDefect,
 )

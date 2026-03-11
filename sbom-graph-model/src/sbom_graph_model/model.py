@@ -88,7 +88,7 @@ class Defect:
         self.description: Optional[str] = None
         self.cwes: list[int] = []
         self.severity: Optional[str] = None
-        self.cvss: Optional[int] = None
+        self.cvss: Optional[float] = None
         self.cvss_string: Optional[str] = None
         self.source: Optional[tuple[str, str]] = None
         self.last_enriched_at: Optional[str] = None  # ISO timestamp

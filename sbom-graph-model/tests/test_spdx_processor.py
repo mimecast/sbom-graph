@@ -8,7 +8,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from sbom_graph_model.model import License, Project, Version
 from sbom_graph_model.persistence import Persistence
 from sbom_graph_model.spdx.processor import (
     SPDXProcessor,

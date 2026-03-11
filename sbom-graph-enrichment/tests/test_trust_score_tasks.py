@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from sbom_graph_enrichment.tasks import (
     _propagate,
     _reverse_topological_sort,

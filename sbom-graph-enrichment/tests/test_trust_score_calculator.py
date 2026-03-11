@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from sbom_graph_enrichment.certifiers.base import Finding, FindingKind
 from sbom_graph_enrichment.certifiers.trust_score import (
     TrustScoreCalculator,

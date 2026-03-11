@@ -9,9 +9,6 @@ import pytest
 from sbom_graph_model.model import (
     Defect,
     DefectType,
-    DependencyVersion,
-    HasVersion,
-    License,
     Project,
     ProjectType,
     RiskStatus,
@@ -72,7 +69,7 @@ def sample_project() -> Project:
     project.public_app_id = "pub-123"
     project.name = "test-project"
     project.group = "com.example"
-    project.type = "application"
+    project.type = ProjectType.Application
     project.purl = "pkg:maven/com.example/test-project@1.0.0"
     project.repo = "https://gitlab.example.com/test-project"
     project.team = "security-team"
@@ -86,7 +83,7 @@ def sample_library_project() -> Project:
     project = Project()
     project.name = "test-library"
     project.group = "org.example"
-    project.type = "library"
+    project.type = ProjectType.Library
     project.purl = "pkg:maven/org.example/test-library@2.0.0"
     return project
 
