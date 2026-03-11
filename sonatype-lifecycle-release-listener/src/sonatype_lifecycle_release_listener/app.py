@@ -207,7 +207,7 @@ def _verify_hmac(secret: str, body: bytes, signature_header: str) -> bool:
     return hmac.compare_digest(expected_sig, received_sig)
 
 
-class CycloneHelper:
+class CycloneDXHelper:
     """Helper class to process CycloneDX SBOMs."""
 
     def __init__(self, config: dict):
@@ -226,7 +226,7 @@ class CycloneHelper:
         self.sonatype_client = SonaTypeClient(config)
         self.cyclonedx_processor = CycloneDXProcessor(persistence=self.persistence)
 
-    def process_cyclone_sbom(
+    def process_cyclonedx_sbom(
         self,
         app_id: str,
         public_app_id: str,
@@ -245,7 +245,7 @@ class CycloneHelper:
                 raise NotFound(error_message)
         except NotFound as e:
             logger.exception("Error processing CycloneDX SBOM")
-            raise e
+            raise
 
         try:
             self.cyclonedx_processor.process_cyclone_dx_json(
@@ -255,7 +255,24 @@ class CycloneHelper:
                 json_data=sbom)
         except RedisError as e:
             logger.exception("Error processing CycloneDX SBOM")
-            raise e
+            raise
+
+
+    def process_cyclone_sbom(
+        self,
+        app_id: str,
+        public_app_id: str,
+        version: str = '1.5',
+        stage_id: str = 'release'):
+        """
+        Backwards-compatible wrapper for :meth:`process_cyclonedx_sbom`.
+        """
+        return self.process_cyclonedx_sbom(
+            app_id=app_id,
+            public_app_id=public_app_id,
+            version=version,
+            stage_id=stage_id,
+        )
 
 
 class SonaTypeClient:
@@ -319,8 +336,8 @@ def process_release_scan(
     :return: Dictionary with success status and any error message
     """
     try:
-        helper = CycloneHelper(config)
-        helper.process_cyclone_sbom(app_id=app_id, public_app_id=public_id)
+        helper = CycloneDXHelper(config)
+        helper.process_cyclonedx_sbom(app_id=app_id, public_app_id=public_id)
         return {'success': True}
     except (NotFound, RedisError):
         logger.exception("Error processing release scan for %s", public_id)

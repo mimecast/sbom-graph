@@ -11,7 +11,7 @@ from werkzeug.exceptions import NotFound
 from redis.exceptions import RedisError
 
 from sonatype_lifecycle_release_listener.app import (
-    create_app, process_release_scan, CycloneHelper, SonaTypeClient,
+    create_app, process_release_scan, CycloneDXHelper, SonaTypeClient,
 )
 
 
@@ -239,9 +239,9 @@ class TestProcessReleaseScan:
         'FALKORDB_CACERTS': 'certs/ca_bundle.pem',
     }
 
-    @patch('sonatype_lifecycle_release_listener.app.CycloneHelper')
+    @patch('sonatype_lifecycle_release_listener.app.CycloneDXHelper')
     def test_creates_cyclone_helper_with_config(self, mock_helper_class):
-        """Test that CycloneHelper is created with the provided config."""
+        """Test that CycloneDXHelper is created with the provided config."""
         mock_helper = MagicMock()
         mock_helper_class.return_value = mock_helper
 
@@ -253,9 +253,9 @@ class TestProcessReleaseScan:
 
         mock_helper_class.assert_called_once_with(self.TEST_CONFIG)
 
-    @patch('sonatype_lifecycle_release_listener.app.CycloneHelper')
-    def test_calls_process_cyclone_sbom_correctly(self, mock_helper_class):
-        """Test that process_cyclone_sbom is called with correct parameters."""
+    @patch('sonatype_lifecycle_release_listener.app.CycloneDXHelper')
+    def test_calls_process_cyclonedx_sbom_correctly(self, mock_helper_class):
+        """Test that process_cyclonedx_sbom is called with correct parameters."""
         mock_helper = MagicMock()
         mock_helper_class.return_value = mock_helper
 
@@ -265,12 +265,12 @@ class TestProcessReleaseScan:
             config=self.TEST_CONFIG,
         )
 
-        mock_helper.process_cyclone_sbom.assert_called_once_with(
+        mock_helper.process_cyclonedx_sbom.assert_called_once_with(
             app_id='test_app_id',
             public_app_id='test_public_id',
         )
 
-    @patch('sonatype_lifecycle_release_listener.app.CycloneHelper')
+    @patch('sonatype_lifecycle_release_listener.app.CycloneDXHelper')
     def test_returns_success_on_successful_processing(self, mock_helper_class):
         """Test that function returns success on successful processing."""
         mock_helper = MagicMock()
@@ -284,12 +284,12 @@ class TestProcessReleaseScan:
 
         assert result['success'] is True
 
-    @patch('sonatype_lifecycle_release_listener.app.CycloneHelper')
+    @patch('sonatype_lifecycle_release_listener.app.CycloneDXHelper')
     def test_returns_failure_on_not_found(self, mock_helper_class):
         """Test that function returns failure when SBOM is not found."""
         mock_helper = MagicMock()
         mock_helper_class.return_value = mock_helper
-        mock_helper.process_cyclone_sbom.side_effect = NotFound('SBOM not found')
+        mock_helper.process_cyclonedx_sbom.side_effect = NotFound('SBOM not found')
 
         result = process_release_scan(
             app_id='test_app_id',
@@ -300,7 +300,7 @@ class TestProcessReleaseScan:
         assert result['success'] is False
         assert result['error'] == 'SBOM processing failed'
 
-    @patch('sonatype_lifecycle_release_listener.app.CycloneHelper')
+    @patch('sonatype_lifecycle_release_listener.app.CycloneDXHelper')
     def test_returns_failure_on_redis_error(self, mock_helper_class):
         """Test that function returns failure on FalkorDB connection error."""
         mock_helper_class.side_effect = RedisError('Connection refused')
@@ -318,9 +318,9 @@ class TestProcessReleaseScan:
 class TestIntegrationWithMockedSonatype:
     """Integration tests using mocked SonaType responses."""
 
-    @patch('sonatype_lifecycle_release_listener.app.CycloneHelper')
+    @patch('sonatype_lifecycle_release_listener.app.CycloneDXHelper')
     def test_full_webhook_flow(self, mock_helper_class, client, example_message):
-        """Test full webhook flow with mocked CycloneHelper."""
+        """Test full webhook flow with mocked CycloneDXHelper."""
         mock_helper = MagicMock()
         mock_helper_class.return_value = mock_helper
 
@@ -334,12 +334,12 @@ class TestIntegrationWithMockedSonatype:
         data = json.loads(response.data)
         assert data['status'] == 'processed'
 
-        mock_helper.process_cyclone_sbom.assert_called_once_with(
+        mock_helper.process_cyclonedx_sbom.assert_called_once_with(
             app_id='0f256982c80b4e13abef4917b93ac343',
             public_app_id='My-Application-ID',
         )
 
-    @patch('sonatype_lifecycle_release_listener.app.CycloneHelper')
+    @patch('sonatype_lifecycle_release_listener.app.CycloneDXHelper')
     def test_multiple_webhook_messages_processed_sequentially(
         self, mock_helper_class, client, example_message
     ):
@@ -364,7 +364,7 @@ class TestIntegrationWithMockedSonatype:
         )
         assert response2.status_code == 200
 
-        assert mock_helper.process_cyclone_sbom.call_count == 2
+        assert mock_helper.process_cyclonedx_sbom.call_count == 2
 
 
 @pytest.mark.integration
@@ -415,11 +415,11 @@ class TestFalkorDBIntegration:
         mock_get_sbom.return_value = example_cyclonedx
 
         try:
-            helper = CycloneHelper(self.FALKORDB_CONFIG)
+            helper = CycloneDXHelper(self.FALKORDB_CONFIG)
         except (OSError, ConnectionError, RedisError) as e:
             pytest.skip(f"FalkorDB not available: {e}")
 
-        helper.process_cyclone_sbom(
+        helper.process_cyclonedx_sbom(
             app_id='test_app_id',
             public_app_id='test_public_id',
         )
@@ -442,11 +442,11 @@ class TestFalkorDBIntegration:
         mock_get_sbom.return_value = example_cyclonedx
 
         try:
-            helper = CycloneHelper(self.FALKORDB_CONFIG)
+            helper = CycloneDXHelper(self.FALKORDB_CONFIG)
         except (OSError, ConnectionError, RedisError) as e:
             pytest.skip(f"FalkorDB not available: {e}")
 
-        helper.process_cyclone_sbom(
+        helper.process_cyclonedx_sbom(
             app_id='test_app_id',
             public_app_id='test_public_id',
         )
@@ -548,8 +548,8 @@ class TestSonaTypeClient:
             client.get_cyclonedx_sbom('app123')
 
 
-class TestCycloneHelper:
-    """Tests for the CycloneHelper class."""
+class TestCycloneDXHelper:
+    """Tests for the CycloneDXHelper class."""
 
     TEST_CONFIG = {
         'SONATYPE_HOST': 'sonatype.example.com',
@@ -567,8 +567,8 @@ class TestCycloneHelper:
     @patch('sonatype_lifecycle_release_listener.app.SonaTypeClient')
     @patch('sonatype_lifecycle_release_listener.app.Persistence')
     def test_init_creates_dependencies(self, mock_persistence, mock_client, mock_processor):
-        """Test that CycloneHelper wires up Persistence, SonaTypeClient, and CycloneDXProcessor."""
-        helper = CycloneHelper(self.TEST_CONFIG)
+        """Test that CycloneDXHelper wires up Persistence, SonaTypeClient, and CycloneDXProcessor."""
+        helper = CycloneDXHelper(self.TEST_CONFIG)
 
         mock_persistence.assert_called_once_with(
             host='localhost',
@@ -588,7 +588,7 @@ class TestCycloneHelper:
     @patch('sonatype_lifecycle_release_listener.app.CycloneDXProcessor')
     @patch('sonatype_lifecycle_release_listener.app.SonaTypeClient')
     @patch('sonatype_lifecycle_release_listener.app.Persistence')
-    def test_process_cyclone_sbom_success(self, mock_persistence, mock_client_cls, mock_proc_cls):
+    def test_process_cyclonedx_sbom_success(self, mock_persistence, mock_client_cls, mock_proc_cls):
         """Test successful end-to-end SBOM processing."""
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
@@ -597,8 +597,8 @@ class TestCycloneHelper:
         mock_proc = MagicMock()
         mock_proc_cls.return_value = mock_proc
 
-        helper = CycloneHelper(self.TEST_CONFIG)
-        helper.process_cyclone_sbom(app_id='app123', public_app_id='MyApp')
+        helper = CycloneDXHelper(self.TEST_CONFIG)
+        helper.process_cyclonedx_sbom(app_id='app123', public_app_id='MyApp')
 
         mock_client.get_cyclonedx_sbom.assert_called_once_with('app123', '1.5', 'release')
         mock_proc.process_cyclone_dx_json.assert_called_once_with(
@@ -611,7 +611,7 @@ class TestCycloneHelper:
     @patch('sonatype_lifecycle_release_listener.app.CycloneDXProcessor')
     @patch('sonatype_lifecycle_release_listener.app.SonaTypeClient')
     @patch('sonatype_lifecycle_release_listener.app.Persistence')
-    def test_process_cyclone_sbom_raises_not_found_when_sbom_is_none(
+    def test_process_cyclonedx_sbom_raises_not_found_when_sbom_is_none(
         self, mock_persistence, mock_client_cls, mock_proc_cls
     ):
         """Test that a None SBOM response raises NotFound."""
@@ -619,15 +619,15 @@ class TestCycloneHelper:
         mock_client_cls.return_value = mock_client
         mock_client.get_cyclonedx_sbom.return_value = None
 
-        helper = CycloneHelper(self.TEST_CONFIG)
+        helper = CycloneDXHelper(self.TEST_CONFIG)
 
         with pytest.raises(NotFound):
-            helper.process_cyclone_sbom(app_id='app123', public_app_id='MyApp')
+            helper.process_cyclonedx_sbom(app_id='app123', public_app_id='MyApp')
 
     @patch('sonatype_lifecycle_release_listener.app.CycloneDXProcessor')
     @patch('sonatype_lifecycle_release_listener.app.SonaTypeClient')
     @patch('sonatype_lifecycle_release_listener.app.Persistence')
-    def test_process_cyclone_sbom_propagates_not_found_from_client(
+    def test_process_cyclonedx_sbom_propagates_not_found_from_client(
         self, mock_persistence, mock_client_cls, mock_proc_cls
     ):
         """Test that NotFound from the SonaType client is re-raised."""
@@ -635,15 +635,15 @@ class TestCycloneHelper:
         mock_client_cls.return_value = mock_client
         mock_client.get_cyclonedx_sbom.side_effect = NotFound('API error')
 
-        helper = CycloneHelper(self.TEST_CONFIG)
+        helper = CycloneDXHelper(self.TEST_CONFIG)
 
         with pytest.raises(NotFound):
-            helper.process_cyclone_sbom(app_id='app123', public_app_id='MyApp')
+            helper.process_cyclonedx_sbom(app_id='app123', public_app_id='MyApp')
 
     @patch('sonatype_lifecycle_release_listener.app.CycloneDXProcessor')
     @patch('sonatype_lifecycle_release_listener.app.SonaTypeClient')
     @patch('sonatype_lifecycle_release_listener.app.Persistence')
-    def test_process_cyclone_sbom_propagates_redis_error(
+    def test_process_cyclonedx_sbom_propagates_redis_error(
         self, mock_persistence, mock_client_cls, mock_proc_cls
     ):
         """Test that RedisError from the processor is re-raised."""
@@ -655,10 +655,10 @@ class TestCycloneHelper:
         mock_proc_cls.return_value = mock_proc
         mock_proc.process_cyclone_dx_json.side_effect = RedisError('Connection lost')
 
-        helper = CycloneHelper(self.TEST_CONFIG)
+        helper = CycloneDXHelper(self.TEST_CONFIG)
 
         with pytest.raises(RedisError):
-            helper.process_cyclone_sbom(app_id='app123', public_app_id='MyApp')
+            helper.process_cyclonedx_sbom(app_id='app123', public_app_id='MyApp')
 
 
 class TestEdgeCases:
