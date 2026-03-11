@@ -70,7 +70,7 @@ def create_app(config: Optional[dict] = None) -> Flask:
     app.config.setdefault(
         'SONATYPE_CACERTS', os.environ.get('SONATYPE_CACERTS', 'certs/ca_bundle.pem'))
     app.config.setdefault('FALKORDB_HOST', os.environ.get('FALKORDB_HOST', ''))
-    app.config.setdefault('FALKORDB_PORT', os.environ.get('FALKORDB_PORT', 6379))
+    app.config.setdefault('FALKORDB_PORT', int(os.environ.get('FALKORDB_PORT', '6379')))
     app.config.setdefault('FALKORDB_GRAPH_NAME', os.environ.get('FALKORDB_GRAPH_NAME', 'acme-corp'))
     app.config.setdefault('FALKORDB_PASSWORD', os.environ.get('FALKORDB_PASSWORD', ''))
     app.config.setdefault(
@@ -216,7 +216,7 @@ class CycloneHelper:
         )
         self.persistence = Persistence(
             host=config.get('FALKORDB_HOST', ''),
-            port=config.get('FALKORDB_PORT', 6379),
+            port=int(config.get('FALKORDB_PORT', 6379)),
             graph_name=config.get('FALKORDB_GRAPH_NAME', 'acme-corp'),
             password=config.get('FALKORDB_PASSWORD', ''),
             ssl=True,
@@ -238,7 +238,9 @@ class CycloneHelper:
         try:
             sbom = self.sonatype_client.get_cyclonedx_sbom(app_id, version, stage_id)
             if sbom is None:
-                error_message = str.format("Failed to get CycloneDX SBOM for app ID %s on %s", app_id, stage_id)
+                error_message = (
+                    f"Error: Unable to retrieve CycloneDX {version} data for app ID {app_id} on {stage_id}"
+                )
                 logger.error(error_message)
                 raise NotFound(error_message)
         except NotFound as e:
@@ -276,7 +278,7 @@ class SonaTypeClient:
         app_id: str,
         version: str = '1.5',
         stage_id: str = 'release',
-        headers: dict|None = None) -> dict|None:
+        headers: Optional[dict] = None) -> Optional[dict]:
         """
         Get the CycloneDX SBOM for the given application ID and public ID.
         """
@@ -296,10 +298,9 @@ class SonaTypeClient:
             response.raise_for_status()  # Raise exception for non-200 response codes
             return response.json()
         except requests.exceptions.RequestException as e:
-            error_message = str.format(
-                "Error: Unable to retrieve CycloneDX {version} data for app ID %s on %s", 
-                app_id, stage_id
-            )
+            error_message = (
+                    f"Error: Unable to retrieve CycloneDX {version} data for app ID {app_id} on {stage_id}"
+                )
             logger.error(error_message)
             raise NotFound(error_message) from e
 
