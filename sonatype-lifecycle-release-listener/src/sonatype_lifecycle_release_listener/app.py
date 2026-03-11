@@ -184,7 +184,7 @@ def create_app(config: Optional[dict] = None) -> Flask:
                     'reference': request_id,
                 }), 500
 
-        except (NotFound, RedisError) as e:
+        except (NotFound, RedisError):
             logger.exception("Error processing webhook",
                              extra={'request_id': request_id})
             return jsonify({
@@ -238,10 +238,11 @@ class CycloneHelper:
         try:
             sbom = self.sonatype_client.get_cyclonedx_sbom(app_id, version, stage_id)
             if sbom is None:
-                logger.error(f"Failed to get CycloneDX SBOM for app ID {app_id} on {stage_id}")
-                raise NotFound(f"Failed to get CycloneDX SBOM for app ID {app_id} on {stage_id}")
+                error_message = str.format("Failed to get CycloneDX SBOM for app ID %s on %s", app_id, stage_id)
+                logger.error(error_message)
+                raise NotFound(error_message)
         except NotFound as e:
-            logger.exception(f"Error processing CycloneDX SBOM: {str(e)}")
+            logger.exception("Error processing CycloneDX SBOM")
             raise e
 
         try:
@@ -251,7 +252,7 @@ class CycloneHelper:
                 gitlab_project_url="",
                 json_data=sbom)
         except RedisError as e:
-            logger.exception(f"Error processing CycloneDX SBOM: {str(e)}")
+            logger.exception("Error processing CycloneDX SBOM")
             raise e
 
 
@@ -295,12 +296,12 @@ class SonaTypeClient:
             response.raise_for_status()  # Raise exception for non-200 response codes
             return response.json()
         except requests.exceptions.RequestException as e:
-            error_message = (
-                f"Error: Unable to retrieve CycloneDX {version} data for app ID "
-                f"{app_id} on {stage_id}: {e}"
+            error_message = str.format(
+                "Error: Unable to retrieve CycloneDX {version} data for app ID %s on %s", 
+                app_id, stage_id
             )
             logger.error(error_message)
-            raise NotFound(error_message)
+            raise NotFound(error_message) from e
 
 
 def process_release_scan(
@@ -320,7 +321,7 @@ def process_release_scan(
         helper = CycloneHelper(config)
         helper.process_cyclone_sbom(app_id=app_id, public_app_id=public_id)
         return {'success': True}
-    except (NotFound, RedisError) as e:
+    except (NotFound, RedisError):
         logger.exception("Error processing release scan for %s", public_id)
         return {'success': False, 'error': 'SBOM processing failed'}
 
