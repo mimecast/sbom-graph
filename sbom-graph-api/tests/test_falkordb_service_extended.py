@@ -11,8 +11,9 @@ are suppressed with ``noqa: SLF001`` because these tests
 explicitly verify implementation-level behaviour.
 """
 
-from unittest.mock import MagicMock, patch
 from typing import Any
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from sbom_graph_api.config import FalkorDBConfig
@@ -473,6 +474,11 @@ class TestGetAllApplications:
             "pub-1",
             "https://git.example.com",
             ["Application", "INTERNAL"],
+            ["MIT"],
+            ["permissive"],
+            None,
+            None,
+            None,
         ]
         with patch.object(
             db_service,
@@ -498,6 +504,11 @@ class TestGetAllApplications:
                 None,
                 None,
                 ["Application"],
+                [],
+                [],
+                None,
+                None,
+                None,
             ],
             [
                 "app-a",
@@ -507,6 +518,11 @@ class TestGetAllApplications:
                 None,
                 None,
                 ["Application"],
+                [],
+                [],
+                None,
+                None,
+                None,
             ],
         ]
         with patch.object(
@@ -539,6 +555,11 @@ class TestGetAllApplications:
                 None,
                 None,
                 ["Application"],
+                [],
+                [],
+                None,
+                None,
+                None,
             ],
             [
                 "app-b",
@@ -548,6 +569,11 @@ class TestGetAllApplications:
                 None,
                 None,
                 ["Application"],
+                [],
+                [],
+                None,
+                None,
+                None,
             ],
         ]
         with patch.object(
@@ -715,6 +741,7 @@ class TestGetAllVulnerabilities:
             ["CVE-2024-001"],
             "osv",
             affected,
+            [{"status": "not_affected", "timestamp": "2024-06-15T00:00:00Z"}],
         ]
         with patch.object(
             db_service,
@@ -728,6 +755,7 @@ class TestGetAllVulnerabilities:
             enriched = result[0]["last_enriched_at"]
             assert enriched == "2024-06-01T00:00:00Z"
             assert result[0]["aliases"] == ["CVE-2024-001"]
+            assert result[0]["vex_status"] == "not_affected"
 
     def test_get_vulnerability_by_id(
         self,
@@ -1137,3 +1165,427 @@ class TestGetLibraryVersionUsage:
         )
         assert result["library"]["total_versions"] == 0
         assert result["total_dependants"] == 0
+
+
+class TestGetAllTrustScoresForReport:
+    """Tests for get_all_trust_scores_for_report."""
+
+    def test_returns_scores(self, db_service: FalkorDBService) -> None:
+        """Returns list of trust score dicts."""
+        rows = [
+            [
+                "pkg:maven/org/lib@1.0",
+                "lib",
+                "1.0",
+                7.5,
+                7.0,
+                0.8,
+                ["scorecard", "depsdev"],
+            ],
+        ]
+        with patch.object(db_service, "execute_query", return_value=rows):
+            result = db_service.get_all_trust_scores_for_report(
+                internal_only=False,
+                min_score=0.0,
+                sort_by="effective_score",
+            )
+        assert len(result) == 1
+        assert result[0]["purl"] == "pkg:maven/org/lib@1.0"
+        assert result[0]["effective_score"] == 7.0
+        assert result[0]["sources_used"] == ["scorecard", "depsdev"]
+
+    def test_sources_used_none_becomes_empty_list(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """None sources_used becomes empty list."""
+        rows = [["purl", "proj", "1.0", 5.0, 5.0, 0.5, None]]
+        with patch.object(db_service, "execute_query", return_value=rows):
+            result = db_service.get_all_trust_scores_for_report()
+        assert result[0]["sources_used"] == []
+
+
+class TestGetSbomRecordById:
+    """Tests for get_sbom_record_by_id."""
+
+    def test_returns_record_with_purls(self, db_service: FalkorDBService) -> None:
+        """Returns record dict with purls when found."""
+        row = [
+            "rec-001",
+            "CycloneDX",
+            "2024-06-01T00:00:00Z",
+            "api",
+            "trivy",
+            "0.48",
+            None,
+            "sha256:abc",
+            ["pkg:maven/org/lib@1.0"],
+        ]
+        with patch.object(db_service, "execute_query", return_value=[row]):
+            result = db_service.get_sbom_record_by_id("rec-001")
+        assert result is not None
+        assert result["record_id"] == "rec-001"
+        assert result["purls"] == ["pkg:maven/org/lib@1.0"]
+
+    def test_returns_none_when_not_found(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """Returns None when record_id not found."""
+        with patch.object(db_service, "execute_query", return_value=[]):
+            result = db_service.get_sbom_record_by_id("nonexistent")
+        assert result is None
+
+
+class TestGetSbomInventory:
+    """Tests for get_sbom_inventory."""
+
+    def test_returns_inventory(self, db_service: FalkorDBService) -> None:
+        """Returns list of SBOM record dicts."""
+        rows = [
+            [
+                "rec-001",
+                "CycloneDX",
+                "2024-06-01T12:00:00Z",
+                "api_upload",
+                "trivy",
+                "0.48.0",
+                None,
+                "sha256:abc",
+                5,
+            ],
+        ]
+        with patch.object(db_service, "execute_query", return_value=rows):
+            result = db_service.get_sbom_inventory()
+        assert len(result) == 1
+        assert result[0]["record_id"] == "rec-001"
+        assert result[0]["version_count"] == 5
+
+    def test_version_count_none_becomes_zero(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """None version_count becomes 0."""
+        rows = [["r1", "SPDX", None, None, None, None, None, None, None]]
+        with patch.object(db_service, "execute_query", return_value=rows):
+            result = db_service.get_sbom_inventory()
+        assert result[0]["version_count"] == 0
+
+
+class TestGetSbomCoverage:
+    """Tests for get_sbom_coverage."""
+
+    def test_returns_stats(self, db_service: FalkorDBService) -> None:
+        """Returns total_projects, with_recent_sbom, etc."""
+        with patch.object(
+            db_service, "execute_query", side_effect=[[[10]], [[6]], [[8]]]
+        ):
+            result = db_service.get_sbom_coverage(recent_days=30)
+        assert result["total_projects"] == 10
+        assert result["with_recent_sbom"] == 6
+        assert result["with_stale_sbom"] == 2
+        assert result["with_no_sbom"] == 2
+
+
+class TestGetSbomCoverageForDashboard:
+    """Tests for get_sbom_coverage_for_dashboard."""
+
+    def test_returns_stats_and_projects(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """Returns stats and projects with status."""
+        rows = [
+            ["proj-a", "1.0", None, "2024-06-01T00:00:00Z", "trivy"],
+            ["proj-b", "2.0", None, None, None],
+        ]
+        with patch.object(db_service, "execute_query", return_value=rows):
+            result = db_service.get_sbom_coverage_for_dashboard(
+                internal_only=False,
+                recent_days=30,
+            )
+        assert "stats" in result
+        assert "projects" in result
+        assert result["recent_days"] == 30
+        assert len(result["projects"]) == 2
+
+
+class TestSimulateRiskPropagation:
+    """Tests for simulate_risk_propagation."""
+
+    def test_returns_empty_when_no_trust_score(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """Returns [] when package has no trust score."""
+        with patch.object(db_service, "get_trust_score_for_purl", return_value=None):
+            result = db_service.simulate_risk_propagation(
+                "pkg:maven/org/lib@1.0", 5.0
+            )
+        assert result == []
+
+    def test_returns_impacts_sorted_by_impact(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """Returns impacts sorted by impact descending."""
+        with patch.object(
+            db_service,
+            "get_trust_score_for_purl",
+            return_value={"effective_score": 8.0},
+        ):
+            rows = [
+                ["pkg:maven/dep/a@1.0", 7.0, 7.0],
+                ["pkg:maven/dep/b@1.0", 6.0, 6.0],
+            ]
+            with patch.object(db_service, "execute_query", return_value=rows):
+                result = db_service.simulate_risk_propagation(
+                    "pkg:maven/org/lib@1.0", 5.0
+                )
+        assert len(result) == 2
+        assert result[0]["impact"] >= result[1]["impact"]
+
+
+class TestEvaluatePatchPlan:
+    """Tests for evaluate_patch_plan."""
+
+    def test_returns_resolved_and_added(self, db_service: FalkorDBService) -> None:
+        """Returns current_vulns, target_vulns, resolved, added."""
+        with patch.object(
+            db_service,
+            "execute_query",
+            side_effect=[[[["CVE-1", "CVE-2"]]], [[["CVE-2"]]]],
+        ):
+            result = db_service.evaluate_patch_plan(
+                purl="pkg:maven/org/lib@1.0.0",
+                current_version="1.0.0",
+                target_version="2.0.0",
+            )
+        assert "CVE-1" in result["resolved"]
+        assert "CVE-2" in result["current_vulns"]
+        assert "CVE-2" in result["target_vulns"]
+
+
+class TestGenerateVexAutoStubs:
+    """Tests for generate_vex_auto_stubs."""
+
+    def test_returns_empty_when_no_defects(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """Returns [] when no vulns without VEX."""
+        with patch.object(db_service, "execute_query", return_value=[]):
+            result = db_service.generate_vex_auto_stubs("pkg:maven/org/lib@1.0")
+        assert result == []
+
+    def test_creates_stubs(self, db_service: FalkorDBService) -> None:
+        """Creates VEX stubs and returns created list."""
+        with patch.object(
+            db_service, "execute_query", return_value=[["CVE-2024-1234"]]
+        ):
+            with patch.object(db_service, "execute_write", return_value=[]):
+                result = db_service.generate_vex_auto_stubs(
+                    "pkg:maven/org/lib@1.0",
+                    justification="Custom justification",
+                )
+        assert len(result) == 1
+        assert result[0]["defect_id"] == "CVE-2024-1234"
+        assert result[0]["status"] == "not_affected"
+
+
+class TestGetEnrichmentCoverage:
+    """Tests for get_enrichment_coverage."""
+
+    def test_returns_coverage_stats(self, db_service: FalkorDBService) -> None:
+        """Returns total, recent, stale, never counts."""
+        rows = [
+            ["g", "proj", "1.0", "purl", "2024-06-01T00:00:00Z"],
+            ["g", "proj2", "2.0", "purl2", None],
+        ]
+        with patch.object(db_service, "execute_query", return_value=rows):
+            result = db_service.get_enrichment_coverage(internal_only=False)
+        assert "total" in result
+        assert "recent" in result
+        assert "stale" in result
+        assert "never" in result
+        assert len(result["packages"]) == 2
+
+
+class TestGetLicenseRiskDashboard:
+    """Tests for get_license_risk_dashboard."""
+
+    def test_returns_categories(self, db_service: FalkorDBService) -> None:
+        """Returns total_packages and categories."""
+        rows = [
+            ["proj", "1.0", "purl", ["MIT"], ["MIT"], ["permissive"]],
+        ]
+        with patch.object(db_service, "execute_query", return_value=rows):
+            result = db_service.get_license_risk_dashboard(internal_only=False)
+        assert "total_packages" in result
+        assert "categories" in result
+        assert "permissive" in result["categories"]
+
+
+class TestGetBlastRadius:
+    """Tests for get_blast_radius."""
+
+    def test_returns_empty_when_vuln_not_found(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """Returns empty structure when vulnerability not found."""
+        with patch.object(
+            db_service, "get_vulnerability_by_id", return_value=None
+        ):
+            result = db_service.get_blast_radius("CVE-NOT-FOUND")
+        assert result["affected_versions"] == []
+        assert result["graph_nodes"] == []
+
+    def test_returns_graph_data(self, db_service: FalkorDBService) -> None:
+        """Returns graph_nodes and graph_edges when vuln exists."""
+        vuln = {
+            "affected_versions": [
+                {"project_name": "lib", "version": "1.0"},
+            ],
+        }
+        deps = [
+            {
+                "project_name": "app",
+                "version": "1.0",
+                "labels": ["Application"],
+                "partition": 1,
+            },
+        ]
+        with patch.object(
+            db_service, "get_vulnerability_by_id", return_value=vuln
+        ):
+            with patch.object(
+                db_service,
+                "get_vulnerability_dependants",
+                return_value=deps,
+            ):
+                result = db_service.get_blast_radius("CVE-2024-1234")
+        assert len(result["affected_versions"]) == 1
+        assert len(result["graph_nodes"]) > 0
+        assert "defect:CVE-2024-1234" in [n["id"] for n in result["graph_nodes"]]
+
+
+class TestGetPatchPlan:
+    """Tests for get_patch_plan."""
+
+    def test_returns_items_from_frontiers(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """Returns flattened patch plan items."""
+        frontiers = [
+            {"level": 0, "packages": [{"project_name": "lib", "version": "1.0", "purl": "p"}]},
+            {"level": 1, "packages": [{"project_name": "app", "version": "1.0", "purl": "p2"}]},
+        ]
+        with patch.object(
+            db_service,
+            "compute_patch_plan",
+            return_value={"frontiers": frontiers},
+        ):
+            result = db_service.get_patch_plan("CVE-2024-1234")
+        assert len(result) == 2
+        assert result[0]["priority"] == "high"
+        assert result[1]["priority"] == "medium"
+
+
+class TestGetPolicyAnnotations:
+    """Tests for get_policy_annotations."""
+
+    def test_returns_annotations(self, db_service: FalkorDBService) -> None:
+        """Returns list of annotation dicts."""
+        rows = [
+            [
+                "ann-1",
+                "bad",
+                "Known CVE",
+                "admin",
+                "2024-06-01T00:00:00",
+                None,
+                "purl",
+                "proj",
+                "1.0",
+                "",
+            ],
+        ]
+        with patch.object(db_service, "execute_query", return_value=rows):
+            result = db_service.get_policy_annotations()
+        assert len(result) == 1
+        assert result[0]["type"] == "bad"
+        assert result[0]["annotation_id"] == "ann-1"
+
+
+class TestAddPolicyAnnotation:
+    """Tests for add_policy_annotation."""
+
+    def test_returns_none_when_version_not_found(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """Returns None when package not in graph."""
+        with patch.object(db_service, "execute_query", return_value=[]):
+            result = db_service.add_policy_annotation(
+                purl="pkg:maven/no/exist@0.0",
+                annotation_type="bad",
+                justification="reason",
+                created_by="admin",
+            )
+        assert result is None
+
+    def test_returns_annotation_when_success(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """Returns annotation dict when version exists."""
+        with patch.object(db_service, "execute_query", return_value=[[1]]):
+            with patch.object(db_service, "execute_write", return_value=[]):
+                result = db_service.add_policy_annotation(
+                    purl="pkg:maven/org/lib@1.0",
+                    annotation_type="good",
+                    justification="Approved",
+                    created_by="admin",
+                )
+        assert result is not None
+        assert result["purl"] == "pkg:maven/org/lib@1.0"
+        assert result["type"] == "good"
+
+
+class TestRemovePolicyAnnotation:
+    """Tests for remove_policy_annotation."""
+
+    def test_returns_false_when_none_removed(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """Returns False when no annotations to remove."""
+        with patch.object(db_service, "execute_write", return_value=[[0]]):
+            result = db_service.remove_policy_annotation("pkg:maven/org/lib@1.0")
+        assert result is False
+
+    def test_returns_true_when_removed(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """Returns True when at least one annotation removed."""
+        with patch.object(db_service, "execute_write", return_value=[[2]]):
+            result = db_service.remove_policy_annotation("pkg:maven/org/lib@1.0")
+        assert result is True
+
+
+class TestGetSourceRepoImpact:
+    """Tests for get_source_repo_impact."""
+
+    def test_returns_packages_and_graph_data(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """Returns packages, graph_nodes, graph_edges."""
+        pkg_rows = [["proj", "1.0", "purl", 2, 1]]
+        dep_rows = [["app", "1.0", "Application"]]
+        app_rows = [["app", "1.0"]]
+        edge_rows = [["app", "1.0", "proj", "1.0"]]
+        with patch.object(
+            db_service,
+            "execute_query",
+            side_effect=[pkg_rows, dep_rows, app_rows, edge_rows],
+        ):
+            result = db_service.get_source_repo_impact(
+                repo_url="https://github.com/org/repo",
+                max_depth=50,
+                internal_only=False,
+            )
+        assert "packages" in result
+        assert "graph_nodes" in result
+        assert "graph_edges" in result
+        assert len(result["packages"]) == 1
+        assert "stats" in result

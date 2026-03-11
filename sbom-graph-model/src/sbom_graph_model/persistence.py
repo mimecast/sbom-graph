@@ -7,10 +7,11 @@ AppSec data from a FalkorDB graph database.
 
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, LiteralString, Optional, cast
 from falkordb import FalkorDB, Graph
 
-from .model import LicenseRiskCategory, Project, Version, Defect, VersionDefect
+from .model import LicenseRiskCategory, Project, ProjectType, Version, Defect, VersionDefect
 
 logger = logging.getLogger(__name__)
 
@@ -19,20 +20,25 @@ INTERNAL_PREFIX_FIELDS: frozenset[str] = frozenset({"group", "name", "purl"})
 # CycloneDX 1.6 component type taxonomy (used as Cypher node labels).
 # Values are validated against this set before interpolation into queries
 # to prevent Cypher injection via externally-supplied type strings.
-ALLOWED_PROJECT_TYPES: frozenset[str] = frozenset({
-    "Application",
-    "Library",
-    "Framework",
-    "Container",
-    "Platform",
-    "Device",
-    "Firmware",
-    "File",
-    "Machine-Learning-Model",
-    "Data",
-})
+ALLOWED_PROJECT_TYPES: frozenset[str] = frozenset(
+    {
+        "Application",
+        "Library",
+        "Framework",
+        "Container",
+        "Platform",
+        "Device",
+        "Firmware",
+        "File",
+        "Machine-Learning-Model",
+        "Data",
+    }
+)
 
 _SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+
+ALLOWED_SBOM_FORMATS: frozenset[str] = frozenset({"cyclonedx", "spdx"})
+ALLOWED_SBOM_SOURCES: frozenset[str] = frozenset({"webhook", "api_upload", "cli"})
 
 
 class Persistence:
@@ -171,9 +177,7 @@ class Persistence:
                 f"Invalid node label {label!r}: must be one of {sorted(allowed)}"
             )
         if not _SAFE_IDENTIFIER_RE.match(label):
-            raise ValueError(
-                f"Node label {label!r} contains unsafe characters"
-            )
+            raise ValueError(f"Node label {label!r} contains unsafe characters")
         return label
 
     def run_query(
@@ -217,8 +221,8 @@ class Persistence:
         if value is not None:
             params[field_name] = value
             if len(main_fields) > 0:
-                main_fields += ','
-            main_fields += f'{field_name}: ${field_name}'
+                main_fields += ","
+            main_fields += f"{field_name}: ${field_name}"
         return main_fields, params
 
     @staticmethod
@@ -241,11 +245,11 @@ class Persistence:
         """
         if value is not None:
             if len(additional_fields) == 0:
-                additional_fields += 'SET\n\t'
+                additional_fields += "SET\n\t"
             else:
-                additional_fields += ',\n\t'
+                additional_fields += ",\n\t"
             params[field_name] = value
-            additional_fields += f'n.{field_name} = ${field_name}'
+            additional_fields += f"n.{field_name} = ${field_name}"
         return additional_fields, params
 
     @staticmethod
@@ -283,7 +287,7 @@ class Persistence:
                 {additional_fields}
             """
         else:
-            extended_query = ''
+            extended_query = ""
         return extended_query, params
 
     @staticmethod
@@ -296,7 +300,7 @@ class Persistence:
         Returns:
             The purl prefix (everything before the version).
         """
-        return purl.rsplit('@')[0] + '@'
+        return purl.rsplit("@")[0] + "@"
 
     # Node creation methods
 
@@ -317,52 +321,62 @@ class Persistence:
             return
 
         if version.project is None:
-            logger.warning(f"Cannot create project version: project is None for version {version.version}")
+            logger.warning(
+                "Cannot create project version: project is None for version %s",
+                version.version,
+            )
             return
 
         if version.project.purl is None or len(version.project.purl) == 0:
-            logger.debug(f"Version has no purl: {version}")
+            logger.debug("Version has no purl: %s", version)
 
         params: dict[str, Any] = {}
         main_fields = ""
 
         main_fields, params = self._append_to_main_fields(
-            field_name='name',
+            field_name="name",
             value=version.version,
             params=params,
             main_fields=main_fields,
         )
         main_fields, params = self._append_to_main_fields(
-            field_name='project_name',
+            field_name="project_name",
             value=version.project.name if version.project else None,
             params=params,
             main_fields=main_fields,
         )
         main_fields, params = self._append_to_main_fields(
-            field_name='project_group',
+            field_name="project_group",
             value=version.project.group if version.project else None,
             params=params,
             main_fields=main_fields,
         )
 
         name_value_pairs: list[tuple[str, Any]] = [
-            ('app_id', version.project.application_id if version.project else None),
-            ('public_id', version.project.public_app_id if version.project else None),
-            ('type', version.project.type if version.project else None),
-            ('package_url', version.project.purl if version.project else None),
-            ('repo', version.project.repo if version.project else None),
-            ('sbom_format', version.sbom_format),
+            ("app_id", version.project.application_id if version.project else None),
+            ("public_id", version.project.public_app_id if version.project else None),
+            ("type", version.project.type if version.project else None),
+            ("package_url", version.project.purl if version.project else None),
+            ("repo", version.project.repo if version.project else None),
+            ("sbom_format", version.sbom_format),
         ]
 
-        if version.project and version.project.type == 'application':
-            name_value_pairs.append(('scan_id', version.scan_id))
+        if version.project and version.project.type == ProjectType.Application:
+            name_value_pairs.append(("scan_id", version.scan_id))
 
         extended_query, params = self._create_extended_query(
             name_value_pairs=name_value_pairs,
             params=params,
         )
 
-        raw_type = str(version.project.type).title() if version.project and version.project.type else "Library"
+        raw_type = "Library"
+        if version.project and version.project.type is not None:
+            type_val = version.project.type
+            raw_type = (
+                type_val.name
+                if hasattr(type_val, "name")
+                else str(type_val).title()
+            )
         project_type = self._validate_label(raw_type, ALLOWED_PROJECT_TYPES)
 
         internal = version.project is not None and self.is_internal(version.project)
@@ -401,15 +415,19 @@ class Persistence:
             )
             self.run_query(
                 query="""
-                    MATCH (p:Version {name: $version_name, project_name: $project_name, project_group: $project_group})
+                    MATCH (p:Version {
+                        name: $version_name,
+                        project_name: $project_name,
+                        project_group: $project_group
+                    })
                     WHERE NOT $scan_id IN coalesce(p.scan_ids, [])
                     SET p.scan_ids = coalesce(p.scan_ids, []) + [$scan_id]
                 """,
                 params={
-                    'version_name': version.version,
-                    'project_name': version.project.name,
-                    'project_group': version.project.group,
-                    'scan_id': version.scan_id,
+                    "version_name": version.version,
+                    "project_name": version.project.name,
+                    "project_group": version.project.group,
+                    "scan_id": version.scan_id,
                 },
             )
 
@@ -427,18 +445,18 @@ class Persistence:
             logger.warning("Cannot create defect: defect.id is None")
             return
 
-        params = {'id': defect.id}
+        params = {"id": defect.id}
 
         name_value_pairs: list[tuple[str, Any]] = [
-            ('source', defect.source),
-            ('severity', defect.severity),
-            ('cwes', defect.cwes),
-            ('cvss', defect.cvss),
-            ('cvss_string', defect.cvss_string),
-            ('description', defect.description),
-            ('last_enriched_at', defect.last_enriched_at),
-            ('enrichment_source', defect.enrichment_source),
-            ('aliases', defect.aliases if defect.aliases else None),
+            ("source", defect.source),
+            ("severity", defect.severity),
+            ("cwes", defect.cwes),
+            ("cvss", defect.cvss),
+            ("cvss_string", defect.cvss_string),
+            ("description", defect.description),
+            ("last_enriched_at", defect.last_enriched_at),
+            ("enrichment_source", defect.enrichment_source),
+            ("aliases", defect.aliases if defect.aliases else None),
         ]
 
         extended_query, params = self._create_extended_query(
@@ -457,7 +475,9 @@ class Persistence:
             )
             {extended_query}
         """
-        logger.info("Creating Defect node id=%s severity=%s", defect.id, defect.severity)
+        logger.info(
+            "Creating Defect node id=%s severity=%s", defect.id, defect.severity
+        )
         logger.debug("Defect MERGE query: %s | params: %s", query, params)
         self.run_query(query=cast(LiteralString, query), params=params)
 
@@ -502,11 +522,8 @@ class Persistence:
         """Return purls that have never been enriched or are stale.
 
         A package needs enrichment if either:
-        - No Defect linked to it has ``last_enriched_at`` set, or
-        - All linked Defects have ``last_enriched_at`` older than the threshold.
-
-        For packages with no linked defects, they are always included
-        (they may have undiscovered vulnerabilities).
+        - It has no linked Defect with ``last_enriched_at`` set, or
+        - Its most-recent ``last_enriched_at`` is older than the threshold.
 
         Args:
             older_than_hours: Hours after which enrichment is considered stale.
@@ -514,11 +531,19 @@ class Persistence:
         Returns:
             List of package URL strings.
         """
+        cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=older_than_hours)
+        cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
         result = self.run_query(
             query=(
                 "MATCH (v:Version) WHERE v.package_url IS NOT NULL "
-                "RETURN DISTINCT v.package_url AS purl"
+                "OPTIONAL MATCH (v)-[:HAS_DEFECT]->(:VersionDefect)"
+                "-[:IS]->(d:Defect) "
+                "WITH v.package_url AS purl, "
+                "max(d.last_enriched_at) AS latest "
+                "WHERE latest IS NULL OR latest < $cutoff "
+                "RETURN DISTINCT purl"
             ),
+            params={"cutoff": cutoff_str},
         )
         return [row["purl"] for row in result.result_set if row.get("purl")]
 
@@ -546,6 +571,7 @@ class Persistence:
             return
 
         from .model import PolicyType
+
         safe_type = PolicyType.from_str(policy_type)
 
         params: dict[str, Any] = {
@@ -587,7 +613,8 @@ class Persistence:
         if not purl or not annotation_id:
             logger.warning(
                 "Cannot create HAS_POLICY edge: purl=%s annotation_id=%s",
-                purl, annotation_id,
+                purl,
+                annotation_id,
             )
             return
 
@@ -596,8 +623,12 @@ class Persistence:
             MATCH (a:PolicyAnnotation {annotation_id: $annotation_id})
             MERGE (v)-[:HAS_POLICY]->(a)
         """
-        logger.info("Creating HAS_POLICY edge purl=%s -> annotation=%s", purl, annotation_id)
-        self.run_query(query=query, params={"purl": purl, "annotation_id": annotation_id})
+        logger.info(
+            "Creating HAS_POLICY edge purl=%s -> annotation=%s", purl, annotation_id
+        )
+        self.run_query(
+            query=query, params={"purl": purl, "annotation_id": annotation_id}
+        )
 
     def delete_policy_annotation(self, annotation_id: str) -> bool:
         """Delete a PolicyAnnotation and its edges.
@@ -670,7 +701,9 @@ class Persistence:
         """
         if not email or not purl:
             logger.warning(
-                "Cannot create CONTACT_FOR edge: email=%s purl=%s", email, purl,
+                "Cannot create CONTACT_FOR edge: email=%s purl=%s",
+                email,
+                purl,
             )
             return
 
@@ -708,6 +741,7 @@ class Persistence:
             return
 
         from .model import VexStatus
+
         safe_status = VexStatus.from_str(status)
 
         params: dict[str, Any] = {"statement_id": statement_id}
@@ -765,7 +799,9 @@ class Persistence:
             MATCH (d:Defect {id: $defect_id})
             MERGE (s)-[:REFERS_TO]->(d)
         """
-        logger.info("Creating REFERS_TO edge statement=%s -> defect=%s", statement_id, defect_id)
+        logger.info(
+            "Creating REFERS_TO edge statement=%s -> defect=%s", statement_id, defect_id
+        )
         self.run_query(
             query=query,
             params={"statement_id": statement_id, "defect_id": defect_id},
@@ -829,7 +865,8 @@ class Persistence:
         if not purl or not repo_url:
             logger.warning(
                 "Cannot create HAS_SOURCE edge: purl=%s repo_url=%s",
-                purl, repo_url,
+                purl,
+                repo_url,
             )
             return
 
@@ -869,7 +906,11 @@ class Persistence:
 
         if project_group is not None:
             query = """
-                MATCH (v:Version {name: $version_name, project_name: $project_name, project_group: $project_group})
+                MATCH (v:Version {
+                    name: $version_name,
+                    project_name: $project_name,
+                    project_group: $project_group
+                })
                 MATCH (r:SourceRepository {url: $repo_url})
                 MERGE (v)-[:HAS_SOURCE]->(r)
             """
@@ -883,7 +924,9 @@ class Persistence:
 
         logger.info(
             "Creating HAS_SOURCE edge %s/%s -> %s",
-            project_name, version_name, repo_url,
+            project_name,
+            version_name,
+            repo_url,
         )
         self.run_query(query=query, params=params)
 
@@ -901,25 +944,29 @@ class Persistence:
             return
 
         if parent.project is None or child.project is None:
-            logger.warning("Cannot create dependency: parent.project or child.project is None")
+            logger.warning(
+                "Cannot create dependency: parent.project or child.project is None"
+            )
             return
 
         params = {
-            'child_version': child.version,
-            'child_project_name': child.project.name if child.project else None,
-            'parent_version': parent.version,
-            'parent_project_name': parent.project.name if parent.project else None,
+            "child_version": child.version,
+            "child_project_name": child.project.name if child.project else None,
+            "parent_version": parent.version,
+            "parent_project_name": parent.project.name if parent.project else None,
         }
 
         if parent.project.group is None:
             if parent.project.purl is None:
                 logger.warning("Cannot create dependency: parent has no group or purl")
                 return
-            params['parent_purl_prefix'] = self._get_purl_prefix(parent.project.purl)
-            pv = "pv:Version {name: $parent_version, project_name: $parent_project_name}"
+            params["parent_purl_prefix"] = self._get_purl_prefix(parent.project.purl)
+            pv = (
+                "pv:Version {name: $parent_version, project_name: $parent_project_name}"
+            )
             pv_where_clause = "WHERE pv.package_url STARTS WITH $parent_purl_prefix"
         else:
-            params['parent_project_group'] = parent.project.group
+            params["parent_project_group"] = parent.project.group
             pv = """
             pv:Version {
                 name: $parent_version, 
@@ -932,11 +979,11 @@ class Persistence:
             if child.project.purl is None:
                 logger.warning("Cannot create dependency: child has no group or purl")
                 return
-            params['child_purl_prefix'] = self._get_purl_prefix(child.project.purl)
+            params["child_purl_prefix"] = self._get_purl_prefix(child.project.purl)
             cv = "cv:Version {name: $child_version, project_name: $child_project_name}"
             cv_where_clause = "WHERE cv.package_url STARTS WITH $child_purl_prefix"
         else:
-            params['child_project_group'] = child.project.group
+            params["child_project_group"] = child.project.group
             cv = """
             cv:Version {
                 name: $child_version, 
@@ -987,7 +1034,9 @@ class Persistence:
             return
 
         if version_defect.project_version.project is None:
-            logger.warning("Cannot create version_defect: project_version.project is None")
+            logger.warning(
+                "Cannot create version_defect: project_version.project is None"
+            )
             return
 
         if version_defect.defect is None:
@@ -1000,22 +1049,27 @@ class Persistence:
             pv = "pv:Version {name: $version_name, project_name: $project_name}"
             pv_where_clause = "WHERE pv.package_url STARTS WITH $purl_prefix"
         else:
-            pv = "pv:Version {name: $version_name, project_name: $project_name, project_group: $project_group}"
+            pv = (
+                "pv:Version {name: $version_name, project_name: $project_name, "
+                "project_group: $project_group}"
+            )
             pv_where_clause = ""
 
         params = {
-            'version_name': version_defect.project_version.version,
-            'project_name': project.name,
-            'id': version_defect.defect.id,
+            "version_name": version_defect.project_version.version,
+            "project_name": project.name,
+            "id": version_defect.defect.id,
         }
 
         if project.group is None:
             if project.purl is None:
-                logger.warning("Cannot create version_defect: project has no group or purl")
+                logger.warning(
+                    "Cannot create version_defect: project has no group or purl"
+                )
                 return
-            params['purl_prefix'] = self._get_purl_prefix(project.purl)
+            params["purl_prefix"] = self._get_purl_prefix(project.purl)
         else:
-            params['project_group'] = project.group
+            params["project_group"] = project.group
 
         # Safety: pv/where clause are built from hardcoded Cypher fragments
         # with parameterized values — no external identifiers.
@@ -1100,7 +1154,8 @@ class Persistence:
         if not purl or not spdx_id:
             logger.warning(
                 "Cannot create version-license edge: purl=%s spdx_id=%s",
-                purl, spdx_id,
+                purl,
+                spdx_id,
             )
             return
 
@@ -1142,7 +1197,11 @@ class Persistence:
 
         if project_group is not None:
             query = """
-                MATCH (v:Version {name: $version_name, project_name: $project_name, project_group: $project_group})
+                MATCH (v:Version {
+                    name: $version_name,
+                    project_name: $project_name,
+                    project_group: $project_group
+                })
                 MATCH (l:License {spdx_id: $spdx_id})
                 MERGE (v)-[:HAS_LICENSE]->(l)
             """
@@ -1156,7 +1215,9 @@ class Persistence:
 
         logger.info(
             "Creating HAS_LICENSE edge %s/%s -> %s",
-            project_name, version_name, spdx_id,
+            project_name,
+            version_name,
+            spdx_id,
         )
         self.run_query(query=query, params=params)
 
@@ -1179,7 +1240,9 @@ class Persistence:
             """
         )
 
-    def label_projects_with_renovate_usage(self, projects: list[dict[str, Any]]) -> None:
+    def label_projects_with_renovate_usage(
+        self, projects: list[dict[str, Any]]
+    ) -> None:
         """Add Renovate label to projects that use Renovate.
 
         Args:
@@ -1194,8 +1257,8 @@ class Persistence:
                     RETURN node
                 """,
                 params={
-                    "project_name": project['project_name'],
-                    "version": project['name'],
+                    "project_name": project["project_name"],
+                    "version": project["name"],
                 },
             )
 
@@ -1232,7 +1295,9 @@ class Persistence:
             for row in result.result_set
         ]
 
-    def retrieve_all_project_nodes_with_repo_url(self, project_repo: str) -> list[dict[str, Any]]:
+    def retrieve_all_project_nodes_with_repo_url(
+        self, project_repo: str
+    ) -> list[dict[str, Any]]:
         """Retrieve all project nodes with a specific repo URL.
 
         Args:
@@ -1246,9 +1311,9 @@ class Persistence:
                 MATCH (n:Version {repo: $project_repo})
                 RETURN n
             """,
-            params={'project_repo': project_repo},
+            params={"project_repo": project_repo},
         ).result_set
-        return [elem.get('n') for elem in data]
+        return [elem.get("n") for elem in data]
 
     # Centrality methods
 
@@ -1355,7 +1420,7 @@ class Persistence:
         self.run_query(query=cast(LiteralString, query), params=params)
 
     def link_version_to_trust_score(self, purl: str) -> None:
-        """Create a HAS_TRUST_SCORE edge between matching Version nodes and the TrustScore.
+        """Create HAS_TRUST_SCORE edge between Version nodes and TrustScore.
 
         Args:
             purl: The package URL shared by the Version and TrustScore nodes.
@@ -1471,6 +1536,348 @@ class Persistence:
             for row in result.result_set
         ]
 
+    # SBOM Record methods
+
+    def create_sbom_record(
+        self,
+        record_id: str,
+        sbom_format: str,
+        ingested_at: str,
+        source: str,
+        tool_name: str | None = None,
+        tool_version: str | None = None,
+        serial_number: str | None = None,
+        document_hash: str | None = None,
+    ) -> None:
+        """Create or update an SBOMRecord node.
+
+        Uses ``record_id`` as the MERGE key. All fields are set on both
+        ON CREATE and ON MATCH.
+
+        Args:
+            record_id: Unique identifier (UUID).
+            sbom_format: SBOM format ("cyclonedx" or "spdx").
+            ingested_at: ISO timestamp of ingestion.
+            source: Ingestion source ("webhook", "api_upload", "cli").
+            tool_name: Optional tool name (e.g. "trivy", "syft").
+            tool_version: Optional tool version.
+            serial_number: Optional CycloneDX serialNumber.
+            document_hash: Optional SHA-256 hash of the SBOM document.
+        """
+        if not record_id:
+            logger.warning("Cannot create SBOM record: record_id is empty")
+            return
+
+        if sbom_format not in ALLOWED_SBOM_FORMATS:
+            raise ValueError(
+                f"Invalid SBOM format {sbom_format!r}: "
+                f"must be one of {sorted(ALLOWED_SBOM_FORMATS)}"
+            )
+        if source not in ALLOWED_SBOM_SOURCES:
+            raise ValueError(
+                f"Invalid SBOM source {source!r}: "
+                f"must be one of {sorted(ALLOWED_SBOM_SOURCES)}"
+            )
+
+        params: dict[str, Any] = {
+            "record_id": record_id,
+            "format": sbom_format,
+            "ingested_at": ingested_at,
+            "source": source,
+        }
+        opt_sets: list[str] = []
+        if tool_name is not None:
+            params["tool_name"] = tool_name
+            opt_sets.append("n.tool_name = $tool_name")
+        if tool_version is not None:
+            params["tool_version"] = tool_version
+            opt_sets.append("n.tool_version = $tool_version")
+        if serial_number is not None:
+            params["serial_number"] = serial_number
+            opt_sets.append("n.serial_number = $serial_number")
+        if document_hash is not None:
+            params["document_hash"] = document_hash
+            opt_sets.append("n.document_hash = $document_hash")
+
+        extra = ", " + ", ".join(opt_sets) if opt_sets else ""
+        query = f"""
+            MERGE (n:SBOMRecord {{record_id: $record_id}})
+            ON CREATE SET
+                n.format = $format,
+                n.ingested_at = $ingested_at,
+                n.source = $source{extra}
+            ON MATCH SET
+                n.format = $format,
+                n.ingested_at = $ingested_at,
+                n.source = $source{extra}
+        """
+
+        logger.info("Creating SBOMRecord record_id=%s format=%s", record_id, format)
+        self.run_query(query=cast(LiteralString, query), params=params)
+
+    def link_version_to_sbom_record(self, purl: str, record_id: str) -> None:
+        """Create a PRODUCED_BY_SBOM edge from Version to SBOMRecord.
+
+        Args:
+            purl: The package URL of the version.
+            record_id: The SBOM record identifier.
+        """
+        if not purl or not record_id:
+            logger.warning(
+                "Cannot create PRODUCED_BY_SBOM edge: purl=%s record_id=%s",
+                purl,
+                record_id,
+            )
+            return
+
+        query = """
+            MATCH (v:Version {package_url: $purl})
+            MATCH (s:SBOMRecord {record_id: $record_id})
+            MERGE (v)-[:PRODUCED_BY_SBOM]->(s)
+        """
+        logger.info(
+            "Creating PRODUCED_BY_SBOM edge purl=%s -> record=%s", purl, record_id
+        )
+        self.run_query(query=query, params={"purl": purl, "record_id": record_id})
+
+    def link_version_to_sbom_record_by_name(
+        self,
+        project_name: str,
+        project_group: str | None,
+        version_name: str,
+        record_id: str,
+    ) -> None:
+        """Create a PRODUCED_BY_SBOM edge using version identity fields.
+
+        Useful during SBOM ingestion when the purl may not yet be set.
+
+        Args:
+            project_name: The project name.
+            project_group: The project group (may be None).
+            version_name: The version string.
+            record_id: The SBOM record identifier.
+        """
+        if not record_id:
+            return
+
+        params: dict[str, Any] = {
+            "project_name": project_name,
+            "version_name": version_name,
+            "record_id": record_id,
+        }
+
+        if project_group is not None:
+            query = """
+                MATCH (v:Version {
+                    name: $version_name,
+                    project_name: $project_name,
+                    project_group: $project_group
+                })
+                MATCH (s:SBOMRecord {record_id: $record_id})
+                MERGE (v)-[:PRODUCED_BY_SBOM]->(s)
+            """
+            params["project_group"] = project_group
+        else:
+            query = """
+                MATCH (v:Version {name: $version_name, project_name: $project_name})
+                MATCH (s:SBOMRecord {record_id: $record_id})
+                MERGE (v)-[:PRODUCED_BY_SBOM]->(s)
+            """
+
+        logger.info(
+            "Creating PRODUCED_BY_SBOM edge %s/%s -> record=%s",
+            project_name,
+            version_name,
+            record_id,
+        )
+        self.run_query(query=query, params=params)
+
+    def get_sbom_inventory(self) -> list[dict[str, Any]]:
+        """Return all SBOMRecord nodes with metadata and linked version count.
+
+        Returns:
+            List of dicts with record_id, format, ingested_at, source,
+            optional tool fields, and version_count.
+        """
+        result = self.run_query(
+            query="""
+                MATCH (s:SBOMRecord)
+                OPTIONAL MATCH (v:Version)-[:PRODUCED_BY_SBOM]->(s)
+                WITH s,
+                    count(v) AS version_count
+                RETURN s.record_id AS record_id,
+                    s.format AS format,
+                    s.ingested_at AS ingested_at,
+                    s.source AS source,
+                    s.tool_name AS tool_name,
+                    s.tool_version AS tool_version,
+                    s.serial_number AS serial_number,
+                    s.document_hash AS document_hash,
+                    version_count
+            """,
+        )
+        return [
+            {
+                "record_id": row.get("record_id"),
+                "format": row.get("format"),
+                "ingested_at": row.get("ingested_at"),
+                "source": row.get("source"),
+                "tool_name": row.get("tool_name"),
+                "tool_version": row.get("tool_version"),
+                "serial_number": row.get("serial_number"),
+                "document_hash": row.get("document_hash"),
+                "version_count": row.get("version_count", 0),
+            }
+            for row in result.result_set
+        ]
+
+    def get_sbom_coverage(
+        self,
+        recent_days: int = 30,
+    ) -> dict[str, int]:
+        """Return SBOM coverage statistics for projects.
+
+        Args:
+            recent_days: Number of days within which an SBOM is
+                considered "recent". Default 30.
+
+        Returns:
+            Dict with total_projects, with_recent_sbom, with_stale_sbom,
+            with_no_sbom.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=recent_days)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+
+        # Total distinct projects (from Version nodes)
+        total_result = self.run_query(
+            query="""
+                MATCH (v:Version)
+                WHERE v.project_name IS NOT NULL
+                WITH DISTINCT v.project_name, v.project_group
+                RETURN count(*) AS total
+            """,
+        )
+        total = 0
+        if total_result.result_set:
+            total = total_result.result_set[0].get("total", 0) or 0
+
+        # Projects with recent SBOM (any Version linked to SBOMRecord
+        # with ingested_at >= cutoff)
+        recent_result = self.run_query(
+            query="""
+                MATCH (v:Version)-[:PRODUCED_BY_SBOM]->(s:SBOMRecord)
+                WHERE v.project_name IS NOT NULL AND s.ingested_at >= $cutoff
+                WITH DISTINCT v.project_name, v.project_group
+                RETURN count(*) AS cnt
+            """,
+            params={"cutoff": cutoff},
+        )
+        with_recent = 0
+        if recent_result.result_set:
+            with_recent = recent_result.result_set[0].get("cnt", 0) or 0
+
+        # Projects with any SBOM (recent or stale)
+        with_any_result = self.run_query(
+            query="""
+                MATCH (v:Version)-[:PRODUCED_BY_SBOM]->(s:SBOMRecord)
+                WHERE v.project_name IS NOT NULL
+                WITH DISTINCT v.project_name, v.project_group
+                RETURN count(*) AS cnt
+            """,
+        )
+        with_any = 0
+        if with_any_result.result_set:
+            with_any = with_any_result.result_set[0].get("cnt", 0) or 0
+
+        with_stale = with_any - with_recent
+        with_no_sbom = total - with_any
+
+        return {
+            "total_projects": total,
+            "with_recent_sbom": with_recent,
+            "with_stale_sbom": with_stale,
+            "with_no_sbom": with_no_sbom,
+        }
+
+    def get_sbom_record(self, record_id: str) -> dict[str, Any] | None:
+        """Return a single SBOMRecord by record_id with linked version purls.
+
+        Args:
+            record_id: The SBOM record identifier.
+
+        Returns:
+            Dict with record metadata and purls list, or None if not found.
+        """
+        if not record_id:
+            return None
+
+        result = self.run_query(
+            query="""
+                MATCH (s:SBOMRecord {record_id: $record_id})
+                OPTIONAL MATCH (v:Version)-[:PRODUCED_BY_SBOM]->(s)
+                WITH s, collect(DISTINCT v.package_url) AS purl_list
+                RETURN s.record_id AS record_id,
+                    s.format AS format,
+                    s.ingested_at AS ingested_at,
+                    s.source AS source,
+                    s.tool_name AS tool_name,
+                    s.tool_version AS tool_version,
+                    s.serial_number AS serial_number,
+                    s.document_hash AS document_hash,
+                    purl_list
+            """,
+            params={"record_id": record_id},
+        )
+
+        if not result.result_set:
+            return None
+
+        row = result.result_set[0]
+        purl_list = row.get("purl_list") or []
+        purls = [p for p in purl_list if p is not None]
+        return {
+            "record_id": row.get("record_id"),
+            "format": row.get("format"),
+            "ingested_at": row.get("ingested_at"),
+            "source": row.get("source"),
+            "tool_name": row.get("tool_name"),
+            "tool_version": row.get("tool_version"),
+            "serial_number": row.get("serial_number"),
+            "document_hash": row.get("document_hash"),
+            "purls": purls,
+        }
+
+    def link_source_repo_to_trust_score(self, repo_url: str, purl: str) -> None:
+        """Create a HAS_TRUST_SCORE edge from SourceRepository to TrustScore.
+
+        Enables repo-level trust scoring.
+
+        Args:
+            repo_url: The repository URL.
+            purl: The package URL of the TrustScore.
+        """
+        if not repo_url or not purl:
+            logger.warning(
+                "Cannot create SourceRepository HAS_TRUST_SCORE edge: "
+                "repo_url=%s purl=%s",
+                repo_url,
+                purl,
+            )
+            return
+
+        query = """
+            MATCH (r:SourceRepository {url: $repo_url})
+            MATCH (t:TrustScore {purl: $purl})
+            MERGE (r)-[:HAS_TRUST_SCORE]->(t)
+        """
+        logger.info(
+            "Creating HAS_TRUST_SCORE edge repo=%s -> purl=%s",
+            repo_url,
+            purl,
+        )
+        self.run_query(query=query, params={"repo_url": repo_url, "purl": purl})
+
     # Index management
 
     def create_indexes(self) -> None:
@@ -1495,6 +1902,7 @@ class Persistence:
             ("TrustScore", "purl"),
             ("TrustScore", "effective_score"),
             ("TrustScore", "min_path_score"),
+            ("SBOMRecord", "record_id"),
         ]
 
         for label, property_name in index_definitions:
@@ -1503,10 +1911,10 @@ class Persistence:
             query = f"CREATE INDEX FOR (n:{label}) ON (n.{property_name})"
             try:
                 self.run_query(cast(LiteralString, query))
-                logger.info(f"Created index on {label}.{property_name}")
-            except Exception as e:
-                error_msg = str(e).lower()
-                if "already exists" in error_msg or "equivalent index" in error_msg:
-                    logger.debug(f"Index on {label}.{property_name} already exists")
-                else:
-                    logger.warning(f"Failed to create index on {label}.{property_name}: {e}")
+                logger.info("Created index on %s.%s", label, property_name)
+            except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+                logger.debug(
+                    "Index on %s.%s already exists or could not be created",
+                    label,
+                    property_name,
+                )

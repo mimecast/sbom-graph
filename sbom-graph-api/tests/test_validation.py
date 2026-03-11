@@ -22,10 +22,12 @@ from sbom_graph_api.utils.validation import (
     validate_project_group,
     validate_project_name,
     validate_purl,
+    validate_record_id,
     validate_schema_name,
     validate_url,
     validate_username,
     validate_version_name,
+    validate_vex_filter,
 )
 
 
@@ -548,6 +550,36 @@ class TestBuildUrlParams:
         assert "longest_only=false" in result
         assert "latest_only=true" in result
 
+    def test_vex_filter_included_when_not_all(self):
+        result = build_url_params(vex_filter="hide_not_affected")
+        assert "vex_filter=hide_not_affected" in result
+
+    def test_vex_filter_omitted_when_all(self):
+        result = build_url_params(vex_filter="all")
+        assert "vex_filter" not in result
+
+
+class TestValidateVexFilter:
+    """Tests for validate_vex_filter function."""
+
+    def test_default_all(self):
+        assert validate_vex_filter(None) == "all"
+
+    def test_all_valid(self):
+        assert validate_vex_filter("all") == "all"
+
+    def test_hide_not_affected(self):
+        assert validate_vex_filter("hide_not_affected") == "hide_not_affected"
+
+    def test_under_investigation(self):
+        assert validate_vex_filter("under_investigation") == "under_investigation"
+
+    def test_invalid_returns_default(self):
+        assert validate_vex_filter("invalid") == "all"
+
+    def test_case_insensitive(self):
+        assert validate_vex_filter("HIDE_NOT_AFFECTED") == "hide_not_affected"
+
 
 class TestBuildUrlWithParams:
     """Tests for build_url_with_params function."""
@@ -568,6 +600,13 @@ class TestBuildUrlWithParams:
         assert result.startswith("/reports/projects?")
         assert "format=json" in result
         assert "internal_only=true" in result
+
+    def test_with_vex_filter(self):
+        result = build_url_with_params(
+            "/reports/vulnerabilities",
+            vex_filter="under_investigation",
+        )
+        assert "vex_filter=under_investigation" in result
 
 
 class TestValidatePurl:
@@ -708,6 +747,23 @@ class TestValidateAnnotationId:
 
     def test_uuid_without_hyphens_rejected(self):
         assert validate_annotation_id("550e8400e29b41d4a716446655440000") is None
+
+
+class TestValidateRecordId:
+    """Tests for validate_record_id function."""
+
+    def test_valid_uuid(self):
+        expected = "550e8400-e29b-41d4-a716-446655440000"
+        assert validate_record_id(expected) == expected
+
+    def test_empty_returns_none(self):
+        assert validate_record_id("") is None
+
+    def test_none_returns_none(self):
+        assert validate_record_id(None) is None
+
+    def test_not_uuid_format(self):
+        assert validate_record_id("not-a-uuid") is None
 
 
 class TestValidateSchemaName:

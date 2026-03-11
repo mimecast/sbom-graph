@@ -14,6 +14,7 @@ This is the **authoritative, highest-bar governance document** for AI agents acr
 | `sbom-graph-api` | Flask application for REST API, reports, visualisations, and interactive documentation | [`sbom-graph-api/AGENTS.md`](sbom-graph-api/AGENTS.md) |
 | `sbom-graph-enrichment` | Celery-based enrichment pipeline querying OSV, ClearlyDefined, OpenSSF Scorecard, Sonatype OSS Index, and deps.dev | [`sbom-graph-enrichment/AGENTS.md`](sbom-graph-enrichment/AGENTS.md) |
 | `sonatype-lifecycle-release-listener` | Flask microservice receiving SCA webhook events and ingesting SBOMs | [`sonatype-lifecycle-release-listener/AGENTS.md`](sonatype-lifecycle-release-listener/AGENTS.md) |
+| `sbom-graph-cli` | CLI for ingestion, querying, policy annotation, and report export | [`sbom-graph-cli/AGENTS.md`](sbom-graph-cli/AGENTS.md) |
 
 ### Cross-Project Dependencies
 
@@ -24,13 +25,17 @@ sbom-graph-api ──────────────► sbom-graph-model �
        ▼                              │
 sbom-graph-enrichment ────────────────┘
 
-All sub-projects ──► FalkorDB (shared graph database)
+sbom-graph-cli ──────────────► sbom-graph-api (HTTP client)
+
+All sub-projects (except cli) ──► FalkorDB (shared graph database)
 ```
 
 - `sbom-graph-api` depends on `sbom-graph-model` and optionally `sbom-graph-enrichment`
 - `sbom-graph-enrichment` depends on `sbom-graph-model`
 - `sonatype-lifecycle-release-listener` depends on `sbom-graph-model`
-- All sub-projects share FalkorDB as the backing store
+- `sbom-graph-cli` communicates with `sbom-graph-api` via HTTP (no direct model dependency)
+- `sbom-graph-cli` is a standalone CLI that calls the sbom-graph API (no direct FalkorDB dependency)
+- All sub-projects except sbom-graph-cli share FalkorDB as the backing store
 
 ---
 

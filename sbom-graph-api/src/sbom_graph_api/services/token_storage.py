@@ -248,21 +248,9 @@ class TokenStorageService:
                 "token": self._decrypt_token(
                     str(stored.encrypted_token),
                 ),
-                "created_at": (
-                    created.isoformat()
-                    if created is not None
-                    else None
-                ),
-                "expires_at": (
-                    expires.isoformat()
-                    if expires is not None
-                    else None
-                ),
-                "last_used_at": (
-                    last_used.isoformat()
-                    if last_used is not None
-                    else None
-                ),
+                "created_at": (created.isoformat() if created is not None else None),
+                "expires_at": (expires.isoformat() if expires is not None else None),
+                "last_used_at": (last_used.isoformat() if last_used is not None else None),
                 "description": stored.description,
             }
 
@@ -313,31 +301,20 @@ class TokenStorageService:
                 t_created = t.created_at
                 t_expires = t.expires_at
                 t_last_used = t.last_used_at
-                result.append({
-                    "id": t.id,
-                    "token_name": t.token_name,
-                    "created_at": (
-                        t_created.isoformat()
-                        if t_created is not None
-                        else None
-                    ),
-                    "expires_at": (
-                        t_expires.isoformat()
-                        if t_expires is not None
-                        else None
-                    ),
-                    "last_used_at": (
-                        t_last_used.isoformat()
-                        if t_last_used is not None
-                        else None
-                    ),
-                    "description": t.description,
-                    "is_expired": (
-                        t_expires is not None
-                        and t_expires < now
-                    ),
-                    "is_revoked": bool(t.is_revoked),
-                })
+                result.append(
+                    {
+                        "id": t.id,
+                        "token_name": t.token_name,
+                        "created_at": (t_created.isoformat() if t_created is not None else None),
+                        "expires_at": (t_expires.isoformat() if t_expires is not None else None),
+                        "last_used_at": (
+                            t_last_used.isoformat() if t_last_used is not None else None
+                        ),
+                        "description": t.description,
+                        "is_expired": (t_expires is not None and t_expires < now),
+                        "is_revoked": bool(t.is_revoked),
+                    }
+                )
 
             session.close()
             return result
@@ -433,11 +410,7 @@ class TokenStorageService:
             session = self._get_session()
             token_hash = self._hash_token(token)
 
-            stored = (
-                session.query(StoredToken)
-                .filter(StoredToken.token_hash == token_hash)
-                .first()
-            )
+            stored = session.query(StoredToken).filter(StoredToken.token_hash == token_hash).first()
 
             if not stored:
                 session.close()

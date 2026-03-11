@@ -12,7 +12,9 @@ from sbom_graph_api.routes.auth import auth_required
 from sbom_graph_api.schemas.inbound import (
     CONTACT_CREATE_SCHEMA,
     ENRICHMENT_REQUEST_SCHEMA,
+    PATCH_PLAN_EVALUATE_SCHEMA,
     POLICY_ANNOTATION_SCHEMA,
+    VEX_AUTO_STUB_SCHEMA,
 )
 from sbom_graph_api.services.falkordb_service import get_falkordb_service
 from sbom_graph_api.utils.validation import (
@@ -22,23 +24,19 @@ from sbom_graph_api.utils.validation import (
     validate_float_param,
     validate_int_param,
     validate_json_body,
+    validate_purl,
+    validate_record_id,
     validate_url,
 )
 
 bp = Blueprint("api_v1", __name__, url_prefix="/api/v1")
 
 
-_MAX_PURL_LENGTH = 512
-
-
-def _validate_purl(purl: str) -> tuple[Response, int] | None:
-    """Validate a purl path parameter; returns an error response or None."""
-    if not purl:
-        return jsonify({"error": "purl path parameter is required"}), 400
-    if len(purl) > _MAX_PURL_LENGTH:
-        return jsonify({"error": "purl exceeds maximum length"}), 400
-    if not purl.startswith("pkg:"):
-        return jsonify({"error": "purl must start with 'pkg:'"}), 400
+def _purl_error(purl: str) -> tuple[Response, int] | None:
+    """Return 400 if purl is invalid; otherwise None."""
+    validated = validate_purl(purl)
+    if not validated:
+        return jsonify({"error": "Invalid purl"}), 400
     return None
 
 
@@ -50,7 +48,7 @@ def package_licenses(purl: str) -> tuple[Response, int]:
     Returns:
         JSON: ``{purl, licenses: [{spdx_id, name, risk_category, url}]}``.
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
@@ -74,7 +72,7 @@ def package_vulnerabilities(purl: str) -> tuple[Response, int]:
     Query params:
         include_dependencies: "true" to include transitive dep vulns.
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
@@ -236,7 +234,9 @@ def get_patch_plan(defect_id: str) -> tuple[Response, int]:
 
     max_depth = validate_int_param(
         request.args.get("max_depth"),
-        default=10, min_val=1, max_val=50,
+        default=10,
+        min_val=1,
+        max_val=50,
     )
     internal_only = validate_boolean(request.args.get("internal_only"))
 
@@ -262,13 +262,15 @@ def get_blast_radius(purl: str) -> tuple[Response, int]:
         max_depth: Maximum BFS depth (default 10).
         internal_only: "true" to restrict to internal packages.
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
     max_depth = validate_int_param(
         request.args.get("max_depth"),
-        default=10, min_val=1, max_val=50,
+        default=10,
+        min_val=1,
+        max_val=50,
     )
     internal_only = validate_boolean(request.args.get("internal_only"))
 
@@ -341,7 +343,7 @@ def create_contact() -> tuple[Response, int]:
 @auth_required
 def package_vex(purl: str) -> tuple[Response, int]:
     """Return VEX statements for a package's vulnerabilities."""
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
@@ -364,7 +366,7 @@ def check_package_policy(purl: str) -> tuple[Response, int]:
 
     Returns: ``{purl, status: "pass"|"fail"|"hold", annotations: [...]}``.
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
@@ -433,7 +435,7 @@ def package_trust_score(purl: str) -> tuple[Response, int]:
     Returns:
         JSON: full trust score object with all category scores.
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
@@ -454,7 +456,7 @@ def package_risk_path(purl: str) -> tuple[Response, int]:
     Query params:
         limit: Maximum dependencies to return (default 10, max 50).
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
@@ -479,7 +481,7 @@ def application_supply_chain_risk(purl: str) -> tuple[Response, int]:
     Returns:
         JSON: effective_score, min_path_score, dep_count, weakest_links.
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
@@ -526,6 +528,129 @@ def remediation_priorities() -> tuple[Response, int]:
     ), 200
 
 
+@bp.route("/analysis/risk-propagation-impact")
+@auth_required
+def risk_propagation_impact() -> tuple[Response, int]:
+    """What-if simulation: if package X drops to score Y, what apps are impacted?
+
+    Query params:
+        purl: Required. Package URL to simulate.
+        simulated_score: Required. Simulated trust score (0-10).
+
+    Returns:
+        JSON: list of {purl, current_effective, simulated_effective, impact}.
+    """
+    purl = request.args.get("purl", "").strip()
+    err = _purl_error(purl)
+    if err:
+        return err
+
+    if "simulated_score" not in request.args:
+        return jsonify({"error": "simulated_score query parameter is required"}), 400
+
+    simulated_score = validate_float_param(
+        request.args.get("simulated_score"),
+        default=0.0,
+        min_val=0.0,
+        max_val=10.0,
+    )
+
+    service = get_falkordb_service()
+    impacts = service.simulate_risk_propagation(purl, simulated_score)
+
+    return jsonify(
+        {
+            "purl": purl,
+            "simulated_score": simulated_score,
+            "impacts": impacts,
+            "count": len(impacts),
+        }
+    ), 200
+
+
+@bp.route("/sbom/<record_id>")
+@auth_required
+def get_sbom_record(record_id: str) -> tuple[Response, int]:
+    """Return a single SBOM record by ID with linked version purls."""
+    if not validate_record_id(record_id):
+        return jsonify({"error": "Invalid record_id (expected UUID)"}), 400
+
+    service = get_falkordb_service()
+    record = service.get_sbom_record_by_id(record_id)
+
+    if record is None:
+        return jsonify({"error": "SBOM record not found"}), 404
+
+    return jsonify(record), 200
+
+
+@bp.route("/patch-plan/evaluate", methods=["POST"])
+@auth_required
+def evaluate_patch_plan() -> tuple[Response, int]:
+    """Evaluate a proposed dependency update for vulnerability impact.
+
+    Body: {purl, current_version, target_version}.
+    Returns which vulnerabilities are resolved and which are added.
+    """
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+
+    errors = validate_json_body(body, PATCH_PLAN_EVALUATE_SCHEMA)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
+
+    purl = body["purl"]
+    current_version = body["current_version"]
+    target_version = body["target_version"]
+
+    service = get_falkordb_service()
+    result = service.evaluate_patch_plan(
+        purl=purl,
+        current_version=current_version,
+        target_version=target_version,
+    )
+
+    return jsonify(result), 200
+
+
+@bp.route("/vex/auto-stub", methods=["POST"])
+@auth_required
+def vex_auto_stub() -> tuple[Response, int]:
+    """Auto-generate VEX not_affected stubs for packages with vulns but no VEX.
+
+    Body: {purl, justification?}.
+    """
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+
+    errors = validate_json_body(body, VEX_AUTO_STUB_SCHEMA)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
+
+    purl = body["purl"]
+    justification = body.get("justification")
+
+    service = get_falkordb_service()
+    version_exists = service.execute_query(
+        "MATCH (v:Version {package_url: $purl}) RETURN 1 LIMIT 1",
+        {"purl": purl},
+    )
+    if not version_exists:
+        return jsonify({"error": "Package not found in graph"}), 404
+
+    created = service.generate_vex_auto_stubs(purl, justification)
+
+    return jsonify(
+        {
+            "purl": purl,
+            "created": created,
+            "count": len(created),
+        }
+    ), 201
+
+
 @bp.route("/package/<path:purl>/trust-check")
 @auth_required
 def package_trust_check(purl: str) -> tuple[Response, int]:
@@ -538,7 +663,7 @@ def package_trust_check(purl: str) -> tuple[Response, int]:
     Returns:
         JSON: {pass: bool, effective_score, confidence, reason}.
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 

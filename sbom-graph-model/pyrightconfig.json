@@ -1,0 +1,15 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "executionEnvironments": [
+    {
+      "root": "src",
+      "extraPaths": ["src"]
+    }
+  ],
+  "include": ["src", "tests"],
+  "typeCheckingMode": "standard",
+  "reportMissingTypeStubs": false,
+  "reportUnusedImport": true
+}

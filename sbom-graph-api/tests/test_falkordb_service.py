@@ -177,13 +177,33 @@ class TestFalkorDBService:
 
     @patch("sbom_graph_api.services.falkordb_service.FalkorDB")
     def test_get_all_projects(self, mock_falkordb_class, service):
-        """Test get_all_projects returns formatted data."""
+        """Test get_all_projects returns formatted data with licence info."""
         mock_db = MagicMock()
         mock_graph = MagicMock()
         mock_result = MagicMock()
         mock_result.result_set = [
-            ["project-a", "1.0.0"],
-            ["project-b", "2.0.0"],
+            [
+                "project-a",
+                "1.0.0",
+                "pkg:maven/org/project-a@1.0.0",
+                ["MIT"],
+                ["permissive"],
+                None,
+                None,
+                None,
+                None,
+            ],
+            [
+                "project-b",
+                "2.0.0",
+                "pkg:maven/org/project-b@2.0.0",
+                [],
+                [],
+                None,
+                None,
+                None,
+                None,
+            ],
         ]
         mock_graph.ro_query.return_value = mock_result
         mock_db.select_graph.return_value = mock_graph
@@ -192,8 +212,28 @@ class TestFalkorDBService:
         result = service.get_all_projects(limit=100)
 
         assert len(result) == 2
-        assert result[0] == {"project_name": "project-a", "version": "1.0.0"}
-        assert result[1] == {"project_name": "project-b", "version": "2.0.0"}
+        assert result[0] == {
+            "project_name": "project-a",
+            "version": "1.0.0",
+            "package_url": "pkg:maven/org/project-a@1.0.0",
+            "spdx_id": "MIT",
+            "risk_category": "permissive",
+            "source_repo_url": None,
+            "direct_score": None,
+            "effective_score": None,
+            "confidence": None,
+        }
+        assert result[1] == {
+            "project_name": "project-b",
+            "version": "2.0.0",
+            "package_url": "pkg:maven/org/project-b@2.0.0",
+            "spdx_id": "",
+            "risk_category": "",
+            "source_repo_url": None,
+            "direct_score": None,
+            "effective_score": None,
+            "confidence": None,
+        }
 
     @patch("sbom_graph_api.services.falkordb_service.FalkorDB")
     def test_get_all_projects_internal_only(self, mock_falkordb_class, service):
@@ -202,7 +242,17 @@ class TestFalkorDBService:
         mock_graph = MagicMock()
         mock_result = MagicMock()
         mock_result.result_set = [
-            ["acme_corp-lib", "1.0.0"],
+            [
+                "acme_corp-lib",
+                "1.0.0",
+                "pkg:maven/org/acme/lib@1.0.0",
+                ["Apache-2.0"],
+                ["permissive"],
+                None,
+                None,
+                None,
+                None,
+            ],
         ]
         mock_graph.ro_query.return_value = mock_result
         mock_db.select_graph.return_value = mock_graph
@@ -211,6 +261,8 @@ class TestFalkorDBService:
         result = service.get_all_projects(limit=100, internal_only=True)
 
         assert len(result) == 1
+        assert result[0]["project_name"] == "acme_corp-lib"
+        assert result[0]["version"] == "1.0.0"
         # Verify the query uses the configured internal label
         call_args = mock_graph.ro_query.call_args
         query = call_args[0][0]
@@ -355,6 +407,59 @@ class TestFalkorDBService:
         result = service.find_self_dependencies()
 
         assert result == []
+
+    @patch("sbom_graph_api.services.falkordb_service.FalkorDB")
+    def test_get_source_repo_impact(self, mock_falkordb_class, service):
+        """Test get_source_repo_impact returns packages, dependants, and graph."""
+        mock_db = MagicMock()
+        mock_graph = MagicMock()
+
+        # packages, dependants, apps, edges
+        packages_result = MagicMock()
+        packages_result.result_set = [
+            ["foo", "1.0.0", "pkg:maven/org/foo@1.0", 2, 3],
+        ]
+        dep_result = MagicMock()
+        dep_result.result_set = [
+            ["consumer", "1.0.0", "Version"],
+        ]
+        app_result = MagicMock()
+        app_result.result_set = [
+            ["myapp", "2.0.0"],
+        ]
+        edge_result = MagicMock()
+        edge_result.result_set = [
+            ["consumer", "1.0.0", "foo", "1.0.0"],
+        ]
+
+        mock_graph.ro_query.side_effect = [
+            packages_result,
+            dep_result,
+            app_result,
+            edge_result,
+        ]
+        mock_db.select_graph.return_value = mock_graph
+        mock_falkordb_class.return_value = mock_db
+
+        result = service.get_source_repo_impact(
+            repo_url="https://github.com/org/repo",
+            max_depth=10,
+            internal_only=False,
+        )
+
+        assert "packages" in result
+        assert len(result["packages"]) == 1
+        assert result["packages"][0]["project_name"] == "foo"
+        assert result["packages"][0]["direct_dependants"] == 2
+        assert result["packages"][0]["transitive_dependants"] == 3
+        assert "dependants" in result
+        assert len(result["dependants"]) == 1
+        assert result["affected_applications"] == [{"project_name": "myapp", "version": "2.0.0"}]
+        assert result["stats"]["packages_from_repo"] == 1
+        assert result["stats"]["total_downstream_consumers"] == 1
+        assert result["stats"]["affected_applications"] == 1
+        assert "graph_nodes" in result
+        assert "graph_edges" in result
 
 
 class TestServiceSingleton:

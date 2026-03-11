@@ -31,6 +31,15 @@
             <span class="toggle-status" id="toggleStatus">{{ 'Internal Only' if internal_only else 'All projects' }}</span>
         </div>
 
+        <div class="vex-filter-container">
+            <label for="vexFilterSelect" class="toggle-label">VEX:</label>
+            <select id="vexFilterSelect" class="vex-filter-select">
+                <option value="all" {{ 'selected' if (vex_filter|default('all')) == 'all' else '' }}>All</option>
+                <option value="hide_not_affected" {{ 'selected' if (vex_filter|default('all')) == 'hide_not_affected' else '' }}>Hide not_affected</option>
+                <option value="under_investigation" {{ 'selected' if (vex_filter|default('all')) == 'under_investigation' else '' }}>Under investigation only</option>
+            </select>
+        </div>
+
         <div class="download-links">
             {% if excel_url %}
             <a href="{{ excel_url }}" class="download-link" id="excelLink">Download as Excel</a>
@@ -64,13 +73,14 @@
                     <th>CWE</th>
                     <th>Published</th>
                     <th>Last Scanned</th>
+                    <th>VEX Status</th>
                     <th>Affected Versions</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for vuln in vulnerabilities %}
-                <tr>
+                <tr class="{{ 'vex-highlight-under-investigation' if vuln.vex_status == 'under_investigation' else '' }}">
                     <td>
                         <a href="/reports/vulnerability-dependants/{{ vuln.defect_id }}{% if internal_only %}?internal_only=true{% endif %}" class="vuln-link">
                             {{ vuln.defect_id }}
@@ -84,6 +94,12 @@
                     <td>{{ vuln.cwe_id }}</td>
                     <td>{{ vuln.published_date }}</td>
                     <td>{{ vuln.last_enriched_at or '' }}</td>
+                    <td>
+                        {% set vex_status = vuln.vex_status or 'none' %}
+                        <span class="vex-badge vex-{{ vex_status|replace('_', '-') if vex_status != 'none' else 'no-vex' }}">
+                            {{ vuln.vex_status or 'No VEX' }}
+                        </span>
+                    </td>
                     <td>
                         <ul class="affected-versions">
                             {% for affected in vuln.affected_versions %}
@@ -118,6 +134,19 @@
                 currentUrl.searchParams.set('internal_only', 'true');
             } else {
                 currentUrl.searchParams.delete('internal_only');
+            }
+
+            window.location.href = currentUrl.toString();
+        });
+
+        document.getElementById('vexFilterSelect').addEventListener('change', function() {
+            const value = this.value;
+            const currentUrl = new URL(window.location.href);
+
+            if (value === 'all') {
+                currentUrl.searchParams.delete('vex_filter');
+            } else {
+                currentUrl.searchParams.set('vex_filter', value);
             }
 
             window.location.href = currentUrl.toString();

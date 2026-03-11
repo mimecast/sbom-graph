@@ -16,9 +16,10 @@ class TestProjectsReportEndpoint:
         ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = [
-                {"project_name": "project-a", "version": "1.0.0"},
-                {"project_name": "project-b", "version": "2.0.0"},
+                {"project_name": "project-a", "version": "1.0.0", "package_url": None},
+                {"project_name": "project-b", "version": "2.0.0", "package_url": None},
             ]
+            mock_service.get_policy_annotations_for_purls.return_value = {}
             mock_get_service.return_value = mock_service
 
             response = client.get("/reports/projects")
@@ -72,10 +73,11 @@ class TestProjectsReportEndpoint:
         ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = [
-                {"project_name": "project-a", "version": "1.0.0"},
-                {"project_name": "project-a", "version": "2.0.0"},
-                {"project_name": "project-b", "version": "1.0.0"},
+                {"project_name": "project-a", "version": "1.0.0", "package_url": None},
+                {"project_name": "project-a", "version": "2.0.0", "package_url": None},
+                {"project_name": "project-b", "version": "1.0.0", "package_url": None},
             ]
+            mock_service.get_policy_annotations_for_purls.return_value = {}
             mock_get_service.return_value = mock_service
 
             response = client.get("/reports/projects")
@@ -93,6 +95,7 @@ class TestProjectsReportEndpoint:
         ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = []
+            mock_service.get_policy_annotations_for_purls.return_value = {}
             mock_get_service.return_value = mock_service
 
             response = client.get("/reports/projects")
@@ -121,8 +124,9 @@ class TestProjectsReportEndpoint:
         ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = [
-                {"project_name": "acme_corp-lib", "version": "1.0.0"},
+                {"project_name": "acme_corp-lib", "version": "1.0.0", "package_url": None},
             ]
+            mock_service.get_policy_annotations_for_purls.return_value = {}
             mock_get_service.return_value = mock_service
 
             response = client.get("/reports/projects?internal_only=true")
@@ -194,8 +198,7 @@ class TestSnapshotsReportEndpoint:
                 "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
             ) as mock_get_service,
             patch(
-                "sbom_graph_api.routes.reports.dependencies"
-                ".create_snapshot_report_excel"
+                "sbom_graph_api.routes.reports.dependencies.create_snapshot_report_excel"
             ) as mock_export,
         ):
             mock_service = MagicMock()
@@ -285,8 +288,7 @@ class TestSelfDependenciesReportEndpoint:
 
         with (
             patch(
-                "sbom_graph_api.routes.reports.dependencies"
-                ".get_falkordb_service",
+                "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
             ) as mock_get_service,
             patch(
                 "sbom_graph_api.routes.reports.dependencies.create_self_dependency_report_excel"
@@ -402,8 +404,7 @@ class TestMultiVersionDepsReportEndpoint:
                 "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
             ) as mock_get_service,
             patch(
-                "sbom_graph_api.routes.reports.dependencies"
-                ".create_multi_version_deps_excel"
+                "sbom_graph_api.routes.reports.dependencies.create_multi_version_deps_excel"
             ) as mock_export,
         ):
             mock_service = MagicMock()
@@ -526,6 +527,7 @@ class TestInternalOnlyToggle:
         ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = []
+            mock_service.get_policy_annotations_for_purls.return_value = {}
             mock_get_service.return_value = mock_service
 
             response = client.get("/reports/projects")
@@ -542,6 +544,7 @@ class TestInternalOnlyToggle:
         ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = []
+            mock_service.get_policy_annotations_for_purls.return_value = {}
             mock_get_service.return_value = mock_service
 
             response = client.get("/reports/projects")

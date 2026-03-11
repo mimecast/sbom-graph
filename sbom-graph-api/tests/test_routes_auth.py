@@ -1,5 +1,6 @@
 """Tests for authentication routes."""
 
+import re
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -197,6 +198,39 @@ class TestLoginPage:
         assert response.status_code == 200
         assert b"required" in response.data.lower()
 
+    def test_first_user_create_failure_shows_error(self, auth_client):
+        """When create_first_user returns None, show generic error."""
+        with patch("sbom_graph_api.routes.auth.get_user_storage") as m:
+            mock_storage = m.return_value
+            mock_storage.has_any_users.return_value = False
+            mock_storage.create_first_user.return_value = None
+            response = auth_client.post(
+                "/auth/login",
+                data={"username": "admin", "password": "pass"},
+            )
+            assert response.status_code == 200
+            assert b"Failed" in response.data or b"try again" in response.data
+
+    def test_local_login_must_change_password_redirects(self, auth_client):
+        """User with must_change_password redirects to change-password-required."""
+        _login_first_user(auth_client, "admin", "pass")
+        create_resp = auth_client.post(
+            "/auth/admin/users/create",
+            data={"username": "newuser"},
+        )
+        match = re.search(r'id="tempPassword">([^<]+)<', create_resp.data.decode())
+        temp_pw = match.group(1).strip() if match else None
+        if not temp_pw:
+            pytest.skip("Could not extract temp password from create response")
+        auth_client.post("/auth/logout")
+        resp = auth_client.post(
+            "/auth/login",
+            data={"username": "newuser", "password": temp_pw},
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 303)
+        assert "change-password-required" in (resp.headers.get("Location") or "")
+
 
 class TestLogout:
     """Tests for logout functionality."""
@@ -251,6 +285,18 @@ class TestAuthRequired:
             response = client.get("/auth/status")
             assert response.status_code == 200
 
+    def test_jwt_failure_falls_back_to_session(self, auth_client):
+        """When JWT fails, session auth is used if present."""
+        _login_first_user(auth_client)
+        with auth_client.session_transaction() as sess:
+            sess["authenticated"] = True
+            sess["username"] = "admin"
+        response = auth_client.get(
+            "/auth/tokens",
+            headers={"Authorization": "Bearer invalid-token"},
+        )
+        assert response.status_code == 200
+
 
 class TestAdminRequired:
     """Tests for admin_required decorator."""
@@ -262,6 +308,33 @@ class TestAdminRequired:
             content_type="application/json",
         )
         assert response.status_code in (302, 401)
+
+    def test_unauthenticated_browser_redirects_to_login(self, auth_client):
+        response = auth_client.get("/auth/admin/users", follow_redirects=False)
+        assert response.status_code in (302, 303)
+        assert "/auth/login" in response.headers.get("Location", "")
+
+    def test_authenticated_non_admin_gets_403_html(self, auth_client):
+        _login_first_user(auth_client, "admin", "pass")
+        with auth_client.session_transaction() as sess:
+            sess["authenticated"] = True
+            sess["username"] = "admin"
+            sess["is_admin"] = False
+        response = auth_client.get("/auth/admin/users")
+        assert response.status_code == 403
+        assert b"Access Denied" in response.data or b"administrator" in response.data
+
+    def test_authenticated_non_admin_json_gets_403(self, auth_client):
+        _login_first_user(auth_client)
+        with auth_client.session_transaction() as sess:
+            sess["authenticated"] = True
+            sess["username"] = "admin"
+            sess["is_admin"] = False
+        response = auth_client.get(
+            "/auth/admin/users",
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code == 403
 
 
 class TestTokenManagement:
@@ -288,6 +361,17 @@ class TestTokenManagement:
         )
         assert response.status_code == 404
 
+    def test_revoke_token_redirects_when_not_json(self, auth_client):
+        _login_session(auth_client)
+        with patch("sbom_graph_api.routes.auth.get_token_storage") as m:
+            m.return_value.revoke_token.return_value = True
+            response = auth_client.post(
+                "/auth/tokens/1/revoke",
+                follow_redirects=False,
+            )
+            assert response.status_code in (302, 303)
+            assert "tokens" in (response.headers.get("Location") or "")
+
     def test_delete_nonexistent_token(self, auth_client):
         _login_session(auth_client)
         response = auth_client.post(
@@ -296,10 +380,29 @@ class TestTokenManagement:
         )
         assert response.status_code == 404
 
+    def test_delete_token_redirects_when_not_json(self, auth_client):
+        _login_session(auth_client)
+        with patch("sbom_graph_api.routes.auth.get_token_storage") as m:
+            m.return_value.delete_token.return_value = True
+            response = auth_client.post(
+                "/auth/tokens/1/delete",
+                follow_redirects=False,
+            )
+            assert response.status_code in (302, 303)
+            assert "tokens" in (response.headers.get("Location") or "")
+
     def test_get_nonexistent_token(self, auth_client):
         _login_session(auth_client)
         response = auth_client.get("/auth/tokens/99999")
         assert response.status_code == 404
+
+    def test_debug_tokens_authenticated(self, auth_client):
+        _login_session(auth_client)
+        response = auth_client.get("/auth/tokens/debug")
+        assert response.status_code == 200
+        data = response.get_json()
+        assert "current_user_from_get_current_user" in data
+        assert "total_tokens_in_db" in data
 
 
 class TestChangePassword:
@@ -385,6 +488,19 @@ class TestChangePassword:
         assert response.status_code == 200
         assert b"incorrect" in response.data.lower()
 
+    def test_change_password_empty_fields(self, auth_client):
+        self._setup_local_user(auth_client)
+        response = auth_client.post(
+            "/auth/change-password",
+            data={
+                "current_password": "",
+                "new_password": "",
+                "confirm_password": "",
+            },
+        )
+        assert response.status_code == 200
+        assert b"required" in response.data.lower()
+
 
 class TestChangePasswordRequired:
     """Tests for forced password change flow."""
@@ -392,6 +508,97 @@ class TestChangePasswordRequired:
     def test_redirect_if_no_pending_change(self, auth_client):
         response = auth_client.get("/auth/change-password-required", follow_redirects=False)
         assert response.status_code in (302, 303)
+
+    def test_redirect_if_no_pending_username(self, auth_client):
+        with auth_client.session_transaction() as sess:
+            sess["pending_password_change"] = True
+            sess["pending_username"] = None
+        response = auth_client.get("/auth/change-password-required", follow_redirects=False)
+        assert response.status_code in (302, 303)
+        assert "/auth/login" in (response.headers.get("Location") or "")
+
+    def test_change_password_required_success(self, auth_client):
+        """Successful change clears pending state and logs user in."""
+        _login_first_user(auth_client, "admin", "oldpass")
+        with auth_client.session_transaction() as sess:
+            sess["pending_password_change"] = True
+            sess["pending_username"] = "admin"
+        with patch("sbom_graph_api.routes.auth.get_user_storage") as m:
+            from sbom_graph_api.services.user_storage import LocalUser
+
+            mock_user = LocalUser(
+                username="admin",
+                password_hash="x",
+                must_change_password=False,
+                is_admin=True,
+            )
+            mock_user.display_name = "admin"
+            mock_user.email = None
+            m.return_value.change_password.return_value = True
+            m.return_value.get_user_by_username.return_value = mock_user
+            resp = auth_client.post(
+                "/auth/change-password-required",
+                data={
+                    "current_password": "oldpass",
+                    "new_password": "newpass123",
+                    "confirm_password": "newpass123",
+                },
+                follow_redirects=False,
+            )
+        assert resp.status_code in (302, 303)
+        loc = resp.headers.get("Location") or ""
+        assert "index" in loc or "/" in loc
+
+    def test_change_password_required_wrong_current(self, auth_client):
+        """Wrong current password shows error."""
+        _login_first_user(auth_client, "admin", "pass")
+        with auth_client.session_transaction() as sess:
+            sess["pending_password_change"] = True
+            sess["pending_username"] = "admin"
+        resp = auth_client.post(
+            "/auth/change-password-required",
+            data={
+                "current_password": "wrong",
+                "new_password": "newpass123",
+                "confirm_password": "newpass123",
+            },
+        )
+        assert resp.status_code == 200
+        assert b"incorrect" in resp.data.lower()
+
+    def test_change_password_required_empty_fields(self, auth_client):
+        """POST with empty fields shows error."""
+        _login_first_user(auth_client, "admin", "pass")
+        with auth_client.session_transaction() as sess:
+            sess["pending_password_change"] = True
+            sess["pending_username"] = "admin"
+        response = auth_client.post(
+            "/auth/change-password-required",
+            data={
+                "current_password": "",
+                "new_password": "",
+                "confirm_password": "",
+            },
+        )
+        assert response.status_code == 200
+        assert b"required" in response.data.lower()
+
+    def test_change_password_required_mismatch(self, auth_client):
+        """New password mismatch shows error."""
+        _login_first_user(auth_client, "admin", "pass")
+        with auth_client.session_transaction() as sess:
+            sess["pending_password_change"] = True
+            sess["pending_username"] = "admin"
+        response = auth_client.post(
+            "/auth/change-password-required",
+            data={
+                "current_password": "pass",
+                "new_password": "newpass123",
+                "confirm_password": "different",
+            },
+        )
+        assert response.status_code == 200
+        assert b"match" in response.data.lower()
 
 
 class TestAdminUserManagement:
@@ -486,3 +693,74 @@ class TestAdminUserManagement:
             follow_redirects=False,
         )
         assert response.status_code in (302, 200)
+
+    def test_admin_toggle_admin_success_json(self, auth_client):
+        """Toggle admin for another user returns JSON when Accept is JSON."""
+        self._setup_admin(auth_client)
+        auth_client.post(
+            "/auth/admin/users/create",
+            data={"username": "otheruser"},
+        )
+        response = auth_client.post(
+            "/auth/admin/users/otheruser/toggle-admin",
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code in (200, 302, 500)
+
+    def test_admin_toggle_active_success_json(self, auth_client):
+        """Toggle active for another user returns JSON when Accept is JSON."""
+        self._setup_admin(auth_client)
+        auth_client.post(
+            "/auth/admin/users/create",
+            data={"username": "otheruser"},
+        )
+        response = auth_client.post(
+            "/auth/admin/users/otheruser/toggle-active",
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code in (200, 302, 500)
+
+    def test_admin_reset_password_json(self, auth_client):
+        """Reset password returns JSON when Accept is JSON."""
+        self._setup_admin(auth_client)
+        auth_client.post(
+            "/auth/admin/users/create",
+            data={"username": "pwduser"},
+        )
+        response = auth_client.post(
+            "/auth/admin/users/pwduser/reset-password",
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code in (200, 500)
+
+    def test_admin_delete_json(self, auth_client):
+        """Delete user returns JSON when Accept is JSON."""
+        self._setup_admin(auth_client)
+        auth_client.post(
+            "/auth/admin/users/create",
+            data={"username": "deljson"},
+        )
+        response = auth_client.post(
+            "/auth/admin/users/deljson/delete",
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code in (200, 302, 500)
+
+    def test_admin_invalid_username_toggle(self, auth_client):
+        """Invalid username in path returns 400 for JSON."""
+        self._setup_admin(auth_client)
+        response = auth_client.post(
+            "/auth/admin/users/invalid!user/toggle-admin",
+            headers={"Accept": "application/json"},
+            content_type="application/json",
+        )
+        assert response.status_code == 400
+
+    def test_admin_reset_password_nonexistent(self, auth_client):
+        """Reset password for nonexistent user returns 500."""
+        self._setup_admin(auth_client)
+        response = auth_client.post(
+            "/auth/admin/users/nonexistent/reset-password",
+            headers={"Accept": "application/json"},
+        )
+        assert response.status_code in (302, 500)

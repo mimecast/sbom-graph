@@ -8,7 +8,11 @@ import httpx
 import pytest
 
 from sbom_graph_enrichment.certifiers.base import FindingKind
-from sbom_graph_enrichment.certifiers.osv import OSVCertifier
+from sbom_graph_enrichment.certifiers.osv import (
+    OSVCertifier,
+    _extract_severity,
+    _cvss_vector_to_severity,
+)
 from sbom_graph_enrichment.certifiers.license import (
     LicenseCertifier,
     classify_license,
@@ -37,7 +41,12 @@ class TestOSVCertifier:
                     "id": "GHSA-1234-5678-abcd",
                     "summary": "Test vulnerability",
                     "aliases": ["CVE-2024-12345"],
-                    "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"}],
+                    "severity": [
+                        {
+                            "type": "CVSS_V3",
+                            "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+                        }
+                    ],
                 },
                 {
                     "id": "OSV-2024-999",
@@ -53,7 +62,9 @@ class TestOSVCertifier:
         mock_client.post.return_value = mock_response
 
         certifier = OSVCertifier()
-        findings = certifier.enrich("pkg:maven/org.example/lib@1.0.0", client=mock_client)
+        findings = certifier.enrich(
+            "pkg:maven/org.example/lib@1.0.0", client=mock_client
+        )
 
         assert len(findings) == 2
         assert findings[0].kind == FindingKind.VULNERABILITY
@@ -69,9 +80,30 @@ class TestOSVCertifier:
         mock_client.post.return_value = mock_response
 
         certifier = OSVCertifier()
-        findings = certifier.enrich("pkg:maven/org.example/safe@1.0.0", client=mock_client)
+        findings = certifier.enrich(
+            "pkg:maven/org.example/safe@1.0.0", client=mock_client
+        )
 
         assert findings == []
+
+
+class TestOsvExtractSeverity:
+    """Tests for OSV severity extraction helpers."""
+
+    def test_extract_severity_empty_returns_unknown(self) -> None:
+        result = _extract_severity({"severity": []})
+        assert result["severity"] == "unknown"
+
+    def test_extract_severity_no_severity_uses_database_specific(
+        self,
+    ) -> None:
+        result = _extract_severity(
+            {"database_specific": {"severity": "HIGH"}}
+        )
+        assert result["severity"] == "high"
+
+    def test_cvss_vector_to_severity_empty_returns_unknown(self) -> None:
+        assert _cvss_vector_to_severity("") == "unknown"
 
 
 class TestLicenseCertifier:
@@ -93,7 +125,9 @@ class TestLicenseCertifier:
         mock_client.get.return_value = mock_response
 
         certifier = LicenseCertifier()
-        findings = certifier.enrich("pkg:maven/org.apache/commons-lang3@3.12.0", client=mock_client)
+        findings = certifier.enrich(
+            "pkg:maven/org.apache/commons-lang3@3.12.0", client=mock_client
+        )
 
         assert len(findings) == 2
         spdx_ids = {f.data["spdx_id"] for f in findings}
@@ -109,6 +143,25 @@ class TestLicenseCertifier:
         findings = certifier.enrich("pkg:maven/unknown/pkg@0.0.1", client=mock_client)
 
         assert findings == []
+
+    def test_enrich_discovered_only(self) -> None:
+        cd_response = {
+            "licensed": {
+                "declared": None,
+                "discovered": {"expressions": ["Apache-2.0"]},
+            }
+        }
+        mock_response = _mock_response(200, cd_response)
+        mock_client = MagicMock(spec=httpx.Client)
+        mock_client.get.return_value = mock_response
+
+        certifier = LicenseCertifier()
+        findings = certifier.enrich(
+            "pkg:maven/org.apache/commons@1.0", client=mock_client
+        )
+
+        assert len(findings) == 1
+        assert findings[0].data["spdx_id"] == "Apache-2.0"
 
 
 class TestPurlToCoordinates:

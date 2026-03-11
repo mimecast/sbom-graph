@@ -144,7 +144,7 @@ class TestProject:
         assert sample_project.public_app_id == "pub-123"
         assert sample_project.name == "test-project"
         assert sample_project.group == "com.example"
-        assert sample_project.type == "application"
+        assert sample_project.type == ProjectType.Application
         assert sample_project.purl == "pkg:maven/com.example/test-project@1.0.0"
         assert sample_project.repo == "https://gitlab.example.com/test-project"
         assert sample_project.team == "security-team"

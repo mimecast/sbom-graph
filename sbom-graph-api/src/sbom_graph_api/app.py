@@ -13,7 +13,16 @@ from flask_jwt_extended import JWTManager
 from flask_wtf.csrf import CSRFError, CSRFProtect
 
 from sbom_graph_api.config import get_config
-from sbom_graph_api.routes import api_v1, auth, exports, ingest, reports, schemas, visualizations
+from sbom_graph_api.routes import (
+    admin,
+    api_v1,
+    auth,
+    exports,
+    ingest,
+    reports,
+    schemas,
+    visualizations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +81,8 @@ def create_app() -> Flask:
     app.config["JWT_ALGORITHM"] = config.jwt.algorithm
     app.config["JWT_TOKEN_LOCATION"] = config.jwt.token_location
     app.config["JWT_COOKIE_SECURE"] = config.tls.enabled  # Only send cookies over HTTPS
-    app.config["JWT_COOKIE_CSRF_PROTECT"] = False  # Disable CSRF for cookies (session handles CSRF)
+    # CSRF for cookies handled by session; disable JWT-cookie CSRF
+    app.config["JWT_COOKIE_CSRF_PROTECT"] = False
     app.config["JWT_COOKIE_SAMESITE"] = "Lax"
 
     # Session configuration
@@ -111,6 +121,7 @@ def create_app() -> Flask:
     app.config.setdefault("MAX_CONTENT_LENGTH", 50 * 1024 * 1024)
 
     # Register blueprints
+    app.register_blueprint(admin.bp)
     app.register_blueprint(auth.bp)
     app.register_blueprint(visualizations.bp)
     app.register_blueprint(exports.bp)
@@ -130,10 +141,17 @@ def create_app() -> Flask:
 
     @app.after_request
     def _set_security_headers(response: Response) -> Response:
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault(
+            "X-Content-Type-Options", "nosniff"
+        )
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault(
-            "Referrer-Policy", "strict-origin-when-cross-origin"
+            "Referrer-Policy",
+            "strict-origin-when-cross-origin",
+        )
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "geolocation=(), microphone=(), camera=()",
         )
         return response
 
@@ -175,15 +193,6 @@ def create_app() -> Flask:
             is_admin=session.get("is_admin", False),
             ldap_enabled=config.ldap.enabled,
         )
-
-    @app.after_request
-    def set_security_headers(response):
-        """Add security headers to every response."""
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-        return response
 
     @app.errorhandler(CSRFError)
     def handle_csrf_error(e):  # pylint: disable=unused-argument

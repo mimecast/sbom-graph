@@ -9,9 +9,14 @@ from flask import (
 )
 from flask.typing import ResponseReturnValue
 
-from sbom_graph_api.exports.excel import create_generic_excel
+from sbom_graph_api.exports.excel import (
+    create_generic_excel,
+    create_license_dashboard_excel,
+    excel_response,
+)
 from sbom_graph_api.exports.json_format import (
     license_conflicts_json,
+    license_dashboard_json,
     license_summary_json,
     licenses_json,
     policy_violations_json,
@@ -121,10 +126,7 @@ def license_summary_report() -> ResponseReturnValue:
         return (
             jsonify(
                 {
-                    "error": (
-                        "project_name and version_name "
-                        "are required"
-                    ),
+                    "error": ("project_name and version_name are required"),
                 },
             ),
             400,
@@ -163,15 +165,76 @@ def license_summary_report() -> ResponseReturnValue:
 
     return render_template(
         "license_summary.html",
-        title=(
-            "License Summary: "
-            f"{project_name} {version_name}"
-        ),
+        title=(f"License Summary: {project_name} {version_name}"),
         project_name=project_name,
         version_name=version_name,
         summary=summary,
         generated_at=ts(),
         schema_url="/schemas/license-summary",
+    )
+
+
+# ------------------------------------------------------------------
+# License dashboard
+# ------------------------------------------------------------------
+
+
+@bp.route("/license-dashboard")
+@auth_required
+def license_dashboard() -> ResponseReturnValue:
+    """Licence compliance dashboard with counts by risk category.
+
+    Query Parameters:
+        format: 'html', 'json', or 'excel' (default: html)
+        internal_only: Set to 'true' to show only internal-labeled nodes
+
+    Returns:
+        HTML dashboard, JSON, or Excel download.
+    """
+    fmt = validate_format(
+        request.args.get("format", "html"),
+    )
+    internal_only = validate_boolean(
+        request.args.get("internal_only"),
+    )
+
+    service = get_falkordb_service()
+    data = service.get_license_risk_dashboard(internal_only=internal_only)
+
+    if fmt == "json":
+        payload, fn = license_dashboard_json(data, internal_only)
+        return build_json_response(payload, fn)
+
+    if fmt == "excel":
+        buf = create_license_dashboard_excel(data, internal_only)
+        filename = "license_dashboard_internal.xlsx" if internal_only else "license_dashboard.xlsx"
+        return excel_response(buf, filename)
+
+    title = get_internal_title(
+        "License Compliance Dashboard",
+        internal_only,
+    )
+    base_url = "/reports/license-dashboard"
+
+    return Response(
+        render_template(
+            "license_dashboard.html",
+            title=title,
+            internal_only=internal_only,
+            data=data,
+            excel_url=build_url_with_params(
+                base_url,
+                format="excel",
+                internal_only=internal_only,
+            ),
+            json_url=build_url_with_params(
+                base_url,
+                format="json",
+                internal_only=internal_only,
+            ),
+            schema_url="/schemas/license-dashboard",
+        ),
+        mimetype="text/html",
     )
 
 
@@ -290,10 +353,7 @@ def policy_violations() -> ResponseReturnValue:
             ],
             stats={
                 "Total Violations": len(data),
-                "Total Affected Dependants": sum(
-                    v.get("dependant_count", 0)
-                    for v in data
-                ),
+                "Total Affected Dependants": sum(v.get("dependant_count", 0) for v in data),
             },
             excel_url=build_url_with_params(
                 url_for("reports.policy_violations"),
@@ -306,6 +366,7 @@ def policy_violations() -> ResponseReturnValue:
                 internal_only=internal_only,
             ),
             schema_url="/schemas/policy-violations",
+            policy_admin_url=url_for("admin.policy_admin_page"),
         ),
         mimetype="text/html",
     )

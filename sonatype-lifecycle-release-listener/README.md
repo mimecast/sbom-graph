@@ -11,6 +11,9 @@ receives a release scan event, it:
 1. Extracts the application ID and public ID from the message
 2. Uses the `sbom-graph-model` library to fetch the CycloneDX SBOM from SonaType
 3. Ingests the dependency tree and vulnerabilities into FalkorDB
+4. Optionally fetches and processes VEX (Vulnerability Exploitability eXchange)
+   documents via `VexHelper` — best-effort, non-blocking; webhook succeeds even
+   if VEX fetch or processing fails
 
 ## Prerequisites
 

@@ -784,8 +784,8 @@ def admin_create_user() -> ResponseReturnValue:
 
         if not username:
             error = "Username is required"
-        elif len(username) > 255:
-            error = "Username must be 255 characters or less"
+        elif not validate_username(username):
+            error = "Invalid username format"
         else:
             try:
                 user_storage = get_user_storage()
@@ -806,7 +806,10 @@ def admin_create_user() -> ResponseReturnValue:
                 error = "Failed to create user"
             except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.error("Failed to create user: %s", e)
-                error = str(e) if "already exists" in str(e) else "Failed to create user"
+                if "already exists" in str(e):
+                    error = "Username already exists"
+                else:
+                    error = "Failed to create user"
 
     return render_template(
         "admin_create_user.html",

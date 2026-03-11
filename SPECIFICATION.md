@@ -49,6 +49,7 @@ graph LR
         ASM[sbom-graph-model<br/>Python Library]
         CW[sbom-graph-enrichment<br/>Celery Workers]
         CB[sbom-graph-enrichment<br/>Celery Beat]
+        CLI[sbom-graph-cli<br/>Click CLI]
     end
 
     ST -- "Webhook POST<br/>/webhook" --> RL
@@ -59,6 +60,7 @@ graph LR
     ADV -- "uses" --> ASM
     U -- "HTTP<br/>Reports & Visualizations" --> ADV
     CI -- "REST API<br/>Ingest & Gates" --> ADV
+    CLI -- "REST API<br/>Ingest, Query, Export" --> ADV
     CW -- "Cypher<br/>port 6379" --> FDB
     CW -- "task queue<br/>Redis DB 1" --> FDB
     CB -- "beat schedule<br/>Redis DB 1" --> FDB
@@ -150,6 +152,7 @@ A standalone Python library providing domain objects, CycloneDX and SPDX parsing
 | `PointOfContact` | Node | Incident response contact with email, team, slack_channel |
 | `VexStatement` | Node | VEX triage statement with status, justification, impact/action statements |
 | `SourceRepository` | Node | Source code repository with URL, VCS type, namespace, name, tag, commit |
+| `SBOMRecord` | Node | SBOM provenance metadata (record_id, format, tool info, ingested_at, source) |
 
 **Edge classes:**
 
@@ -164,6 +167,7 @@ A standalone Python library providing domain objects, CycloneDX and SPDX parsing
 | `VersionVex` | `HAS_VEX` | Version | VexStatement | Version has VEX statement |
 | `VexRefersTo` | `REFERS_TO` | VexStatement | Defect | VEX statement refers to vulnerability |
 | `VersionSource` | `HAS_SOURCE` | Version | SourceRepository | Version linked to source repo |
+| `ProducedBySBOM` | `PRODUCED_BY_SBOM` | Version | SBOMRecord | Version produced by SBOM ingestion |
 | `HasVersion` | `HAS_VERSION` | Project | Version | Project has version |
 
 **Enums:**
@@ -222,6 +226,8 @@ The `INTERNAL_PREFIXES` environment variable uses the format `field:prefix,field
 | `create_source_repository(repo)` | MERGE a SourceRepository node |
 | `link_version_to_source(purl, repo_url)` | MERGE a HAS_SOURCE edge (by purl) |
 | `link_version_to_source_by_name(...)` | MERGE a HAS_SOURCE edge (by name) |
+| `create_sbom_record(...)` | MERGE an SBOMRecord node (record_id, format, etc.) |
+| `link_version_to_sbom_record(purl, record_id)` | MERGE a PRODUCED_BY_SBOM edge |
 | `update_defect_enrichment(...)` | Update enrichment metadata on Defect |
 | `get_versions_by_purl(purl)` | Retrieve versions matching a package URL |
 | `get_packages_needing_enrichment(...)` | Return purls where enrichment is stale or missing |
@@ -535,6 +541,40 @@ graphName: "acme-corp"
 
 When `falkordb.tls.enabled` is true and `key`/`cert` are empty, an init container generates self-signed certificates.
 
+### 3.6 sbom-graph-cli
+
+A standalone CLI for ingestion, querying, policy annotation, and report export.
+Communicates with sbom-graph-api via HTTP; no direct FalkorDB dependency.
+
+**Package:** `sbom_graph_cli`
+**Version:** 0.1.0
+**Build system:** hatchling
+**Dependencies:** `click`, `httpx`, `rich`
+
+#### 3.6.1 Commands
+
+| Command | Description |
+|--------|-------------|
+| `ingest <file>` | Upload CycloneDX or SPDX SBOM (auto-detects format) |
+| `query vulns <purl>` | List vulnerabilities for a package |
+| `query deps <purl>` | List dependencies (direct and transitive) |
+| `query dependants <purl>` | List dependants (reverse dependencies) |
+| `query patch-plan <defect_id>` | Show patch plan for a vulnerability |
+| `policy annotate <purl> --type bad\|good\|hold` | Create policy annotation (bad/good/hold) |
+| `export <report_name>` | Export report (json/excel) |
+
+#### 3.6.2 Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SBOM_GRAPH_API_URL` | `http://localhost:5000` | Base URL of the sbom-graph API |
+| `SBOM_GRAPH_TOKEN` | (none) | API token for authentication |
+
+#### 3.6.3 CI/CD Integration
+
+- Exit codes: 0 = success, 1 = policy violations, 2 = error.
+- `--output json` for machine-parseable output in pipelines.
+
 ## 4. Graph Database Schema
 
 ### 4.1 Schema Diagram
@@ -550,6 +590,7 @@ graph TD
         VX["VexStatement<br/>─────────────<br/>statement_id, status,<br/>justification,<br/>impact_statement,<br/>action_statement,<br/>source_document,<br/>timestamp"]
         POC["PointOfContact<br/>─────────────<br/>email, team,<br/>slack_channel"]
         SR["SourceRepository<br/>─────────────<br/>url, vcs_type,<br/>namespace, name,<br/>tag, commit"]
+        SB["SBOMRecord<br/>─────────────<br/>record_id, format,<br/>tool_name, tool_version,<br/>ingested_at, source,<br/>document_hash"]
     end
 
     subgraph "Additional Labels on Version"
@@ -567,6 +608,7 @@ graph TD
     V -->|"HAS_POLICY"| P
     V -->|"HAS_VEX"| VX
     V -->|"HAS_SOURCE"| SR
+    V -->|"PRODUCED_BY_SBOM"| SB
     VX -->|"REFERS_TO"| D
     POC -->|"CONTACT_FOR"| V
 
@@ -578,6 +620,7 @@ graph TD
     style VX fill:#1abc9c,color:#fff
     style POC fill:#e67e22,color:#fff
     style SR fill:#34495e,color:#fff
+    style SB fill:#8e44ad,color:#fff
 ```
 
 ### 4.2 Node Details
@@ -699,6 +742,21 @@ Primary label: `Version`. Additional labels are applied based on CycloneDX compo
 | `tag` | string | Release tag |
 | `commit` | string | Commit hash |
 
+#### SBOMRecord Node
+
+**MERGE key:** `(record_id)` -- unique identifier (UUID).
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `record_id` | string | Unique identifier (UUID) |
+| `format` | string | SBOM format ("cyclonedx" or "spdx") |
+| `tool_name` | string | Optional tool that generated the SBOM |
+| `tool_version` | string | Optional tool version |
+| `serial_number` | string | Optional CycloneDX serialNumber |
+| `ingested_at` | string | ISO timestamp of ingestion |
+| `source` | string | Ingestion source ("webhook", "api_upload", "cli") |
+| `document_hash` | string | Optional SHA-256 hash of the SBOM document |
+
 ### 4.3 Relationships
 
 | Relationship | From | To | Properties | Description |
@@ -712,6 +770,7 @@ Primary label: `Version`. Additional labels are applied based on CycloneDX compo
 | `REFERS_TO` | VexStatement | Defect | -- | VEX statement refers to vulnerability |
 | `CONTACT_FOR` | PointOfContact | Version | -- | Contact responsible for version |
 | `HAS_SOURCE` | Version | SourceRepository | -- | Version linked to source repository |
+| `PRODUCED_BY_SBOM` | Version | SBOMRecord | -- | Version produced by SBOM ingestion |
 
 ### 4.4 Indexes
 
@@ -730,31 +789,37 @@ Primary label: `Version`. Additional labels are applied based on CycloneDX compo
 | `PointOfContact` | `email` | Fast contact lookup |
 | `VexStatement` | `statement_id` | Fast VEX lookup |
 | `SourceRepository` | `url` | Fast repository lookup |
+| `SBOMRecord` | `record_id` | Fast SBOM provenance lookup |
 
 ## 5. API Reference
 
 ### 5.1 SBOM Ingestion (`/ingest`)
 
-All ingest endpoints require JWT authentication and are CSRF-exempt.
+All ingest endpoints require JWT authentication and are CSRF-exempt. Both CycloneDX and SPDX formats are supported. **SBOM provenance is tracked**: each successful ingestion creates an SBOM record (document hash, tool info, ingested_at) linked to all ingested versions; the response includes `record_id` for audit trails and provenance lookups.
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/ingest/cyclonedx` | Upload CycloneDX SBOM JSON |
 | `POST` | `/ingest/spdx` | Upload SPDX 2.3 JSON |
-| `POST` | `/ingest/sbom` | Auto-detect format (CycloneDX or SPDX) |
+| `POST` | `/ingest/sbom` | Auto-detect format (CycloneDX or SPDX) and process accordingly |
 | `POST` | `/ingest/vex` | Upload OpenVEX document |
 
 **Request body (CycloneDX/SPDX):** JSON SBOM document wrapped in an envelope validated against the `sbom-upload` JSON Schema (Draft-07). The schema enforces required fields (`sbom`), type constraints, string length limits, and `additionalProperties: false` to prevent mass assignment. The inner SBOM object is validated by the respective format processor. Content-Length limited to prevent DoS.
 
-**Response (CycloneDX):**
+**Response (CycloneDX/SPDX):**
 ```json
 {
   "status": "ok",
-  "components_processed": 142,
-  "dependencies_created": 287,
-  "vulnerabilities_processed": 15
+  "record_id": "550e8400-e29b-41d4-a716-446655440000",
+  "app_id": "a1b2c3...",
+  "public_app_id": "my-application",
+  "projects_count": 42,
+  "dependencies_count": 87,
+  "defects_count": 3
 }
 ```
+
+For SPDX and auto-detect (`/ingest/sbom`), the response also includes `"format": "spdx"` or `"format": "cyclonedx"`.
 
 **Response (VEX):**
 ```json
@@ -800,6 +865,9 @@ All report endpoints support the `format` query parameter (`html`, `excel`, `jso
 | `GET` | `/reports/vulnerability-dependants/{defect_id}` | `max_depth` | Projects affected by a specific vulnerability |
 | `GET` | `/reports/vulnerability-freshness` | -- | Packages with stale/missing enrichment data |
 | `GET` | `/reports/vex-coverage` | -- | VEX coverage percentage and breakdown |
+| `GET` | `/reports/enrichment-coverage` | -- | Enrichment coverage: recent vs stale vs never-scanned |
+| `GET` | `/reports/incident-response/{defect_id}` | `max_depth` | Blast radius and patch plan |
+| `GET` | `/reports/incident-response/{defect_id}/graph` | `max_depth` | Blast radius graph |
 
 #### License Reports
 
@@ -808,6 +876,14 @@ All report endpoints support the `format` query parameter (`html`, `excel`, `jso
 | `GET` | `/reports/licenses` | -- | All licenses grouped by risk category |
 | `GET` | `/reports/license-summary` | `project_name`, `version_name` | License BOM for a project version |
 | `GET` | `/reports/license-conflicts` | -- | Incompatible license combinations in transitive deps |
+| `GET` | `/reports/license-dashboard` | -- | License compliance dashboard by risk category |
+
+#### Trust Score Reports
+
+| Method | Path | Extra Parameters | Description |
+|--------|------|------------------|-------------|
+| `GET` | `/reports/trust-scores` | `limit` | Trust score report (colour-coded) |
+| `GET` | `/reports/trust-score-gaps` | `limit` | Low-confidence trust score packages |
 
 #### Policy & Source Reports
 
@@ -815,6 +891,15 @@ All report endpoints support the `format` query parameter (`html`, `excel`, `jso
 |--------|------|------------------|-------------|
 | `GET` | `/reports/policy-violations` | -- | All "bad" packages still in use with dependant counts |
 | `GET` | `/reports/source-repos` | -- | All tracked source repositories with package counts |
+| `GET` | `/reports/source-impact` | `repo_url` | Source repo impact (affected packages) |
+| `GET` | `/reports/source-impact/graph` | `repo_url` | Source impact graph |
+
+#### SBOM Provenance Reports
+
+| Method | Path | Extra Parameters | Description |
+|--------|------|------------------|-------------|
+| `GET` | `/reports/sbom-inventory` | `search` | SBOM inventory (all records with metadata) |
+| `GET` | `/reports/coverage` | -- | SBOM coverage (fresh/stale/never by project) |
 
 #### PURL Variant Routes
 
@@ -971,6 +1056,18 @@ Available when `AUTH_ENABLED=true`.
 |--------|------|---------|-------------|
 | `GET` | `/health` | both | Liveness probe |
 | `GET` | `/ready` | sbom-graph-api | Readiness probe (verifies FalkorDB connection) |
+
+### 5.9 Admin (`/admin`)
+
+Policy annotation management. Requires authentication; POST and DELETE require admin.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/admin/policies` | Policy admin page (search, filter, list) |
+| `POST` | `/admin/policies` | Add policy annotation (form: purl, type, justification) |
+| `DELETE` | `/admin/policies/<purl>` | Remove policy annotation (AJAX, JSON) |
+
+**Query params (GET):** `search` (PURL/project), `type` (banned/approved/deprecated).
 
 ## 6. Configuration
 

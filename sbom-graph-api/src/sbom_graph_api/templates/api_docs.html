@@ -89,6 +89,7 @@
             <span class="username">{{ username }}</span>
             {% if is_admin %}
             <a href="/auth/admin/users">Manage Users</a>
+            <a href="/admin/policies">Policy Admin</a>
             {% endif %}
             <a href="/auth/tokens">API Tokens</a>
             {% if not ldap_enabled %}
@@ -400,6 +401,23 @@
 
     <div class="endpoint">
         <span class="method">GET</span>
+        <span class="path">/reports/incident-response/{defect_id}</span>
+        <div class="description">Incident response page: blast radius graph and patch plan table for a vulnerability</div>
+        <div class="params">Params: <code>format</code>, <code>max_depth</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>CVE ID:</label><input type="text" id="incident_defect_id" placeholder="e.g., CVE-2021-44228">
+            </div>
+            <div class="form-row">
+                <label>Max Depth:</label><input type="number" id="incident_depth" placeholder="50" min="1" max="100">
+                <label class="checkbox-label"><input type="checkbox" id="incident_internal">Internal Only</label>
+            </div>
+            <button onclick="goToIncidentResponse()">View Incident Response</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
         <span class="path"><a href="/reports/centrality">/reports/centrality</a></span>
         <div class="description">Centrality metrics (inDegree/outDegree) for internal libraries. inDegree = projects depending on this, outDegree = dependencies. Includes drill-down links to visualizations.</div>
         <div class="params">Params: <code>format</code>, <code>sort_by</code>, <code>sort_order</code>, <code>limit</code></div>
@@ -489,6 +507,17 @@
 
     <div class="endpoint">
         <span class="method">GET</span>
+        <span class="path"><a href="/reports/license-dashboard">/reports/license-dashboard</a></span>
+        <div class="description">Licence compliance dashboard with counts by risk category and drill-down to affected packages</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <label class="checkbox-label"><input type="checkbox" id="licdash_internal">Internal Only</label>
+            <button onclick="goToLicenseDashboard()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
         <span class="path"><a href="/reports/license-conflicts">/reports/license-conflicts</a></span>
         <div class="description">Projects mixing incompatible license categories in their dependency tree</div>
         <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
@@ -509,27 +538,28 @@
 
     <div class="section-note">
         These endpoints accept <code>POST</code> requests with JSON bodies. Use <code>Authorization: Bearer &lt;token&gt;</code> for authentication.
+        SBOM ingestion responses include <code>record_id</code> for provenance tracking.
     </div>
 
     <div class="endpoint">
         <span class="method-post">POST</span>
         <span class="path">/ingest/cyclonedx</span>
-        <div class="description">Upload and process a CycloneDX SBOM. Parses components and dependencies into the graph.</div>
-        <div class="body-desc">Body: CycloneDX JSON document. Optional fields: <code>scan_id</code>, <code>application_name</code>, <code>gitlab_project_url</code></div>
+        <div class="description">Upload and process a CycloneDX SBOM. Parses components, dependencies, and defects into the graph. SBOM provenance (document hash, tool info) is stored and linked to ingested versions.</div>
+        <div class="body-desc">Body: <code>{"sbom": &lt;CycloneDX JSON&gt;, "app_id"?: string, "public_app_id"?: string, "project_url"?: string}</code>. Response includes <code>record_id</code> for provenance tracking.</div>
     </div>
 
     <div class="endpoint">
         <span class="method-post">POST</span>
         <span class="path">/ingest/spdx</span>
-        <div class="description">Upload and process an SPDX 2.3 JSON SBOM. Parses packages and relationships into the graph.</div>
-        <div class="body-desc">Body: SPDX 2.3 JSON document. Optional fields: <code>scan_id</code>, <code>application_name</code></div>
+        <div class="description">Upload and process an SPDX 2.3 JSON SBOM. Parses packages, relationships, licenses, source repos, and defects into the graph. SBOM provenance is stored and linked to ingested versions.</div>
+        <div class="body-desc">Body: <code>{"sbom": &lt;SPDX 2.3 JSON&gt;, "app_id"?: string, "public_app_id"?: string, "project_url"?: string}</code>. Response includes <code>record_id</code> and <code>format</code>.</div>
     </div>
 
     <div class="endpoint">
         <span class="method-post">POST</span>
         <span class="path">/ingest/sbom</span>
-        <div class="description">Auto-detect SBOM format (CycloneDX or SPDX) from the document structure and process accordingly</div>
-        <div class="body-desc">Body: CycloneDX or SPDX JSON document. Format is detected automatically.</div>
+        <div class="description">Auto-detect SBOM format (CycloneDX or SPDX) from the document structure and process accordingly. Use when format is unknown or tools may produce either format.</div>
+        <div class="body-desc">Body: <code>{"sbom": &lt;CycloneDX or SPDX JSON&gt;, ...}</code>. Format detected via <code>bomFormat</code>/<code>metadata.component</code> (CycloneDX) or <code>spdxVersion</code> (SPDX). Response includes <code>record_id</code> and <code>format</code>.</div>
     </div>
 
     <div class="endpoint">
@@ -799,6 +829,7 @@
                 <option value="centrality">centrality</option>
                 <option value="licenses">licenses</option>
                 <option value="license-summary">license-summary</option>
+                <option value="license-dashboard">license-dashboard</option>
                 <option value="license-conflicts">license-conflicts</option>
                 <option value="vulnerability-freshness">vulnerability-freshness</option>
                 <option value="policy-violations">policy-violations</option>
@@ -997,6 +1028,16 @@
             window.location.href = buildUrl('/reports/vulnerability-dependants/' + encodeURIComponent(defectId), params);
         }
 
+        function goToIncidentResponse() {
+            const defectId = document.getElementById('incident_defect_id').value;
+            if (!defectId) { alert('Please enter a CVE ID'); return; }
+            const params = {
+                max_depth: document.getElementById('incident_depth').value || null,
+                internal_only: document.getElementById('incident_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/reports/incident-response/' + encodeURIComponent(defectId), params);
+        }
+
         function goToSchema() {
             const schema = document.getElementById('schema_name').value;
             window.location.href = '/schemas/' + schema;
@@ -1031,6 +1072,11 @@
         function goToVexCoverage() {
             const params = { internal_only: document.getElementById('vex_internal').checked ? 'true' : null };
             window.location.href = buildUrl('/reports/vex-coverage', params);
+        }
+
+        function goToLicenseDashboard() {
+            const params = { internal_only: document.getElementById('licdash_internal').checked ? 'true' : null };
+            window.location.href = buildUrl('/reports/license-dashboard', params);
         }
 
         function goToLicenseConflicts() {

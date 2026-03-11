@@ -155,6 +155,8 @@ gunicorn \
 | `GET /visualizations/dependencies/purl/<path:purl>` | Same as above, using purl |
 | `GET /visualizations/dependants-multi/{project_name}/{version}` | Dependants graph with cycle detection and multiple layouts |
 | `GET /visualizations/dependants-multi/purl/<path:purl>` | Same as above, using purl |
+| `GET /api/v1/blast-radius/<path:purl>` | Blast radius visualization for compromised package |
+| `GET /reports/source-impact/graph` | Source impact visualization (affected apps by repo) |
 
 #### Query Parameters for Visualizations
 
@@ -292,13 +294,13 @@ npx ajv validate -s projects.schema.json -d projects.json
 
 ### SBOM Ingestion Endpoints
 
-All ingestion endpoints validate request bodies against JSON Schema (Draft-07) before processing. Validation errors return `400` with a list of human-readable error messages. Schemas enforce `additionalProperties: false` to prevent mass assignment.
+All ingestion endpoints validate request bodies against JSON Schema (Draft-07) before processing. Validation errors return `400` with a list of human-readable error messages. Schemas enforce `additionalProperties: false` to prevent mass assignment. **SBOM provenance is tracked**: each successful ingestion creates an SBOM record linked to the ingested versions; the response includes a `record_id` for provenance tracking and audit trails.
 
 | Endpoint | Description |
 |----------|-------------|
 | `POST /ingest/cyclonedx` | Upload and process a CycloneDX SBOM |
 | `POST /ingest/spdx` | Upload and process an SPDX 2.3 SBOM |
-| `POST /ingest/sbom` | Upload SBOM with automatic format detection |
+| `POST /ingest/sbom` | Upload SBOM with automatic format detection (CycloneDX or SPDX) |
 | `POST /ingest/vex` | Upload an OpenVEX document |
 
 #### POST /ingest/cyclonedx
@@ -306,7 +308,8 @@ All ingestion endpoints validate request bodies against JSON Schema (Draft-07) b
 Accepts a CycloneDX SBOM as a JSON body and persists the parsed projects,
 dependencies, and defects to the graph database via the `sbom-graph-model`
 library. Requires JWT authentication. The request body is validated against the
-`sbom-upload` JSON Schema.
+`sbom-upload` JSON Schema. SBOM provenance (document hash, tool info) is stored
+and linked to all ingested versions.
 
 **Request** (`Content-Type: application/json`):
 
@@ -331,6 +334,7 @@ library. Requires JWT authentication. The request body is validated against the
 ```json
 {
   "status": "ok",
+  "record_id": "550e8400-e29b-41d4-a716-446655440000",
   "app_id": "a1b2c3...",
   "public_app_id": "my-application",
   "projects_count": 42,
@@ -338,6 +342,24 @@ library. Requires JWT authentication. The request body is validated against the
   "defects_count": 3
 }
 ```
+
+The `record_id` uniquely identifies this ingestion for provenance tracking and can be used to trace which SBOM document produced the ingested graph data.
+
+#### POST /ingest/spdx
+
+Accepts an SPDX 2.3 JSON SBOM and persists packages, relationships, licenses, source repositories, and defects to the graph database. Requires JWT authentication. The request body uses the same `sbom-upload` envelope schema as CycloneDX. SBOM provenance is stored and linked to all ingested versions.
+
+**Request** (`Content-Type: application/json`): Same envelope as CycloneDX; the `sbom` field must contain a valid SPDX 2.3 JSON document (e.g., with `spdxVersion`, `packages`, `relationships`).
+
+**Response** (`201 Created`): Same structure as CycloneDX, plus a `format` field set to `"spdx"`. Includes `record_id` for provenance tracking.
+
+#### POST /ingest/sbom
+
+Auto-detects the SBOM format from the document structure and delegates to the appropriate processor. Accepts either CycloneDX (detected via `bomFormat` or `metadata.component`) or SPDX (detected via `spdxVersion`). Use this endpoint when the format is unknown or when integrating with tools that may produce either format. Response includes `record_id` and `format` (the detected format).
+
+**Request** (`Content-Type: application/json`): Same envelope as CycloneDX; the `sbom` field may contain either a CycloneDX or SPDX JSON document.
+
+**Response** (`201 Created`): Same structure as the format-specific endpoints, with `record_id` and `format` (`"cyclonedx"` or `"spdx"`).
 
 **Error Responses**:
 
@@ -515,6 +537,9 @@ When LDAP is disabled, the application uses local user storage:
 
 | Endpoint | Description |
 |----------|-------------|
+| `GET /admin/policies` | Policy annotation admin page (search, filter, add/remove) |
+| `POST /admin/policies` | Add policy annotation (admin only, CSRF protected) |
+| `DELETE /admin/policies/<purl>` | Remove policy annotation (admin only, AJAX) |
 | `GET /auth/admin/users` | User management page |
 | `GET /auth/admin/users/create` | Create new user form |
 | `POST /auth/admin/users/create` | Create new user |
@@ -857,7 +882,7 @@ sbom-graph-api/
 │       ├── wsgi.py             # WSGI entry point
 │       ├── routes/
 │       │   ├── auth.py         # Authentication endpoints
-│       │   ├── ingest.py       # SBOM ingestion (CycloneDX upload)
+│       │   ├── ingest.py       # SBOM ingestion (CycloneDX, SPDX, auto-detect; provenance tracking)
 │       │   ├── visualizations.py
 │       │   ├── exports.py
 │       │   ├── reports.py

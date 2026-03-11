@@ -20,19 +20,20 @@ Strategic Potential and Future Enhancements
 
 The tool also has potential for further enhancements by enriching the graph with additional data points. For example, by incorporating metrics such as the security and quality ratings of libraries, we can enable advanced dependency threat modeling. This will allows you to proactively identify and mitigate risks by replacing less secure libraries with more robust alternatives.
 
-The project is made up of 4 parts:
+The project is made up of 5 parts:
 
 1. **sbom-graph-model** -- A Python library for processing CycloneDX and SPDX files and storing them in a GraphDB
 2. **sbom-graph-api** -- A Flask application for visualizing graph data, ingesting SBOMs (CycloneDX and SPDX) via authenticated API, and providing reports on dependency relationships, vulnerabilities, licenses, policy compliance, and supply-chain trust scores
 3. **sbom-graph-enrichment** -- A Celery-based asynchronous enrichment pipeline that queries external APIs (OSV, ClearlyDefined, OpenSSF Scorecard, Sonatype OSS Index, deps.dev) to enrich package metadata and compute trust scores
 4. **sonatype-lifecycle-release-listener** -- A release listener for SCA scans that retrieves the CycloneDX file and processes it
+5. **sbom-graph-cli** -- Command-line interface for ingestion, querying, policy annotation, and report export (scripting and CI/CD)
 
 For detailed architecture documentation, see [SPECIFICATION.md](SPECIFICATION.md).
 For a full deployment walkthrough (prerequisites, TLS setup, Helm configuration, local and remote Kubernetes), see [GETTING_STARTED.md](GETTING_STARTED.md).
 
 ### Features
 
-- **Multi-Format SBOM Ingestion**: Upload CycloneDX and SPDX 2.3 SBOMs via REST API with automatic format detection; all inbound payloads validated against JSON Schema (Draft-07)
+- **Multi-Format SBOM Ingestion**: Upload CycloneDX and SPDX 2.3 SBOMs via REST API (`POST /ingest/cyclonedx`, `POST /ingest/spdx`, `POST /ingest/sbom` for auto-detect); SBOM provenance tracked with `record_id` in responses; all inbound payloads validated against JSON Schema (Draft-07)
 - **Vulnerability Enrichment**: Continuous enrichment from OSV.dev and Sonatype OSS Index catches new CVEs after ingestion
 - **License Tracking and Compliance**: Licenses extracted from SBOMs and enriched via ClearlyDefined, grouped by risk category (Copyleft, Weak Copyleft, Permissive), with conflict detection
 - **VEX Support**: Ingest OpenVEX documents to communicate whether a vulnerability actually affects a product, with coverage statistics
@@ -64,7 +65,15 @@ For a full deployment walkthrough (prerequisites, TLS setup, Helm configuration,
   - VEX coverage statistics
   - License conflicts (incompatible licenses in same dependency tree)
   - Source repository inventory
+  - Enrichment coverage (recent vs stale vs never-scanned packages)
+  - License dashboard (summary by risk category)
+  - Trust score gaps (packages without trust scores)
+  - Incident response (blast radius and patch plan per vulnerability)
+  - Source impact (affected applications by compromised source repo)
+  - SBOM inventory (ingested SBOM records)
+  - SBOM coverage (provenance coverage per application)
 - **Programmatic API (v1)**: JSON-only endpoints for CI/CD pipelines including package vulnerability lookup, policy checks, trust score gates, and enrichment triggers
+- **CLI Tooling**: `sbom-graph` CLI for ingest, query (vulns, deps, dependants, patch-plan), policy annotate, and report export with `--output json` for pipelines
 - **Interactive UI Features**:
   - Internal Only Toggle across all reports and visualizations
   - Dynamic download links that respect current filter state
@@ -79,6 +88,7 @@ sbom-graph/
 ├── sbom-graph-api/                          # Flask API, reports, and visualizations
 ├── sbom-graph-enrichment/                   # Celery enrichment pipeline (OSV, Scorecard, etc.)
 ├── sonatype-lifecycle-release-listener/     # SCA scan release listener
+├── sbom-graph-cli/                          # CLI for ingest, query, policy, export
 ├── helm/
 │   └── sbom-graph/                          # Umbrella Helm chart for all components
 ├── build-images.sh                          # Docker build script

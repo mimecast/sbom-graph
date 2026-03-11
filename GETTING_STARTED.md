@@ -88,11 +88,12 @@ reference sibling project directories.
 ./build-images.sh
 ```
 
-This builds three things in order:
+This builds four things in order:
 
 1. The `sbom-graph-model` Python wheel
 2. The `sbom-graph-api` Docker image (tagged `sbom-graph-api:latest`)
 3. The `sonatype-lifecycle-release-listener` Docker image (tagged `sonatype-lifecycle-release-listener:latest`)
+4. The `sbom-graph-enrichment` Docker image (tagged `sbom-graph-enrichment:latest`)
 
 #### Custom Tags (for pushing to a registry)
 
@@ -110,6 +111,7 @@ can pull from:
 ```bash
 docker push registry.example.com/sbom-graph-api:v1.0.0
 docker push registry.example.com/sonatype-lifecycle-release-listener:v1.0.0
+docker push registry.example.com/sbom-graph-enrichment:v1.0.0
 ```
 
 #### Local Clusters
@@ -122,6 +124,7 @@ For **minikube**, load images into the minikube VM:
 ```bash
 minikube image load sbom-graph-api:latest
 minikube image load sonatype-lifecycle-release-listener:latest
+minikube image load sbom-graph-enrichment:latest
 ```
 
 For **kind**, load images into the kind cluster:
@@ -129,7 +132,26 @@ For **kind**, load images into the kind cluster:
 ```bash
 kind load docker-image sbom-graph-api:latest
 kind load docker-image sonatype-lifecycle-release-listener:latest
+kind load docker-image sbom-graph-enrichment:latest
 ```
+
+### 3. Install the CLI (Optional)
+
+The `sbom-graph-cli` is a standalone command-line tool for ingestion, querying,
+policy annotation, and report export. Install it for scripting and CI/CD use:
+
+```bash
+uv pip install -e sbom-graph-cli
+```
+
+Verify installation:
+
+```bash
+sbom-graph --help
+```
+
+The CLI communicates with the sbom-graph API via HTTP; it does not require
+direct access to FalkorDB.
 
 ---
 

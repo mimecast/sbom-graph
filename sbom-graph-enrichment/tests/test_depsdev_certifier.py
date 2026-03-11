@@ -10,10 +10,13 @@ from sbom_graph_enrichment.certifiers.base import FindingKind
 from sbom_graph_enrichment.certifiers.depsdev import (
     DepsDevCertifier,
     purl_to_depsdev_params,
+    _fetch_project,
 )
 
 
-def _mock_response(status_code: int, json_data: dict | list | None = None) -> httpx.Response:
+def _mock_response(
+    status_code: int, json_data: dict | list | None = None
+) -> httpx.Response:
     request = httpx.Request("GET", "https://test.example.com")
     return httpx.Response(status_code, json=json_data, request=request)
 
@@ -23,7 +26,11 @@ class TestPurlToDepsdevParams:
 
     def test_maven(self) -> None:
         result = purl_to_depsdev_params("pkg:maven/org.apache/commons@3.12.0")
-        assert result == {"system": "MAVEN", "package": "org.apache:commons", "version": "3.12.0"}
+        assert result == {
+            "system": "MAVEN",
+            "package": "org.apache:commons",
+            "version": "3.12.0",
+        }
 
     def test_npm_unscoped(self) -> None:
         result = purl_to_depsdev_params("pkg:npm/-/lodash@4.17.21")
@@ -31,7 +38,11 @@ class TestPurlToDepsdevParams:
 
     def test_npm_scoped(self) -> None:
         result = purl_to_depsdev_params("pkg:npm/%40angular/core@16.0.0")
-        assert result == {"system": "NPM", "package": "%40angular/core", "version": "16.0.0"}
+        assert result == {
+            "system": "NPM",
+            "package": "%40angular/core",
+            "version": "16.0.0",
+        }
 
     def test_pypi(self) -> None:
         result = purl_to_depsdev_params("pkg:pypi/-/requests@2.31.0")
@@ -39,7 +50,11 @@ class TestPurlToDepsdevParams:
 
     def test_nuget(self) -> None:
         result = purl_to_depsdev_params("pkg:nuget/-/Newtonsoft.Json@13.0.1")
-        assert result == {"system": "NUGET", "package": "Newtonsoft.Json", "version": "13.0.1"}
+        assert result == {
+            "system": "NUGET",
+            "package": "Newtonsoft.Json",
+            "version": "13.0.1",
+        }
 
     def test_cargo(self) -> None:
         result = purl_to_depsdev_params("pkg:cargo/-/serde@1.0.0")
@@ -47,7 +62,11 @@ class TestPurlToDepsdevParams:
 
     def test_golang(self) -> None:
         result = purl_to_depsdev_params("pkg:golang/github.com%2Forg/repo@v1.0.0")
-        assert result == {"system": "GO", "package": "github.com%2Forg/repo", "version": "v1.0.0"}
+        assert result == {
+            "system": "GO",
+            "package": "github.com%2Forg/repo",
+            "version": "v1.0.0",
+        }
 
     def test_unsupported_type(self) -> None:
         assert purl_to_depsdev_params("pkg:deb/debian/curl@7.88.1") is None
@@ -140,3 +159,46 @@ class TestDepsDevCertifier:
 
         assert findings == []
         mock_client.get.assert_not_called()
+
+    @patch("sbom_graph_enrichment.certifiers.depsdev._bucket")
+    def test_enrich_project_fetch_http_error_continues(
+        self, mock_bucket: MagicMock
+    ) -> None:
+        version_response = {
+            "versionKey": {"system": "NPM", "name": "x", "version": "1.0"},
+            "publishedAt": "2020-01-01T00:00:00Z",
+            "licenses": [],
+            "advisoryKeys": [],
+            "links": [
+                {"label": "SOURCE_REPO", "url": "https://github.com/owner/repo"},
+            ],
+        }
+        mock_client = MagicMock(spec=httpx.Client)
+        mock_client.get.side_effect = [
+            _mock_response(200, version_response),
+            httpx.HTTPError("Connection failed"),
+        ]
+
+        certifier = DepsDevCertifier()
+        findings = certifier.enrich("pkg:npm/-/x@1.0", client=mock_client)
+
+        assert len(findings) == 1
+        assert "scorecard_overall" not in findings[0].data
+
+
+class TestFetchProject:
+    """Tests for _fetch_project helper."""
+
+    def test_http_error_returns_none(self) -> None:
+        version_data = {
+            "links": [
+                {"label": "SOURCE_REPO", "url": "https://github.com/a/b"},
+            ],
+        }
+        mock_client = MagicMock(spec=httpx.Client)
+        mock_client.get.side_effect = httpx.HTTPError("timeout")
+
+        with patch("sbom_graph_enrichment.certifiers.depsdev._bucket"):
+            result = _fetch_project(version_data, mock_client)
+
+        assert result is None

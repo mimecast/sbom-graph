@@ -30,12 +30,14 @@ class TestRootPackageExports:
         assert sbom_graph_model.PolicyAnnotation is not None
         assert sbom_graph_model.TrustScore is not None
         assert sbom_graph_model.SourceRepository is not None
+        assert sbom_graph_model.SBOMRecord is not None
 
     def test_exports_edge_classes(self):
         assert sbom_graph_model.VersionDefect is not None
         assert sbom_graph_model.VersionPolicy is not None
         assert sbom_graph_model.VersionSource is not None
         assert sbom_graph_model.HasTrustScore is not None
+        assert sbom_graph_model.ProducedBySBOM is not None
         assert sbom_graph_model.DependencyVersion is not None
         assert sbom_graph_model.HasVersion is not None
 
@@ -49,17 +51,36 @@ class TestRootPackageExports:
 
     def test_all_list_complete(self):
         expected = {
-            "RiskStatus", "DefectType", "ProjectType",
-            "LicenseRiskCategory", "PolicyType", "VexStatus",
-            "Version", "Project", "Defect", "License",
-            "PolicyAnnotation", "PointOfContact", "VexStatement",
-            "TrustScore", "SourceRepository",
-            "VersionDefect", "VersionLicense", "VersionPolicy",
-            "VersionSource", "HasTrustScore", "ContactFor",
-            "VersionVex", "VexRefersTo",
-            "DependencyVersion", "HasVersion",
+            "RiskStatus",
+            "DefectType",
+            "ProjectType",
+            "LicenseRiskCategory",
+            "PolicyType",
+            "VexStatus",
+            "Version",
+            "Project",
+            "Defect",
+            "License",
+            "PolicyAnnotation",
+            "PointOfContact",
+            "VexStatement",
+            "TrustScore",
+            "SourceRepository",
+            "SBOMRecord",
+            "VersionDefect",
+            "VersionLicense",
+            "VersionPolicy",
+            "VersionSource",
+            "HasTrustScore",
+            "ProducedBySBOM",
+            "ContactFor",
+            "VersionVex",
+            "VexRefersTo",
+            "DependencyVersion",
+            "HasVersion",
             "Persistence",
-            "KNOWN_GIT_HOSTS", "is_known_git_host",
+            "KNOWN_GIT_HOSTS",
+            "is_known_git_host",
             "parse_repo_url",
         }
         assert set(sbom_graph_model.__all__) == expected

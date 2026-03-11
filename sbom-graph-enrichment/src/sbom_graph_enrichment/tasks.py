@@ -40,7 +40,9 @@ _CERTIFIERS: dict[str, type] = {
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def enrich_package(self: Any, purl: str, sources: list[str] | None = None) -> dict[str, Any]:
+def enrich_package(
+    self: Any, purl: str, sources: list[str] | None = None
+) -> dict[str, Any]:
     """Enrich a single package identified by *purl*.
 
     Args:
@@ -104,11 +106,18 @@ def enrich_all_packages(sources: list[str] | None = None) -> dict[str, int]:
     """
     persistence = create_persistence()
     result = persistence.run_query(
-        query="MATCH (v:Version) WHERE v.package_url IS NOT NULL RETURN DISTINCT v.package_url AS purl"
+        query=(
+            "MATCH (v:Version) WHERE v.package_url IS NOT NULL "
+            "RETURN DISTINCT v.package_url AS purl"
+        )
     )
     purls: list[str] = [row["purl"] for row in result.result_set if row.get("purl")]
 
-    logger.info("Dispatching enrichment for %d packages in batches of %d", len(purls), _DISPATCH_BATCH_SIZE)
+    logger.info(
+        "Dispatching enrichment for %d packages in batches of %d",
+        len(purls),
+        _DISPATCH_BATCH_SIZE,
+    )
     for i in range(0, len(purls), _DISPATCH_BATCH_SIZE):
         batch = purls[i : i + _DISPATCH_BATCH_SIZE]
         for purl in batch:
@@ -174,7 +183,9 @@ _TRUST_SCORE_ENABLED = os.environ.get("TRUST_SCORE_ENABLED", "true").lower() == 
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=120)
-def compute_trust_score(self: Any, purl: str, findings_data: list[dict[str, Any]]) -> dict[str, Any]:
+def compute_trust_score(  # pylint: disable=unused-argument
+    self: Any, purl: str, findings_data: list[dict[str, Any]]
+) -> dict[str, Any]:
     """Compute and persist the direct trust score for a single PURL.
 
     Called after :func:`enrich_package` completes.  Receives serialised
@@ -283,7 +294,7 @@ def _propagate(
     children: dict[str, list[str]],
     alpha: float,
     decay: float,
-    max_depth: int,
+    max_depth: int,  # noqa: ARG001  # pylint: disable=unused-argument
 ) -> tuple[dict[str, float], dict[str, float], dict[str, float], dict[str, int]]:
     """Bottom-up propagation of inherited risk.
 

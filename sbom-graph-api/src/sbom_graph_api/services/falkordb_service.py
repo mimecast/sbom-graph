@@ -230,24 +230,67 @@ class FalkorDBService:
     def get_all_projects(
         self, limit: int = 1000, internal_only: bool = False
     ) -> list[dict[str, Any]]:
-        """Get all projects with their versions.
+        """Get all projects with their versions and licence info.
 
         Args:
             limit: Maximum number of results
             internal_only: If True, only include internal-labeled nodes
 
         Returns:
-            List of project/version dicts
+            List of project/version dicts with optional spdx_id and
+            risk_category (aggregated from linked License nodes)
         """
         node_label = self.get_node_label(internal_only)
         query = f"""
             MATCH (v:{node_label})
-            RETURN DISTINCT v.project_name as project_name, v.name as version
-            ORDER BY v.project_name, v.name
+            OPTIONAL MATCH (v)-[:HAS_LICENSE]->(l:License)
+            OPTIONAL MATCH (v)-[:HAS_SOURCE]->(r:SourceRepository)
+            OPTIONAL MATCH (v)-[:HAS_TRUST_SCORE]->(t:TrustScore)
+            WITH v.project_name AS project_name,
+                 v.name AS version,
+                 v.package_url AS package_url,
+                 collect(DISTINCT l.spdx_id) AS spdx_ids,
+                 collect(DISTINCT l.risk_category) AS risk_categories,
+                 head(collect(DISTINCT r.url)) AS source_repo_url,
+                 head(collect(t.direct_score)) AS direct_score,
+                 head(collect(t.effective_score)) AS effective_score,
+                 head(collect(t.confidence)) AS confidence
+            RETURN project_name, version, package_url, spdx_ids,
+                   risk_categories, source_repo_url,
+                   direct_score, effective_score, confidence
+            ORDER BY project_name, version
             LIMIT $limit
         """
         result = self.execute_query(query, {"limit": limit})
-        return [{"project_name": row[0], "version": row[1]} for row in result]
+        rows: list[dict[str, Any]] = []
+        for row in result:
+            spdx_ids = [x for x in (row[3] or []) if x]
+            risk_cats = [x for x in (row[4] or []) if x]
+            spdx_id = ", ".join(sorted(set(spdx_ids))) if spdx_ids else ""
+            risk_category = self._worst_license_risk(risk_cats) if risk_cats else ""
+            direct_score = row[6]
+            effective_score = row[7]
+            confidence = row[8]
+            if isinstance(direct_score, list):
+                direct_score = direct_score[0] if direct_score else None
+            if isinstance(effective_score, list):
+                effective_score = effective_score[0] if effective_score else None
+            if isinstance(confidence, list):
+                confidence = confidence[0] if confidence else None
+            rows.append(
+                {
+                    "project_name": row[0],
+                    "version": row[1],
+                    "package_url": row[2],
+                    "spdx_id": spdx_id,
+                    "risk_category": risk_category,
+                    "source_repo_url": row[5] if row[5] else None,
+                    "direct_score": direct_score,
+                    "effective_score": effective_score,
+                    "confidence": confidence,
+                }
+            )
+        return rows
 
     def get_all_applications(
         self,
@@ -275,20 +318,43 @@ class FalkorDBService:
 
         query = f"""
             MATCH (app:{label_filter})
-            RETURN DISTINCT app.project_name as project_name,
-                   app.name as version,
-                   app.scan_id as scan_id,
-                   app.app_id as app_id,
-                   app.public_id as public_id,
-                   app.repo_url as repo_url,
-                   labels(app) as labels
-            ORDER BY app.project_name, app.name
+            OPTIONAL MATCH (app)-[:HAS_LICENSE]->(l:License)
+            OPTIONAL MATCH (app)-[:HAS_TRUST_SCORE]->(t:TrustScore)
+            WITH app.project_name AS project_name,
+                 app.name AS version,
+                 app.scan_id AS scan_id,
+                 app.app_id AS app_id,
+                 app.public_id AS public_id,
+                 app.repo_url AS repo_url,
+                 labels(app) AS labels,
+                 collect(DISTINCT l.spdx_id) AS spdx_ids,
+                 collect(DISTINCT l.risk_category) AS risk_categories,
+                 head(collect(t.direct_score)) AS direct_score,
+                 head(collect(t.effective_score)) AS effective_score,
+                 head(collect(t.confidence)) AS confidence
+            RETURN project_name, version, scan_id, app_id, public_id,
+                   repo_url, labels, spdx_ids, risk_categories,
+                   direct_score, effective_score, confidence
+            ORDER BY project_name, version
             LIMIT $limit
         """
         result = self.execute_query(query, {"limit": limit})
 
         applications = []
         for row in result:
+            spdx_ids = [x for x in (row[7] or []) if x]
+            risk_cats = [x for x in (row[8] or []) if x]
+            spdx_id = ", ".join(sorted(set(spdx_ids))) if spdx_ids else ""
+            risk_category = self._worst_license_risk(risk_cats) if risk_cats else ""
+            direct_score = row[9]
+            effective_score = row[10]
+            confidence = row[11]
+            if isinstance(direct_score, list):
+                direct_score = direct_score[0] if direct_score else None
+            if isinstance(effective_score, list):
+                effective_score = effective_score[0] if effective_score else None
+            if isinstance(confidence, list):
+                confidence = confidence[0] if confidence else None
             applications.append(
                 {
                     "project_name": row[0],
@@ -299,6 +365,11 @@ class FalkorDBService:
                     "repo_url": row[5],
                     "labels": row[6] if row[6] else [],
                     "is_internal": self.internal_label in (row[6] or []),
+                    "spdx_id": spdx_id,
+                    "risk_category": risk_category,
+                    "direct_score": direct_score,
+                    "effective_score": effective_score,
+                    "confidence": confidence,
                 }
             )
 
@@ -1987,35 +2058,47 @@ class FalkorDBService:
         return list(nodes_dict.values()), edges
 
     def get_all_vulnerabilities(self, internal_only: bool = False) -> list[dict[str, Any]]:
-        """Get all vulnerabilities with their affected versions.
+        """Get all vulnerabilities with their affected versions and VEX status.
+
+        Includes vex_status (most recent VEX statement status, or null) per
+        vulnerability via OPTIONAL MATCH to VexStatement nodes.
 
         Args:
             internal_only: If True, only include vulnerabilities affecting
                           internal-labeled nodes
 
         Returns:
-            List of vulnerability dicts with severity, affected versions, etc.
+            List of vulnerability dicts with severity, affected versions,
+            vex_status, etc.
         """
         if internal_only:
             query = f"""
                 MATCH (v:{self.internal_label})-[:VERSION_DEFECT]->(d:Defect)
-                RETURN DISTINCT COALESCE(d.defect_id, d.id) as defect_id,
-                       COALESCE(d.title, d.description) as title,
-                       d.description as description,
-                       d.severity as severity,
-                       COALESCE(d.cvss_score, d.cvss) as cvss_score,
-                       d.cwe_id as cwe_id,
-                       d.published_date as published_date,
-                       d.last_enriched_at as last_enriched_at,
-                       d.aliases as aliases,
-                       d.enrichment_source as enrichment_source,
-                       collect(DISTINCT {{
-                           project_name: v.project_name,
-                           version: v.name,
-                           project_group: v.project_group
-                       }}) as affected_versions
+                OPTIONAL MATCH (v)-[:HAS_VEX]->(s:VexStatement)-[:REFERS_TO]->(d)
+                WITH d,
+                     collect(DISTINCT {{
+                         project_name: v.project_name,
+                         version: v.name,
+                         project_group: v.project_group
+                     }}) AS affected_versions,
+                     collect(DISTINCT {{
+                         status: s.status,
+                         timestamp: s.timestamp
+                     }}) AS vex_statements
+                RETURN COALESCE(d.defect_id, d.id) AS defect_id,
+                       COALESCE(d.title, d.description) AS title,
+                       d.description AS description,
+                       d.severity AS severity,
+                       COALESCE(d.cvss_score, d.cvss) AS cvss_score,
+                       d.cwe_id AS cwe_id,
+                       d.published_date AS published_date,
+                       d.last_enriched_at AS last_enriched_at,
+                       d.aliases AS aliases,
+                       d.enrichment_source AS enrichment_source,
+                       affected_versions,
+                       vex_statements
                 ORDER BY
-                    CASE severity
+                    CASE d.severity
                         WHEN 'CRITICAL' THEN 1
                         WHEN 'critical' THEN 1
                         WHEN 'HIGH' THEN 2
@@ -2026,28 +2109,36 @@ class FalkorDBService:
                         WHEN 'low' THEN 4
                         ELSE 5
                     END,
-                    COALESCE(cvss_score, 0) DESC
+                    COALESCE(d.cvss_score, d.cvss) DESC
             """
         else:
             query = """
                 MATCH (v:Version)-[:VERSION_DEFECT]->(d:Defect)
-                RETURN DISTINCT COALESCE(d.defect_id, d.id) as defect_id,
-                       COALESCE(d.title, d.description) as title,
-                       d.description as description,
-                       d.severity as severity,
-                       COALESCE(d.cvss_score, d.cvss) as cvss_score,
-                       d.cwe_id as cwe_id,
-                       d.published_date as published_date,
-                       d.last_enriched_at as last_enriched_at,
-                       d.aliases as aliases,
-                       d.enrichment_source as enrichment_source,
-                       collect(DISTINCT {
-                           project_name: v.project_name,
-                           version: v.name,
-                           project_group: v.project_group
-                       }) as affected_versions
+                OPTIONAL MATCH (v)-[:HAS_VEX]->(s:VexStatement)-[:REFERS_TO]->(d)
+                WITH d,
+                     collect(DISTINCT {
+                         project_name: v.project_name,
+                         version: v.name,
+                         project_group: v.project_group
+                     }) AS affected_versions,
+                     collect(DISTINCT {
+                         status: s.status,
+                         timestamp: s.timestamp
+                     }) AS vex_statements
+                RETURN COALESCE(d.defect_id, d.id) AS defect_id,
+                       COALESCE(d.title, d.description) AS title,
+                       d.description AS description,
+                       d.severity AS severity,
+                       COALESCE(d.cvss_score, d.cvss) AS cvss_score,
+                       d.cwe_id AS cwe_id,
+                       d.published_date AS published_date,
+                       d.last_enriched_at AS last_enriched_at,
+                       d.aliases AS aliases,
+                       d.enrichment_source AS enrichment_source,
+                       affected_versions,
+                       vex_statements
                 ORDER BY
-                    CASE severity
+                    CASE d.severity
                         WHEN 'CRITICAL' THEN 1
                         WHEN 'critical' THEN 1
                         WHEN 'HIGH' THEN 2
@@ -2058,13 +2149,16 @@ class FalkorDBService:
                         WHEN 'low' THEN 4
                         ELSE 5
                     END,
-                    COALESCE(cvss_score, 0) DESC
+                    COALESCE(d.cvss_score, d.cvss) DESC
             """
 
         result = self.execute_query(query, {})
 
         vulnerabilities = []
         for row in result:
+            vex_statements = row[11] or []
+            vex_status = self._latest_vex_status(vex_statements)
+
             vulnerabilities.append(
                 {
                     "defect_id": row[0],
@@ -2078,10 +2172,37 @@ class FalkorDBService:
                     "aliases": row[8] or [],
                     "enrichment_source": row[9],
                     "affected_versions": row[10] if row[10] else [],
+                    "vex_status": vex_status,
                 }
             )
 
         return vulnerabilities
+
+    def _latest_vex_status(
+        self,
+        vex_statements: list[dict[str, Any]],
+    ) -> str | None:
+        """Extract status from the most recent VEX statement.
+
+        Args:
+            vex_statements: List of dicts with status and timestamp keys
+
+        Returns:
+            Status string or None if no valid statements
+        """
+        valid = [
+            s for s in vex_statements if s and s.get("status") and isinstance(s.get("status"), str)
+        ]
+        if not valid:
+            return None
+
+        # Sort by timestamp descending; null timestamps go last
+        def _sort_key(s: dict[str, Any]) -> tuple[int, str]:
+            ts = s.get("timestamp")
+            return (0 if ts else 1, str(ts) if ts else "")
+
+        sorted_stmts = sorted(valid, key=_sort_key, reverse=True)
+        return sorted_stmts[0].get("status")
 
     def get_vulnerability_by_id(
         self, defect_id: str, internal_only: bool = False
@@ -2214,6 +2335,7 @@ class FalkorDBService:
                         "version": dep["version"],
                         "partition": partition,
                         "is_internal": is_internal,
+                        "labels": labels,
                         "affected_by": [
                             {
                                 "project_name": project_name,
@@ -2307,6 +2429,30 @@ class FalkorDBService:
         return centrality_data
 
     # ---- License queries ----
+
+    @staticmethod
+    def _worst_license_risk(categories: list[str]) -> str:
+        """Return the highest-risk category from a list.
+
+        Order (worst first): strong_copyleft > weak_copyleft > proprietary
+        > permissive > unknown.
+        """
+        order = {
+            "strong_copyleft": 0,
+            "weak_copyleft": 1,
+            "proprietary": 2,
+            "permissive": 3,
+            "unknown": 4,
+        }
+        worst = "unknown"
+        worst_rank = 5
+        for cat in categories:
+            c = (cat or "").lower().strip()
+            rank = order.get(c, 5)
+            if rank < worst_rank:
+                worst_rank = rank
+                worst = c or "unknown"
+        return worst
 
     def get_all_licenses(self, internal_only: bool = True) -> list[dict[str, Any]]:
         """Return all licenses with their usage counts.
@@ -2597,6 +2743,77 @@ class FalkorDBService:
         conflicts.sort(key=lambda c: c["project_name"])
         return conflicts
 
+    def get_license_risk_dashboard(self, internal_only: bool = False) -> dict[str, Any]:
+        """Return licence compliance dashboard data by risk category.
+
+        Counts all Version nodes (optionally internal-only) and their
+        associated License nodes, grouping by risk category.
+
+        Args:
+            internal_only: If True, only include internal-labeled nodes.
+
+        Returns:
+            Dict with total_packages and categories (permissive,
+            weak_copyleft, strong_copyleft, unknown), each containing
+            count, pct, and packages list.
+        """
+        label = f":{self.internal_label}" if internal_only else ""
+        query = f"""
+            MATCH (v:Version{label})
+            WHERE v.package_url IS NOT NULL
+            OPTIONAL MATCH (v)-[:HAS_LICENSE]->(l:License)
+            WITH v.project_name AS project_name,
+                 v.name AS version_name,
+                 v.package_url AS purl,
+                 collect(DISTINCT l.spdx_id) AS spdx_ids,
+                 collect(DISTINCT l.name) AS license_names,
+                 collect(DISTINCT l.risk_category) AS risk_categories
+            RETURN project_name, version_name, purl, spdx_ids,
+                   license_names, risk_categories
+        """
+        result = self.execute_query(query, {})
+
+        categories: dict[str, dict[str, Any]] = {
+            "permissive": {"count": 0, "pct": 0.0, "packages": []},
+            "weak_copyleft": {"count": 0, "pct": 0.0, "packages": []},
+            "strong_copyleft": {"count": 0, "pct": 0.0, "packages": []},
+            "proprietary": {"count": 0, "pct": 0.0, "packages": []},
+            "unknown": {"count": 0, "pct": 0.0, "packages": []},
+        }
+
+        for row in result:
+            project_name = row[0] or ""
+            version_name = row[1] or ""
+            purl = row[2] or ""
+            spdx_ids = [x for x in (row[3] or []) if x]
+            license_names = [x for x in (row[4] or []) if x]
+            risk_cats = [x for x in (row[5] or []) if x]
+
+            spdx_id = ", ".join(sorted(set(spdx_ids))) if spdx_ids else ""
+            license_name = ", ".join(sorted(set(license_names))) if license_names else ""
+            risk_category = self._worst_license_risk(risk_cats) if risk_cats else "unknown"
+
+            pkg = {
+                "purl": purl,
+                "project_name": project_name,
+                "version_name": version_name,
+                "spdx_id": spdx_id,
+                "license_name": license_name,
+            }
+
+            cat_key = risk_category if risk_category in categories else "unknown"
+            categories[cat_key]["count"] += 1
+            categories[cat_key]["packages"].append(pkg)
+
+        total = sum(c["count"] for c in categories.values())
+        for cat_data in categories.values():
+            cat_data["pct"] = round((cat_data["count"] / total * 100) if total else 0, 1)
+
+        return {
+            "total_packages": total,
+            "categories": categories,
+        }
+
     def get_package_licenses(self, purl: str) -> list[dict[str, Any]]:
         """Return licenses for a specific package by purl.
 
@@ -2659,6 +2876,250 @@ class FalkorDBService:
                 }
             )
         return rows
+
+    def get_enrichment_coverage(
+        self,
+        internal_only: bool = False,
+    ) -> dict[str, Any]:
+        """Return enrichment coverage statistics for all packages.
+
+        Categorizes packages by enrichment freshness:
+        - recent: last_enriched_at within 7 days
+        - stale: last_enriched_at more than 7 days ago
+        - never: no enrichment date
+
+        Args:
+            internal_only: If True, only include internal-labeled nodes.
+
+        Returns:
+            Dict with total, recent, stale, never counts and percentages,
+            plus a packages list with per-package details.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        label = f":{self.internal_label}" if internal_only else ":Version"
+        query = f"""
+            MATCH (v{label})
+            WHERE v.package_url IS NOT NULL
+            OPTIONAL MATCH (v)-[:VERSION_DEFECT]->(d:Defect)
+            WITH v,
+                 max(d.last_enriched_at) AS latest_enrichment
+            RETURN v.project_group AS project_group,
+                   v.project_name AS project_name,
+                   v.name AS version_name,
+                   v.package_url AS purl,
+                   latest_enrichment
+            ORDER BY v.project_name, v.name
+        """
+        result = self.execute_query(query, {})
+        cutoff = datetime.now(UTC) - timedelta(days=7)
+        packages: list[dict[str, Any]] = []
+        recent_count = 0
+        stale_count = 0
+        never_count = 0
+
+        for row in result:
+            project_group = row[0] or ""
+            project_name = row[1] or ""
+            version_name = row[2] or ""
+            purl = row[3] or ""
+            last_enriched_at = row[4]
+
+            if last_enriched_at is None:
+                status = "never"
+                never_count += 1
+            else:
+                try:
+                    if isinstance(last_enriched_at, str):
+                        enriched_dt = datetime.fromisoformat(
+                            last_enriched_at.replace("Z", "+00:00"),
+                        )
+                    else:
+                        enriched_dt = last_enriched_at
+                    if enriched_dt >= cutoff:
+                        status = "recent"
+                        recent_count += 1
+                    else:
+                        status = "stale"
+                        stale_count += 1
+                except (ValueError, TypeError):
+                    status = "stale"
+                    stale_count += 1
+
+            last_str = str(last_enriched_at) if last_enriched_at is not None else None
+            packages.append(
+                {
+                    "purl": purl,
+                    "project_name": project_name,
+                    "version_name": version_name,
+                    "project_group": project_group,
+                    "last_enriched_at": last_str,
+                    "status": status,
+                }
+            )
+
+        total = len(packages)
+        recent_pct = (recent_count / total * 100) if total > 0 else 0.0
+        stale_pct = (stale_count / total * 100) if total > 0 else 0.0
+        never_pct = (never_count / total * 100) if total > 0 else 0.0
+
+        return {
+            "total": total,
+            "recent": recent_count,
+            "stale": stale_count,
+            "never": never_count,
+            "recent_pct": round(recent_pct, 1),
+            "stale_pct": round(stale_pct, 1),
+            "never_pct": round(never_pct, 1),
+            "packages": packages,
+        }
+
+    def get_vulnerability_severities_for_versions(
+        self,
+        purls: list[str],
+    ) -> dict[str, str]:
+        """Return highest severity per purl for packages with vulnerabilities.
+
+        For each Version node with the given purl, finds related Defect nodes
+        via VERSION_DEFECT and returns the highest severity.
+
+        Args:
+            purls: List of package URLs to look up.
+
+        Returns:
+            Dict mapping purl -> highest severity (CRITICAL, HIGH, MEDIUM, LOW).
+        """
+        if not purls:
+            return {}
+
+        severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+        result_map: dict[str, str] = {}
+
+        batch_size = 500
+        for i in range(0, len(purls), batch_size):
+            batch = purls[i : i + batch_size]
+            query = """
+                MATCH (v:Version)-[:VERSION_DEFECT]->(d:Defect)
+                WHERE v.package_url IN $purls AND d.severity IS NOT NULL
+                RETURN v.package_url AS purl,
+                       d.severity AS severity
+            """
+            rows = self.execute_query(query, {"purls": batch})
+            for row in rows:
+                purl = row[0]
+                severity = (row[1] or "").upper()
+                if not purl or not severity:
+                    continue
+                if severity not in severity_order:
+                    continue
+                current = result_map.get(purl)
+                if current is None or severity_order[severity] < severity_order[current]:
+                    result_map[purl] = severity
+
+        return result_map
+
+    def get_vex_statuses_for_versions(
+        self,
+        purls: list[str],
+    ) -> dict[str, str]:
+        """Return VEX status per purl for the highest-severity linked vulnerability.
+
+        For each Version with the given purl, finds Defects via VERSION_DEFECT
+        and VexStatements via HAS_VEX/REFERS_TO. Returns the VEX status of the
+        highest-severity vulnerability that has a VEX statement.
+
+        Args:
+            purls: List of package URLs to look up.
+
+        Returns:
+            Dict mapping purl -> VEX status (not_affected, affected, fixed,
+            under_investigation) or empty dict if no VEX for that purl.
+        """
+        if not purls:
+            return {}
+
+        severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+        result_map: dict[str, str] = {}
+
+        batch_size = 500
+        for i in range(0, len(purls), batch_size):
+            batch = purls[i : i + batch_size]
+            query = """
+                MATCH (v:Version)-[:VERSION_DEFECT]->(d:Defect)
+                WHERE v.package_url IN $purls
+                MATCH (v)-[:HAS_VEX]->(s:VexStatement)-[:REFERS_TO]->(d)
+                WHERE s.status IS NOT NULL
+                RETURN v.package_url AS purl,
+                       d.severity AS severity,
+                       s.status AS vex_status,
+                       s.timestamp AS vex_timestamp
+            """
+            rows = self.execute_query(query, {"purls": batch})
+
+            purl_candidates: dict[str, list[tuple[int, str, str | None]]] = {}
+            for row in rows:
+                purl = row[0]
+                severity = (row[1] or "").upper()
+                vex_status = row[2]
+                vex_timestamp = row[3]
+                if not purl or not vex_status or severity not in severity_order:
+                    continue
+                sev_ord = severity_order[severity]
+                if purl not in purl_candidates:
+                    purl_candidates[purl] = []
+                purl_candidates[purl].append((sev_ord, vex_status, vex_timestamp))
+
+            for purl, candidates in purl_candidates.items():
+                # Sort by severity (critical first), then by timestamp (recent first)
+                best = sorted(
+                    candidates,
+                    key=lambda x: (
+                        x[0],
+                        (1 if x[2] is None else 0),
+                        str(x[2]) if x[2] else "",
+                    ),
+                    reverse=False,
+                )[0]
+                result_map[purl] = best[1]
+
+        return result_map
+
+    def get_license_risks_for_versions(self, purls: list[str]) -> dict[str, str]:
+        """Return licence risk category per purl for packages with licenses.
+
+        For each Version node with the given purl, finds linked License
+        nodes and returns the worst risk category.
+
+        Args:
+            purls: List of package URLs to look up.
+
+        Returns:
+            Dict mapping purl -> risk_category (permissive, weak_copyleft,
+            strong_copyleft, proprietary, unknown).
+        """
+        if not purls:
+            return {}
+
+        result_map: dict[str, str] = {}
+        batch_size = 500
+        for i in range(0, len(purls), batch_size):
+            batch = purls[i : i + batch_size]
+            query = """
+                MATCH (v:Version)-[:HAS_LICENSE]->(l:License)
+                WHERE v.package_url IN $purls
+                RETURN v.package_url AS purl,
+                       collect(DISTINCT l.risk_category) AS risk_categories
+            """
+            rows = self.execute_query(query, {"purls": batch})
+            for row in rows:
+                purl = row[0]
+                risk_cats = [x for x in (row[1] or []) if x]
+                if not purl:
+                    continue
+                risk_category = self._worst_license_risk(risk_cats) if risk_cats else "unknown"
+                result_map[purl] = risk_category
+
+        return result_map
 
     def get_package_vulnerabilities(
         self,
@@ -2770,13 +3231,21 @@ class FalkorDBService:
         return result
 
     def get_policy_annotations(
-        self, type_filter: str | None = None, internal_only: bool = False
+        self,
+        search: str | None = None,
+        type_filter: str | None = None,
+        internal_only: bool = False,
     ) -> list[dict[str, Any]]:
-        """Return all policy annotations, optionally filtered by type.
+        """Return all policy annotations, optionally filtered by search and type.
 
         Args:
+            search: Optional substring to filter by PURL or justification.
             type_filter: Optional policy type ("bad", "good", "hold").
             internal_only: If True, only return annotations on internal packages.
+
+        Returns:
+            List of dicts with purl, annotation_type (bad/good/hold),
+            justification, created_by, created_at, annotation_id, etc.
         """
         label = f":{self.internal_label}" if internal_only else ":Version"
         params: dict[str, Any] = {}
@@ -2786,9 +3255,16 @@ class FalkorDBService:
             type_clause = "AND a.type = $type_filter"
             params["type_filter"] = type_filter
 
+        search_clause = ""
+        if search and search.strip():
+            search_clause = (
+                "AND (v.package_url CONTAINS $search OR a.justification CONTAINS $search)"
+            )
+            params["search"] = search.strip()
+
         query = f"""
             MATCH (v{label})-[:HAS_POLICY]->(a:PolicyAnnotation)
-            WHERE v.package_url IS NOT NULL {type_clause}
+            WHERE v.package_url IS NOT NULL {type_clause} {search_clause}
             RETURN a.annotation_id AS annotation_id,
                    a.type AS type,
                    a.justification AS justification,
@@ -2860,6 +3336,133 @@ class FalkorDBService:
                 }
             )
         return violations
+
+    def add_policy_annotation(
+        self,
+        purl: str,
+        annotation_type: str,
+        justification: str,
+        created_by: str,
+    ) -> dict[str, Any] | None:
+        """Add a policy annotation to a package version.
+
+        The Version node must exist. Creates a PolicyAnnotation and links
+        it via HAS_POLICY.
+
+        Args:
+            purl: Package URL.
+            annotation_type: One of "bad", "good", "hold".
+            justification: Reason for the annotation.
+            created_by: Username of the creator.
+
+        Returns:
+            Dict with purl, annotation_id, type, created_at, or None if
+            the package was not found in the graph.
+        """
+        from datetime import UTC, datetime
+        from uuid import uuid4
+
+        version_exists = self.execute_query(
+            "MATCH (v:Version {package_url: $purl}) RETURN 1 LIMIT 1",
+            {"purl": purl},
+        )
+        if not version_exists:
+            return None
+
+        annotation_id = str(uuid4())
+        created_at = datetime.now(UTC).isoformat()
+
+        self.execute_write(
+            """
+            MERGE (a:PolicyAnnotation {annotation_id: $annotation_id})
+            ON CREATE SET
+                a.type = $annotation_type,
+                a.justification = $justification,
+                a.created_by = $created_by,
+                a.created_at = $created_at
+            ON MATCH SET
+                a.type = $annotation_type,
+                a.justification = $justification
+            """,
+            {
+                "annotation_id": annotation_id,
+                "annotation_type": annotation_type,
+                "justification": justification,
+                "created_by": created_by,
+                "created_at": created_at,
+            },
+        )
+
+        self.execute_write(
+            """
+            MATCH (v:Version {package_url: $purl})
+            MATCH (a:PolicyAnnotation {annotation_id: $annotation_id})
+            MERGE (v)-[:HAS_POLICY]->(a)
+            """,
+            {"purl": purl, "annotation_id": annotation_id},
+        )
+
+        return {
+            "purl": purl,
+            "annotation_id": annotation_id,
+            "type": annotation_type,
+            "created_at": created_at,
+        }
+
+    def remove_policy_annotation(self, purl: str) -> bool:
+        """Remove all policy annotations from a package version.
+
+        Args:
+            purl: Package URL.
+
+        Returns:
+            True if at least one annotation was removed, False otherwise.
+        """
+        result = self.execute_write(
+            """
+            MATCH (v:Version {package_url: $purl})-[:HAS_POLICY]->(a:PolicyAnnotation)
+            WITH count(a) AS to_delete
+            MATCH (v2:Version {package_url: $purl})-[:HAS_POLICY]->(a2:PolicyAnnotation)
+            DETACH DELETE a2
+            RETURN to_delete AS deleted
+            """,
+            {"purl": purl},
+        )
+        deleted = result[0][0] if result else 0
+        return deleted > 0
+
+    def get_policy_annotations_for_purls(
+        self,
+        purls: list[str],
+    ) -> dict[str, str]:
+        """Return mapping of purl -> annotation type for packages with annotations.
+
+        For packages with multiple annotations, returns the most recent
+        (by created_at). For packages with multiple types, "bad" takes
+        precedence over "hold" over "good".
+
+        Args:
+            purls: List of package URLs to check.
+
+        Returns:
+            Dict mapping purl to type ("bad", "good", "hold").
+        """
+        if not purls:
+            return {}
+
+        query = """
+            UNWIND $purls AS purl
+            MATCH (v:Version {package_url: purl})-[:HAS_POLICY]->(a:PolicyAnnotation)
+            WITH purl, a
+            ORDER BY a.created_at DESC
+            WITH purl, collect(a.type) AS types
+            RETURN purl,
+                   CASE WHEN 'bad' IN types THEN 'bad'
+                        WHEN 'hold' IN types THEN 'hold'
+                        ELSE 'good' END AS type
+        """
+        result = self.execute_query(query, {"purls": purls})
+        return {row[0]: row[1] for row in result}
 
     def check_policy(self, purl: str) -> dict[str, Any]:
         """Check the policy status for a package URL (CI/CD gate).
@@ -3127,6 +3730,149 @@ class FalkorDBService:
             "total_affected": total,
         }
 
+    def get_blast_radius(
+        self,
+        defect_id: str,
+        max_depth: int = 50,
+        internal_only: bool = False,
+    ) -> dict[str, Any]:
+        """Get blast radius for a vulnerability (defect_id).
+
+        Returns affected versions, affected applications, graph data for
+        visualization, and max partition depth.
+
+        Args:
+            defect_id: The vulnerability ID (e.g. CVE-2024-xxx).
+            max_depth: Maximum traversal depth.
+            internal_only: If True, restrict to internal-labeled nodes.
+
+        Returns:
+            Dict with affected_versions, affected_applications,
+            graph_nodes, graph_edges, and max_partition.
+        """
+        vuln = self.get_vulnerability_by_id(defect_id, internal_only=False)
+        if not vuln:
+            return {
+                "affected_versions": [],
+                "affected_applications": [],
+                "graph_nodes": [],
+                "graph_edges": [],
+                "max_partition": 0,
+            }
+
+        affected_versions = vuln.get("affected_versions", [])
+        deps = self.get_vulnerability_dependants(
+            defect_id=defect_id,
+            max_depth=max_depth,
+            internal_only=internal_only,
+        )
+
+        max_partition = max((d.get("partition", 0) for d in deps), default=0)
+        affected_apps = [
+            {
+                "project_name": d["project_name"],
+                "version": d["version"],
+                "purl": "",
+                "id": f"{d['project_name']}:{d['version']}",
+            }
+            for d in deps
+            if "Application" in d.get("labels", [])
+        ]
+
+        graph_nodes: list[dict[str, Any]] = []
+        graph_edges: list[dict[str, Any]] = []
+
+        defect_node_id = f"defect:{defect_id}"
+        graph_nodes.append(
+            {
+                "id": defect_node_id,
+                "label": defect_id,
+                "type": "vulnerability",
+            }
+        )
+
+        for av in affected_versions:
+            nid = f"{av.get('project_name', '')}:{av.get('version', '')}"
+            graph_nodes.append(
+                {
+                    "id": nid,
+                    "label": f"{av.get('project_name', '')}:{av.get('version', '')}",
+                    "type": "affected",
+                    "partition": 0,
+                }
+            )
+            graph_edges.append(
+                {"source": defect_node_id, "target": nid, "type": "VERSION_DEFECT"}
+            )
+
+        for dep in deps:
+            nid = f"{dep['project_name']}:{dep['version']}"
+            if not any(n.get("id") == nid for n in graph_nodes):
+                dtype = (
+                    "application"
+                    if "Application" in dep.get("labels", [])
+                    else "transitive"
+                )
+                graph_nodes.append(
+                    {
+                        "id": nid,
+                        "label": f"{dep['project_name']}:{dep['version']}",
+                        "type": dtype,
+                        "partition": dep.get("partition", 0),
+                    }
+                )
+
+        return {
+            "affected_versions": affected_versions,
+            "affected_applications": affected_apps,
+            "graph_nodes": graph_nodes,
+            "graph_edges": graph_edges,
+            "max_partition": max_partition,
+        }
+
+    def get_patch_plan(
+        self,
+        defect_id: str,
+        internal_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Get patch plan as list for a vulnerability.
+
+        Flattens compute_patch_plan frontiers into a list of items with
+        priority, project_name, version_name, purl, is_direct,
+        dependant_count, recommended_action.
+
+        Args:
+            defect_id: The vulnerability ID.
+            internal_only: If True, restrict to internal-labeled nodes.
+
+        Returns:
+            List of patch plan item dicts.
+        """
+        result = self.compute_patch_plan(
+            defect_id=defect_id,
+            max_depth=50,
+            internal_only=internal_only,
+        )
+        frontiers = result.get("frontiers", [])
+        items: list[dict[str, Any]] = []
+        for f in frontiers:
+            level = f.get("level", 0)
+            is_direct = level == 0
+            priority = "high" if level == 0 else ("medium" if level == 1 else "low")
+            for pkg in f.get("packages", []):
+                items.append(
+                    {
+                        "priority": priority,
+                        "project_name": pkg.get("project_name", ""),
+                        "version_name": pkg.get("version", ""),
+                        "purl": pkg.get("purl", ""),
+                        "is_direct": is_direct,
+                        "dependant_count": 0,
+                        "recommended_action": "upgrade",
+                    }
+                )
+        return items
+
     def get_vex_for_package(self, purl: str) -> list[dict[str, Any]]:
         """Return VEX statements for a package.
 
@@ -3316,6 +4062,177 @@ class FalkorDBService:
                 }
             )
         return vulns
+
+    def get_source_repo_impact(
+        self,
+        repo_url: str,
+        max_depth: int = 50,
+        internal_only: bool = False,
+    ) -> dict[str, Any]:
+        """Get the impact of a source repository on downstream consumers.
+
+        Returns packages from this repo, their dependants (direct and
+        transitive), affected applications, and graph data for visualization.
+
+        Args:
+            repo_url: The canonical source repository URL.
+            max_depth: Maximum traversal depth for transitive dependants.
+            internal_only: If True, restrict to internal-labeled nodes.
+
+        Returns:
+            Dict with packages, dependants, affected_applications,
+            graph_nodes, graph_edges, and stats.
+        """
+        label = self.get_node_label(internal_only)
+        app_label = f"Application:{self.internal_label}" if internal_only else "Application"
+
+        # Use parameterised max_depth - FalkorDB requires literal in path
+        depth_param = min(max_depth, 50)
+
+        # Packages from this repo with direct and transitive dependant counts
+        packages_query = f"""
+            MATCH (v:{label})-[:HAS_SOURCE]->(r:SourceRepository {{url: $repo_url}})
+            OPTIONAL MATCH (direct)-[:DEPENDENCY_VERSION]->(v)
+            WHERE (direct:Version OR direct:Application)
+            WITH v, count(DISTINCT direct) AS direct_count
+            OPTIONAL MATCH (any_dep)-[:DEPENDENCY_VERSION*1..{depth_param}]->(v)
+            WHERE (any_dep:Version OR any_dep:Application)
+            WITH v, direct_count,
+                 count(DISTINCT any_dep) AS total_count
+            RETURN v.project_name AS project_name,
+                   v.name AS version,
+                   v.package_url AS purl,
+                   direct_count,
+                   total_count - direct_count AS transitive_count
+            ORDER BY total_count DESC, v.project_name, v.name
+        """
+        result = self.execute_query(packages_query, {"repo_url": repo_url})
+
+        packages = []
+        for row in result:
+            packages.append(
+                {
+                    "project_name": row[0],
+                    "version": row[1],
+                    "purl": row[2],
+                    "direct_dependants": row[3] or 0,
+                    "transitive_dependants": row[4] or 0,
+                }
+            )
+
+        # Get distinct downstream consumer project/versions (dependants)
+        dependants_query = f"""
+            MATCH (v:{label})-[:HAS_SOURCE]->(r:SourceRepository {{url: $repo_url}})
+            MATCH (dep)-[:DEPENDENCY_VERSION*1..{depth_param}]->(v)
+            WHERE (dep:Version OR dep:Application)
+            RETURN DISTINCT dep.project_name AS project_name,
+                   dep.name AS version,
+                   labels(dep)[0] AS node_type
+            ORDER BY project_name, version
+        """
+        dep_result = self.execute_query(
+            dependants_query,
+            {"repo_url": repo_url},
+        )
+        dependants = [
+            {
+                "project_name": row[0],
+                "version": row[1],
+                "node_type": row[2] or "Version",
+            }
+            for row in dep_result
+        ]
+
+        # Affected applications
+        app_query = f"""
+            MATCH (v:{label})-[:HAS_SOURCE]->(r:SourceRepository {{url: $repo_url}})
+            MATCH (app:{app_label})-[:DEPENDENCY_VERSION*1..{depth_param}]->(v)
+            RETURN DISTINCT app.project_name AS project_name,
+                   app.name AS version
+            ORDER BY project_name, version
+        """
+        app_result = self.execute_query(
+            app_query,
+            {"repo_url": repo_url},
+        )
+        affected_apps = [{"project_name": row[0], "version": row[1]} for row in app_result]
+
+        # Build graph_nodes and graph_edges for visualization
+        node_ids: set[str] = set()
+        graph_nodes: list[dict[str, Any]] = []
+        graph_edges: list[dict[str, Any]] = []
+
+        # Add source repo as root node
+        repo_node_id = "repo:" + repo_url
+        node_ids.add(repo_node_id)
+        graph_nodes.append(
+            {
+                "id": repo_node_id,
+                "label": "Source Repo",
+                "type": "source_repo",
+            }
+        )
+
+        # Add package nodes and edges from repo to packages
+        for pkg in packages:
+            nid = f"{pkg['project_name']}:{pkg['version']}"
+            if nid not in node_ids:
+                node_ids.add(nid)
+                graph_nodes.append(
+                    {
+                        "id": nid,
+                        "label": f"{pkg['project_name']}@{pkg['version']}",
+                        "type": "package",
+                    }
+                )
+            graph_edges.append({"source": repo_node_id, "target": nid, "type": "HAS_SOURCE"})
+
+        # Add dependant nodes and edges (limit to avoid huge graphs)
+        seen_edges: set[tuple[str, str]] = set()
+        for dep in dependants[:200]:  # Cap for visualization
+            nid = f"{dep['project_name']}:{dep['version']}"
+            if nid not in node_ids:
+                node_ids.add(nid)
+                dtype = "application" if dep["node_type"] == "Application" else "dependant"
+                graph_nodes.append(
+                    {
+                        "id": nid,
+                        "label": f"{dep['project_name']}@{dep['version']}",
+                        "type": dtype,
+                    }
+                )
+
+        # Edges: dependant -> package (dependency direction)
+        graph_query = f"""
+            MATCH (v:{label})-[:HAS_SOURCE]->(r:SourceRepository {{url: $repo_url}})
+            MATCH (dep)-[e:DEPENDENCY_VERSION*1..1]->(v)
+            RETURN DISTINCT dep.project_name AS dproj, dep.name AS dver,
+                   v.project_name AS vproj, v.name AS vver
+            LIMIT 300
+        """
+        edge_result = self.execute_query(
+            graph_query,
+            {"repo_url": repo_url},
+        )
+        for row in edge_result:
+            snid = f"{row[0]}:{row[1]}"
+            tnid = f"{row[2]}:{row[3]}"
+            if (snid, tnid) not in seen_edges and snid in node_ids and tnid in node_ids:
+                seen_edges.add((snid, tnid))
+                graph_edges.append({"source": snid, "target": tnid, "type": "DEPENDS_ON"})
+
+        return {
+            "packages": packages,
+            "dependants": dependants,
+            "affected_applications": affected_apps,
+            "graph_nodes": graph_nodes,
+            "graph_edges": graph_edges,
+            "stats": {
+                "packages_from_repo": len(packages),
+                "total_downstream_consumers": len(dependants),
+                "affected_applications": len(affected_apps),
+            },
+        }
 
     def get_vulnerabilities_with_vex(
         self,
@@ -3567,14 +4484,22 @@ class FalkorDBService:
             limit: Maximum packages to return.
 
         Returns:
-            List of dicts with purl, confidence, sources_used, dependents_count.
+            List of dicts with purl, project_name, version, confidence,
+            sources_used, direct_score, dependents_count.
         """
         query = """
             MATCH (t:TrustScore)
             WHERE t.confidence < 0.75
-            OPTIONAL MATCH (parent:Version)-[:DEPENDENCY_VERSION]->(v:Version {package_url: t.purl})
-            WITH t, count(DISTINCT parent) AS dependents_count
+            OPTIONAL MATCH (v:Version {package_url: t.purl})
+            OPTIONAL MATCH (parent:Version)-[:DEPENDENCY_VERSION]->
+                (v2:Version {package_url: t.purl})
+            WITH t,
+                 head(collect(DISTINCT v.project_name)) AS project_name,
+                 head(collect(DISTINCT v.name)) AS version,
+                 count(DISTINCT parent) AS dependents_count
             RETURN t.purl AS purl,
+                   project_name,
+                   version,
                    t.confidence AS confidence,
                    t.sources_used AS sources_used,
                    t.direct_score AS direct_score,
@@ -3585,16 +4510,514 @@ class FalkorDBService:
         result = self.execute_query(query, {"limit": limit})
         gaps = []
         for row in result:
+            project_name = row[1]
+            version = row[2]
+            if isinstance(project_name, list):
+                project_name = project_name[0] if project_name else None
+            if isinstance(version, list):
+                version = version[0] if version else None
             gaps.append(
                 {
                     "purl": row[0],
-                    "confidence": row[1],
-                    "sources_used": row[2],
-                    "direct_score": row[3],
-                    "dependents_count": row[4],
+                    "project_name": project_name,
+                    "version": version,
+                    "confidence": row[3],
+                    "sources_used": row[4],
+                    "direct_score": row[5],
+                    "dependents_count": row[6],
                 }
             )
         return gaps
+
+    def get_all_trust_scores_for_report(
+        self,
+        internal_only: bool = False,
+        min_score: float = 0.0,
+        sort_by: str = "effective_score",
+    ) -> list[dict[str, Any]]:
+        """Return all packages with trust scores for report listing.
+
+        Args:
+            internal_only: If True, restrict to INTERNAL-labeled versions.
+            min_score: Minimum effective_score (or direct_score) filter.
+            sort_by: Sort key - "effective_score" or "direct_score".
+
+        Returns:
+            List of dicts with purl, project_name, direct_score, effective_score,
+            confidence, sources_used.
+        """
+        label_filter = f":{self.internal_label}" if internal_only else ""
+        sort_field = "effective_score" if sort_by == "effective_score" else "direct_score"
+        query = f"""
+            MATCH (v:Version{label_filter})-[:HAS_TRUST_SCORE]->(t:TrustScore)
+            WHERE t.{sort_field} IS NOT NULL AND t.{sort_field} >= $min_score
+            RETURN t.purl AS purl,
+                   v.project_name AS project_name,
+                   v.name AS version,
+                   t.direct_score AS direct_score,
+                   t.effective_score AS effective_score,
+                   t.confidence AS confidence,
+                   t.sources_used AS sources_used
+            ORDER BY t.{sort_field} ASC
+        """
+        result = self.execute_query(query, {"min_score": min_score})
+        return [
+            {
+                "purl": row[0],
+                "project_name": row[1],
+                "version": row[2],
+                "direct_score": row[3],
+                "effective_score": row[4],
+                "confidence": row[5],
+                "sources_used": row[6] or [],
+            }
+            for row in result
+        ]
+
+    def get_sbom_inventory(
+        self,
+        search: str | None = None,
+        tool: str | None = None,
+        sbom_format: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return all SBOMRecord nodes with metadata and linked version count.
+
+        Args:
+            search: Optional substring filter for record_id, tool_name, format.
+            tool: Optional exact match for tool_name.
+            sbom_format: Optional format filter (CycloneDX or SPDX).
+            date_from: Optional start date (YYYY-MM-DD) for ingested_at.
+            date_to: Optional end date (YYYY-MM-DD) for ingested_at.
+
+        Returns:
+            List of dicts with record_id, format, ingested_at, source,
+            optional tool fields, and version_count.
+        """
+        search_val = (search or "").strip()
+        tool_val = (tool or "").strip()
+        format_val = (sbom_format or "").strip()
+        date_from_val = (date_from or "").strip()
+        date_to_val = (date_to or "").strip()
+
+        params: dict[str, Any] = {
+            "search": search_val,
+            "tool": tool_val,
+            "format_filter": format_val,
+            "date_from": date_from_val + "T00:00:00Z" if date_from_val else "",
+            "date_to": date_to_val + "T23:59:59Z" if date_to_val else "",
+        }
+
+        query = """
+            MATCH (s:SBOMRecord)
+            WHERE ($search = "" OR coalesce(s.record_id, "") CONTAINS $search
+                   OR coalesce(s.tool_name, "") CONTAINS $search
+                   OR toLower(toString(coalesce(s.format, ""))) CONTAINS toLower($search))
+              AND ($tool = "" OR s.tool_name = $tool)
+              AND ($format_filter = "" OR toLower(toString(s.format)) = toLower($format_filter))
+              AND ($date_from = "" OR s.ingested_at >= $date_from)
+              AND ($date_to = "" OR s.ingested_at <= $date_to)
+            OPTIONAL MATCH (v:Version)-[:PRODUCED_BY_SBOM]->(s)
+            WITH s, count(v) AS version_count
+            RETURN s.record_id AS record_id,
+                    s.format AS format,
+                    s.ingested_at AS ingested_at,
+                    s.source AS source,
+                    s.tool_name AS tool_name,
+                    s.tool_version AS tool_version,
+                    s.serial_number AS serial_number,
+                    s.document_hash AS document_hash,
+                    version_count
+        """
+        result = self.execute_query(query, params)
+        return [
+            {
+                "record_id": row[0],
+                "format": row[1],
+                "ingested_at": row[2],
+                "source": row[3],
+                "tool_name": row[4],
+                "tool_version": row[5],
+                "serial_number": row[6],
+                "document_hash": row[7],
+                "version_count": row[8] or 0,
+            }
+            for row in result
+        ]
+
+    def get_sbom_coverage(self, recent_days: int = 30) -> dict[str, int]:
+        """Return SBOM coverage statistics for projects.
+
+        Args:
+            recent_days: Days within which an SBOM is considered recent.
+
+        Returns:
+            Dict with total_projects, with_recent_sbom, with_stale_sbom,
+            with_no_sbom.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        cutoff = (datetime.now(UTC) - timedelta(days=recent_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        total_result = self.execute_query(
+            """
+            MATCH (v:Version)
+            WHERE v.project_name IS NOT NULL
+            WITH DISTINCT v.project_name, v.project_group
+            RETURN count(*) AS total
+            """,
+            {},
+        )
+        total = total_result[0][0] if total_result else 0
+
+        recent_result = self.execute_query(
+            """
+            MATCH (v:Version)-[:PRODUCED_BY_SBOM]->(s:SBOMRecord)
+            WHERE v.project_name IS NOT NULL AND s.ingested_at >= $cutoff
+            WITH DISTINCT v.project_name, v.project_group
+            RETURN count(*) AS cnt
+            """,
+            {"cutoff": cutoff},
+        )
+        with_recent = recent_result[0][0] if recent_result else 0
+
+        with_any_result = self.execute_query(
+            """
+            MATCH (v:Version)-[:PRODUCED_BY_SBOM]->(s:SBOMRecord)
+            WHERE v.project_name IS NOT NULL
+            WITH DISTINCT v.project_name, v.project_group
+            RETURN count(*) AS cnt
+            """,
+            {},
+        )
+        with_any = with_any_result[0][0] if with_any_result else 0
+
+        with_stale = with_any - with_recent
+        with_no_sbom = total - with_any
+
+        return {
+            "total_projects": total,
+            "with_recent_sbom": with_recent,
+            "with_stale_sbom": with_stale,
+            "with_no_sbom": with_no_sbom,
+        }
+
+    def get_sbom_coverage_for_dashboard(
+        self,
+        internal_only: bool = False,
+        recent_days: int = 30,
+    ) -> dict[str, Any]:
+        """Return SBOM coverage stats and per-version details for dashboard.
+
+        Args:
+            internal_only: If True, restrict to INTERNAL-labeled versions.
+            recent_days: Days within which an SBOM is considered fresh.
+
+        Returns:
+            Dict with stats (total_projects, fresh, stale, never, percentages)
+            and projects list (project_name, version_name, project_group,
+            status, last_ingested, tool_name).
+        """
+        from datetime import UTC, datetime, timedelta
+
+        cutoff = (
+            datetime.now(UTC) - timedelta(days=recent_days)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        node_label = self.get_node_label(internal_only)
+
+        query = f"""
+            MATCH (v:{node_label})
+            WHERE v.project_name IS NOT NULL
+            OPTIONAL MATCH (v)-[:PRODUCED_BY_SBOM]->(s:SBOMRecord)
+            RETURN v.project_name AS project_name,
+                   v.name AS version_name,
+                   v.project_group AS project_group,
+                   s.ingested_at AS ingested_at,
+                   s.tool_name AS tool_name
+        """
+        result = self.execute_query(query, {})
+
+        # Collapse to latest SBOM per version (same version may have multiple)
+        version_to_latest: dict[tuple[str, str, str | None], dict[str, Any]] = {}
+        for row in result:
+            proj, ver, grp, ingested, tool = row[0], row[1], row[2], row[3], row[4]
+            key = (proj or "", ver or "", grp)
+            existing = version_to_latest.get(key)
+            if existing is None or (
+                ingested
+                and (
+                    not existing["ingested_at"]
+                    or ingested > existing["ingested_at"]
+                )
+            ):
+                version_to_latest[key] = {
+                    "project_name": proj,
+                    "version_name": ver,
+                    "project_group": grp or "",
+                    "ingested_at": ingested,
+                    "tool_name": tool or "-",
+                }
+
+        projects: list[dict[str, Any]] = []
+        for entry in version_to_latest.values():
+            ingested = entry["ingested_at"]
+            if ingested is None:
+                status = "never"
+            elif ingested >= cutoff:
+                status = "fresh"
+            else:
+                status = "stale"
+            entry["status"] = status
+            entry["last_ingested"] = ingested or "-"
+            projects.append(entry)
+
+        # Project-level stats: each project gets status of its "best" version
+        project_status: dict[tuple[str, str], str] = {}
+        for p in projects:
+            pname = str(p.get("project_name", "") or "")
+            pgrp = str(p.get("project_group", "") or "")
+            pkey = (pname, pgrp)
+            current = project_status.get(pkey, "never")
+            if p["status"] == "fresh" or current == "fresh":
+                project_status[pkey] = "fresh"
+            elif p["status"] == "stale" or current == "stale":
+                project_status[pkey] = "stale"
+            else:
+                project_status[pkey] = "never"
+
+        fresh_count = sum(1 for s in project_status.values() if s == "fresh")
+        stale_count = sum(1 for s in project_status.values() if s == "stale")
+        never_count = sum(1 for s in project_status.values() if s == "never")
+        total_projects = len(project_status)
+        fresh_pct = (fresh_count / total_projects * 100) if total_projects else 0
+        stale_pct = (stale_count / total_projects * 100) if total_projects else 0
+        never_pct = (never_count / total_projects * 100) if total_projects else 0
+
+        return {
+            "stats": {
+                "total_projects": total_projects,
+                "fresh": fresh_count,
+                "stale": stale_count,
+                "never": never_count,
+                "fresh_pct": round(fresh_pct, 1),
+                "stale_pct": round(stale_pct, 1),
+                "never_pct": round(never_pct, 1),
+            },
+            "projects": sorted(
+                projects,
+                key=lambda p: (
+                    p["project_name"],
+                    p["version_name"],
+                    p["project_group"],
+                ),
+            ),
+            "recent_days": recent_days,
+        }
+
+    def get_sbom_record_by_id(self, record_id: str) -> dict[str, Any] | None:
+        """Return a single SBOMRecord by record_id with linked version purls.
+
+        Args:
+            record_id: The SBOM record identifier.
+
+        Returns:
+            Dict with record metadata and purls list, or None if not found.
+        """
+        query = """
+            MATCH (s:SBOMRecord {record_id: $record_id})
+            OPTIONAL MATCH (v:Version)-[:PRODUCED_BY_SBOM]->(s)
+            WITH s, collect(DISTINCT v.package_url) AS purl_list
+            RETURN s.record_id AS record_id,
+                    s.format AS format,
+                    s.ingested_at AS ingested_at,
+                    s.source AS source,
+                    s.tool_name AS tool_name,
+                    s.tool_version AS tool_version,
+                    s.serial_number AS serial_number,
+                    s.document_hash AS document_hash,
+                    purl_list
+        """
+        result = self.execute_query(query, {"record_id": record_id})
+        if not result:
+            return None
+
+        row = result[0]
+        purl_list = row[8] or []
+        purls = [p for p in purl_list if p is not None]
+        return {
+            "record_id": row[0],
+            "format": row[1],
+            "ingested_at": row[2],
+            "source": row[3],
+            "tool_name": row[4],
+            "tool_version": row[5],
+            "serial_number": row[6],
+            "document_hash": row[7],
+            "purls": purls,
+        }
+
+    def simulate_risk_propagation(self, purl: str, simulated_score: float) -> list[dict[str, Any]]:
+        """What-if: if package X drops to score Y, what applications are impacted?
+
+        Args:
+            purl: Package URL to simulate score change for.
+            simulated_score: Simulated trust score (0-10).
+
+        Returns:
+            List of dicts with purl, current_effective, simulated_effective,
+            impact for each transitive dependant.
+        """
+        current = self.get_trust_score_for_purl(purl)
+        if not current:
+            return []
+
+        query = """
+            MATCH (v:Version {package_url: $purl})
+            MATCH (dep:Version)-[:DEPENDENCY_VERSION*1..20]->(v)
+            WHERE dep.package_url IS NOT NULL
+            WITH DISTINCT dep.package_url AS dep_purl
+            LIMIT 500
+            MATCH (dep2:Version {package_url: dep_purl})
+            OPTIONAL MATCH (dep2)-[:HAS_TRUST_SCORE]->(t:TrustScore)
+            RETURN dep_purl AS purl,
+                   t.effective_score AS current_effective,
+                   t.direct_score AS direct_score
+        """
+        result = self.execute_query(query, {"purl": purl})
+
+        impacts = []
+        for row in result:
+            dep_purl = row[0]
+            current_eff = row[1] or row[2] or 0.0
+            simulated_eff = min(current_eff, simulated_score)
+            impact = current_eff - simulated_eff
+            impacts.append(
+                {
+                    "purl": dep_purl,
+                    "current_effective": current_eff,
+                    "simulated_effective": simulated_eff,
+                    "impact": round(impact, 2),
+                }
+            )
+
+        return sorted(impacts, key=lambda x: x["impact"], reverse=True)
+
+    def evaluate_patch_plan(
+        self,
+        purl: str,
+        current_version: str,
+        target_version: str,
+    ) -> dict[str, Any]:
+        """Compare vulnerabilities between current and target version.
+
+        Args:
+            purl: Package URL prefix (without version).
+            current_version: Current version in use.
+            target_version: Target version to upgrade to.
+
+        Returns:
+            Dict with current_vulns, target_vulns, resolved, added, purl.
+        """
+        purl_prefix = purl.rsplit("@", 1)[0] + "@" if "@" in purl else purl.rstrip("/") + "@"
+        current_purl = purl_prefix + current_version
+        target_purl = purl_prefix + target_version
+
+        current_vulns_query = """
+            MATCH (v:Version {package_url: $purl})-[:VERSION_DEFECT]->(d:Defect)
+            RETURN collect(d.id) AS vulns
+        """
+        target_vulns_query = """
+            MATCH (v:Version {package_url: $purl})-[:VERSION_DEFECT]->(d:Defect)
+            RETURN collect(d.id) AS vulns
+        """
+
+        current_res = self.execute_query(current_vulns_query, {"purl": current_purl})
+        target_res = self.execute_query(target_vulns_query, {"purl": target_purl})
+
+        current_vulns = set(current_res[0][0] or []) if current_res else set()
+        target_vulns = set(target_res[0][0] or []) if target_res else set()
+
+        resolved = list(current_vulns - target_vulns)
+        added = list(target_vulns - current_vulns)
+
+        return {
+            "purl": purl_prefix,
+            "current_version": current_version,
+            "target_version": target_version,
+            "current_vulns": list(current_vulns),
+            "target_vulns": list(target_vulns),
+            "resolved": resolved,
+            "added": added,
+        }
+
+    def generate_vex_auto_stubs(
+        self, purl: str, justification: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Create VEX not_affected stubs for packages with vulns but no VEX.
+
+        Args:
+            purl: Package URL.
+            justification: Optional justification for not_affected status.
+
+        Returns:
+            List of created stubs with statement_id, defect_id, status.
+        """
+        import uuid
+        from datetime import UTC, datetime
+
+        query = """
+            MATCH (v:Version {package_url: $purl})-[:VERSION_DEFECT]->(d:Defect)
+            WHERE NOT (v)-[:HAS_VEX]->(:VexStatement)-[:REFERS_TO]->(d)
+            RETURN d.id AS defect_id
+        """
+        result = self.execute_query(query, {"purl": purl})
+        if not result:
+            return []
+
+        defect_ids = [row[0] for row in result]
+        created = []
+        justification_val = justification or "Auto-generated not_affected stub"
+        timestamp = datetime.now(UTC).isoformat()
+
+        for defect_id in defect_ids:
+            statement_id = str(uuid.uuid4())
+            self.execute_write(
+                """
+                MERGE (s:VexStatement {statement_id: $statement_id})
+                SET s.status = 'not_affected',
+                    s.justification = $justification,
+                    s.timestamp = $timestamp
+                """,
+                {
+                    "statement_id": statement_id,
+                    "justification": justification_val,
+                    "timestamp": timestamp,
+                },
+            )
+            self.execute_write(
+                """
+                MATCH (v:Version {package_url: $purl})
+                MATCH (s:VexStatement {statement_id: $statement_id})
+                MATCH (d:Defect {id: $defect_id})
+                MERGE (v)-[:HAS_VEX]->(s)
+                MERGE (s)-[:REFERS_TO]->(d)
+                """,
+                {
+                    "purl": purl,
+                    "statement_id": statement_id,
+                    "defect_id": defect_id,
+                },
+            )
+            created.append(
+                {
+                    "statement_id": statement_id,
+                    "defect_id": defect_id,
+                    "status": "not_affected",
+                }
+            )
+
+        return created
 
 
 # Global service instance

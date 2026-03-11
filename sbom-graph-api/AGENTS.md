@@ -141,6 +141,7 @@ SBOM Graph API is a Flask application that provides data visualizations of graph
 - Reports support HTML, Excel, and JSON output formats
 - JSON Schema definitions available for all report/export types
 - Health/ready endpoints for Kubernetes probes
+- **SBOM provenance tracking**: Ingestion endpoints (`/ingest/cyclonedx`, `/ingest/spdx`, `/ingest/sbom`) create SBOM records (document hash, tool info, ingested_at) linked to all ingested versions; responses include `record_id` for audit trails and provenance lookups
 
 ### UI Features
 
@@ -170,6 +171,16 @@ SBOM Graph API is a Flask application that provides data visualizations of graph
 - `dependants.html` - Specialized template for dependants report with expandable paths
 - `export.html` - Export landing page template with preview table
 - `api_docs.html` - Interactive API documentation page
+- `enrichment_coverage.html` - Enrichment coverage dashboard with progress bars
+- `license_dashboard.html` - License compliance dashboard with risk distribution
+- `vulnerabilities.html` - Vulnerability report with VEX status column and filter
+- `trust_scores.html` - Trust score report with colour-coded scores
+- `trust_score_gaps.html` - Trust score gaps report with recommendations
+- `sbom_inventory.html` - SBOM inventory table with search and filters
+- `sbom_coverage.html` - SBOM coverage dashboard with status distribution
+- `source_impact.html` - Source repository impact report with graph
+- `policy_admin.html` - Policy annotation admin page
+- `incident_response.html` - Incident response with blast radius and patch plan
 - Templates use Jinja2 syntax and are loaded via Flask's `render_template()`
 
 ## Code Organization
@@ -180,11 +191,21 @@ src/sbom_graph_api/
 ├── config.py                 # Environment-based configuration
 ├── wsgi.py                   # WSGI entry for gunicorn
 ├── routes/                   # Flask blueprints
-│   ├── auth.py               # Authentication & admin endpoints
+│   ├── admin.py              # Policy annotation admin endpoints
+│   ├── api_v1.py             # Programmatic JSON API (v1)
+│   ├── auth.py               # Authentication & user management
+│   ├── ingest.py             # SBOM ingestion (CycloneDX, SPDX)
 │   ├── visualizations.py     # Graph visualization endpoints
 │   ├── exports.py            # Excel/JSON download endpoints
-│   ├── reports.py            # HTML/Excel/JSON report endpoints
-│   └── schemas.py            # JSON Schema endpoints
+│   ├── schemas.py            # JSON Schema endpoints
+│   └── reports/              # Report sub-package
+│       ├── __init__.py       # Report blueprint registration
+│       ├── _common.py        # Shared report helpers
+│       ├── compliance.py     # License compliance & dashboard
+│       ├── inventory.py      # Project/app/source repo reports
+│       ├── sbom_provenance.py # SBOM inventory & coverage
+│       ├── trust_scores.py   # Trust score reports & gaps
+│       └── vulnerabilities.py # Vulnerability & incident reports
 ├── services/                 # Business logic layer
 │   ├── falkordb_service.py   # Database operations
 │   ├── ldap_service.py       # LDAP authentication
@@ -193,30 +214,21 @@ src/sbom_graph_api/
 ├── schemas/                  # JSON Schema definitions
 │   ├── __init__.py
 │   ├── definitions.py        # Output report schema definitions & SCHEMA_INDEX
-│   └── inbound.py            # Inbound request body schemas (SBOM upload, VEX, enrichment, policy, contacts)
+│   └── inbound.py            # Inbound request body schemas
 ├── visualizations/           # Visualization generators
 │   ├── kpartite.py           # K-partite dependency graphs
 │   ├── bipartite.py          # Bi-partite version/dependant graphs
-│   └── dependants_graph.py   # Reverse dependency graphs
+│   ├── dependencies_graph.py # Spring-layout dependency graphs
+│   ├── dependants_graph.py   # Reverse dependency graphs
+│   └── source_impact.py      # Source repo impact graphs
 ├── exports/                  # Export generators
-│   └── excel.py              # Excel file generation
-├── templates/                # Jinja2 HTML templates
-│   ├── api_docs.html         # API documentation template
-│   ├── login.html            # Login page
-│   ├── tokens.html           # Token management page
-│   ├── create_token.html     # Token creation page
-│   ├── change_password.html  # Password change page
-│   ├── change_password_required.html  # Forced password change
-│   ├── admin_users.html      # Admin user management
-│   ├── admin_create_user.html # Create user form
-│   ├── admin_user_created.html # Show temp password
-│   ├── admin_password_reset.html # Show reset password
-│   ├── error.html            # Generic error page
-│   ├── table.html            # Generic table report template
-│   ├── dependants.html       # Dependants report template
-│   └── export.html           # Export landing page template
+│   ├── excel.py              # Excel file generation
+│   └── json_format.py        # JSON export formatters
+├── templates/                # Jinja2 HTML templates (20+ files)
+├── static/css/               # Stylesheets
+│   └── report.css            # Shared report styles
 └── utils/                    # Utility modules
-    └── validation.py         # Input validation & sanitization
+    └── validation.py         # Input validation & sanitisation
 
 # Project root
 gunicorn.conf.py              # Gunicorn config (TLS, workers, timeouts)
@@ -296,6 +308,9 @@ Authentication is controlled by the `AUTH_ENABLED` environment variable. When en
 
 | Endpoint | Method | Description |
 | -------- | ------ | ----------- |
+| `/admin/policies` | GET | Policy annotation admin page (search, filter, add/remove) |
+| `/admin/policies` | POST | Add policy annotation (admin only, CSRF protected) |
+| `/admin/policies/<purl>` | DELETE | Remove policy annotation (admin only, AJAX) |
 | `/auth/admin/users` | GET | User management page |
 | `/auth/admin/users/create` | GET/POST | Create new user |
 | `/auth/admin/users/{username}/toggle-admin` | POST | Toggle admin status |
@@ -627,6 +642,7 @@ These visualizations include an interactive layout switcher UI, allowing users t
 - `/reports/applications` - All applications with versions (supports `latest_only` parameter)
 - `/reports/vulnerabilities` - All vulnerabilities ordered by severity with affected versions
 - `/reports/vulnerability-dependants/{defect_id}` - Dependants affected by a specific vulnerability, ordered by partition
+- `/reports/incident-response/{defect_id}` - Incident response page with blast radius graph and patch plan table
 - `/reports/centrality` - Centrality metrics (inDegree/outDegree) for internal libraries with drill-down links
 - `/reports/snapshots` - SNAPSHOT dependencies
 - `/reports/self-dependencies` - Self-referential dependencies

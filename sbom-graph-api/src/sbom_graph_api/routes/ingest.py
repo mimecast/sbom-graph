@@ -2,12 +2,18 @@
 
 Provides endpoints for uploading CycloneDX and SPDX SBOM files and
 persisting the parsed data (projects, dependencies, defects) to the
-graph database via the sbom-graph-model library.
+graph database via the sbom-graph-model library. Stores SBOM provenance
+metadata (record_id, document hash, tool info) during ingestion.
 """
 
 import hashlib
+import json
 import logging
 import os
+import re
+import uuid
+from datetime import UTC, datetime
+from typing import Any
 
 from flask import Blueprint, Response, jsonify, request
 from sbom_graph_model import Persistence
@@ -58,7 +64,108 @@ def _derive_app_id(component_name: str) -> str:
     Returns:
         A hex string suitable for use as an app_id.
     """
-    return hashlib.sha1(component_name.encode("utf-8")).hexdigest()  # noqa: S324
+    return hashlib.sha1(component_name.encode("utf-8")).hexdigest()  # noqa: S324  # nosec B324
+
+
+def _extract_cyclonedx_tool_info(sbom: dict) -> tuple[str | None, str | None]:
+    """Extract tool name and version from CycloneDX metadata.tools.
+
+    Handles both CycloneDX 1.4+ (tools as array) and 1.5+ (tools.components).
+
+    Args:
+        sbom: The CycloneDX SBOM dict.
+
+    Returns:
+        Tuple of (tool_name, tool_version). Either may be None.
+    """
+    metadata = sbom.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        return None, None
+
+    tools = metadata.get("tools")
+    if tools is None:
+        return None, None
+
+    # CycloneDX 1.5+: tools.components
+    if isinstance(tools, dict):
+        components = tools.get("components")
+        if isinstance(components, list) and components:
+            first = components[0]
+            if isinstance(first, dict):
+                return (
+                    first.get("name") if isinstance(first.get("name"), str) else None,
+                    first.get("version") if isinstance(first.get("version"), str) else None,
+                )
+        return None, None
+
+    # CycloneDX 1.4+: tools as array
+    if isinstance(tools, list) and tools:
+        first = tools[0]
+        if isinstance(first, dict):
+            name = first.get("name")
+            version = first.get("version")
+            return (
+                name if isinstance(name, str) else None,
+                version if isinstance(version, str) else None,
+            )
+    return None, None
+
+
+_SPDX_TOOL_CREATOR_RE = re.compile(r"^[Tt]ool:\s*(.+?)(?:-(\d[\d.]*))?$")
+
+
+def _extract_spdx_tool_info(sbom: dict) -> tuple[str | None, str | None]:
+    """Extract tool name and version from SPDX creationInfo.creators.
+
+    Creators are strings like "Tool: syft-1.2.3" or "Tool: trivy".
+
+    Args:
+        sbom: The SPDX SBOM dict.
+
+    Returns:
+        Tuple of (tool_name, tool_version). Either may be None.
+    """
+    creation_info = sbom.get("creationInfo") or {}
+    if not isinstance(creation_info, dict):
+        return None, None
+
+    creators = creation_info.get("creators")
+    if not isinstance(creators, list):
+        return None, None
+
+    for creator in creators:
+        if not isinstance(creator, str):
+            continue
+        match = _SPDX_TOOL_CREATOR_RE.match(creator.strip())
+        if match:
+            name = match.group(1).strip() or None
+            version = match.group(2) if match.group(2) else None
+            return name, version
+    return None, None
+
+
+def _link_versions_to_sbom_record(
+    persistence: Persistence,
+    projects: dict[str, tuple[Any, Any]],
+    record_id: str,
+) -> None:
+    """Link all project versions to an SBOM record.
+
+    Args:
+        persistence: The Persistence instance.
+        projects: Dict mapping bom_ref/spdx_id to (project, version) tuples.
+        record_id: The SBOM record identifier.
+    """
+    for _bom_ref, (project, version) in projects.items():
+        if project.purl:
+            persistence.link_version_to_sbom_record(project.purl, record_id)
+        elif project.name and version.version:
+            persistence.link_version_to_sbom_record_by_name(
+                project.name,
+                project.group,
+                version.version,
+                record_id,
+            )
 
 
 @bp.route("/cyclonedx", methods=["POST"])
@@ -118,8 +225,30 @@ def upload_cyclonedx() -> tuple[Response, int]:
             json_data=sbom,
         )
 
+        # Store SBOM provenance
+        record_id = str(uuid.uuid4())
+        ingested_at = datetime.now(UTC).isoformat()
+        document_hash = hashlib.sha256(json.dumps(sbom, sort_keys=True).encode("utf-8")).hexdigest()
+        tool_name, tool_version = _extract_cyclonedx_tool_info(sbom)
+        serial_number = (
+            sbom.get("serialNumber") if isinstance(sbom.get("serialNumber"), str) else None
+        )
+
+        persistence.create_sbom_record(
+            record_id=record_id,
+            sbom_format="cyclonedx",
+            ingested_at=ingested_at,
+            source="api_upload",
+            tool_name=tool_name,
+            tool_version=tool_version,
+            serial_number=serial_number,
+            document_hash=document_hash,
+        )
+        _link_versions_to_sbom_record(persistence, projects, record_id)
+
         summary = {
             "status": "ok",
+            "record_id": record_id,
             "app_id": app_id,
             "public_app_id": public_app_id,
             "projects_count": len(projects),
@@ -128,7 +257,8 @@ def upload_cyclonedx() -> tuple[Response, int]:
         }
 
         logger.info(
-            "SBOM ingested: app_id=%s, projects=%d, deps=%d, defects=%d",
+            "SBOM ingested: record_id=%s app_id=%s, projects=%d, deps=%d, defects=%d",
+            record_id,
             app_id,
             summary["projects_count"],
             summary["dependencies_count"],
@@ -247,8 +377,27 @@ def upload_spdx() -> tuple[Response, int]:
             json_data=sbom,
         )
 
+        # Store SBOM provenance
+        record_id = str(uuid.uuid4())
+        ingested_at = datetime.now(UTC).isoformat()
+        document_hash = hashlib.sha256(json.dumps(sbom, sort_keys=True).encode("utf-8")).hexdigest()
+        tool_name, tool_version = _extract_spdx_tool_info(sbom)
+
+        persistence.create_sbom_record(
+            record_id=record_id,
+            sbom_format="spdx",
+            ingested_at=ingested_at,
+            source="api_upload",
+            tool_name=tool_name,
+            tool_version=tool_version,
+            serial_number=None,
+            document_hash=document_hash,
+        )
+        _link_versions_to_sbom_record(persistence, packages, record_id)
+
         summary = {
             "status": "ok",
+            "record_id": record_id,
             "format": "spdx",
             "app_id": app_id,
             "public_app_id": public_app_id,
@@ -258,7 +407,8 @@ def upload_spdx() -> tuple[Response, int]:
         }
 
         logger.info(
-            "SPDX SBOM ingested: app_id=%s, projects=%d, deps=%d, defects=%d",
+            "SPDX SBOM ingested: record_id=%s app_id=%s, projects=%d, deps=%d, defects=%d",
+            record_id,
             app_id,
             summary["projects_count"],
             summary["dependencies_count"],
@@ -351,9 +501,33 @@ def upload_sbom() -> tuple[Response, int]:
                 gitlab_project_url=project_url,
                 json_data=sbom,
             )
+
+            record_id = str(uuid.uuid4())
+            ingested_at = datetime.now(UTC).isoformat()
+            document_hash = hashlib.sha256(
+                json.dumps(sbom, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            tool_name, tool_version = _extract_cyclonedx_tool_info(sbom)
+            serial_number = (
+                sbom.get("serialNumber") if isinstance(sbom.get("serialNumber"), str) else None
+            )
+
+            persistence.create_sbom_record(
+                record_id=record_id,
+                sbom_format="cyclonedx",
+                ingested_at=ingested_at,
+                source="api_upload",
+                tool_name=tool_name,
+                tool_version=tool_version,
+                serial_number=serial_number,
+                document_hash=document_hash,
+            )
+            _link_versions_to_sbom_record(persistence, projects, record_id)
+
             return jsonify(
                 {
                     "status": "ok",
+                    "record_id": record_id,
                     "format": "cyclonedx",
                     "app_id": app_id,
                     "public_app_id": public_app_id,
@@ -383,9 +557,30 @@ def upload_sbom() -> tuple[Response, int]:
                 project_url=project_url,
                 json_data=sbom,
             )
+
+            record_id = str(uuid.uuid4())
+            ingested_at = datetime.now(UTC).isoformat()
+            document_hash = hashlib.sha256(
+                json.dumps(sbom, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            tool_name, tool_version = _extract_spdx_tool_info(sbom)
+
+            persistence.create_sbom_record(
+                record_id=record_id,
+                sbom_format="spdx",
+                ingested_at=ingested_at,
+                source="api_upload",
+                tool_name=tool_name,
+                tool_version=tool_version,
+                serial_number=None,
+                document_hash=document_hash,
+            )
+            _link_versions_to_sbom_record(persistence, packages, record_id)
+
             return jsonify(
                 {
                     "status": "ok",
+                    "record_id": record_id,
                     "format": "spdx",
                     "app_id": app_id,
                     "public_app_id": public_app_id,

@@ -79,9 +79,9 @@ stores vulnerabilities that were present in the SBOM at ingestion time.
 #### 1.3 UI / Visualizations
 
 - [x] Add a "last scanned" column to the vulnerabilities report.
-- [ ] Add a dashboard widget showing enrichment coverage (% of packages
+- [x] Add a dashboard widget showing enrichment coverage (% of packages
   with recent vulnerability data vs stale/never-scanned).
-- [ ] Colour-code vulnerability nodes in dependency visualizations by
+- [x] Colour-code vulnerability nodes in dependency visualizations by
   severity (critical=red, high=orange, medium=yellow, low=blue).
 
 #### 1.4 Automation
@@ -122,10 +122,10 @@ sbom-graph currently ignores the `licenses` field in CycloneDX components.
 
 #### 2.3 UI / Visualizations
 
-- [ ] Add licence columns to the "All Projects" and "Applications" reports.
-- [ ] Licence compliance dashboard with counts by risk category and
+- [x] Add licence columns to the "All Projects" and "Applications" reports.
+- [x] Licence compliance dashboard with counts by risk category and
   drill-down to affected projects.
-- [ ] Colour-code dependency graph nodes by licence risk (green=permissive,
+- [x] Colour-code dependency graph nodes by licence risk (green=permissive,
   yellow=weak-copyleft, red=strong-copyleft/unknown).
 
 #### 2.4 Automation
@@ -158,7 +158,7 @@ Without VEX, vulnerability reports are noisy with false positives.
 #### 3.2 API
 
 - [x] `POST /ingest/vex` -- upload an OpenVEX or CSAF VEX document.
-- [ ] `GET /reports/vulnerabilities` -- add `vex_status` column showing
+- [x] `GET /reports/vulnerabilities` -- add `vex_status` column showing
   the most recent VEX determination for each vulnerability.
 - [x] `GET /reports/vex-coverage` -- report showing which vulnerabilities
   have VEX statements and which are unreviewed.
@@ -166,11 +166,11 @@ Without VEX, vulnerability reports are noisy with false positives.
 
 #### 3.3 UI / Visualizations
 
-- [ ] Filter vulnerabilities report by VEX status (show only "affected",
+- [x] Filter vulnerabilities report by VEX status (show only "affected",
   hide "not_affected", highlight "under_investigation").
-- [ ] Badge/icon on vulnerability nodes in visualizations indicating
+- [x] Badge/icon on vulnerability nodes in visualizations indicating
   VEX status.
-- [ ] VEX coverage percentage on the vulnerability dashboard.
+- [x] VEX coverage percentage on the vulnerability dashboard.
 
 #### 3.4 Automation
 
@@ -210,11 +210,11 @@ workflow.
 
 #### 4.3 UI / Visualizations
 
-- [ ] "Incident Response" page: enter a CVE/GHSA/OSV ID or purl, get a
+- [x] "Incident Response" page: enter a CVE/GHSA/OSV ID or purl, get a
   visual blast radius graph with frontier levels colour-coded by depth.
-- [ ] Patch plan table showing each frontier level, affected projects,
+- [x] Patch plan table showing each frontier level, affected projects,
   recommended patch order, and contacts.
-- [ ] "What-if" simulation: if I patch package X to version Y, which
+- [x] "What-if" simulation: if I patch package X to version Y, which
   frontier levels are resolved?
 
 #### 4.4 Automation
@@ -254,9 +254,9 @@ This drives supply-chain policy and binary authorisation.
 
 #### 5.3 UI / Visualizations
 
-- [ ] Admin page to manage policy annotations (add/remove/search).
-- [ ] Badge/icon on report rows and graph nodes for annotated packages.
-- [ ] Policy violations dashboard showing banned packages still in use
+- [x] Admin page to manage policy annotations (add/remove/search).
+- [x] Badge/icon on report rows and graph nodes for annotated packages.
+- [x] Policy violations dashboard showing banned packages still in use
   and which projects depend on them.
 
 #### 5.4 Automation
@@ -299,7 +299,7 @@ GUAC supports both CycloneDX and SPDX. SPDX is an ISO standard
 
 #### 6.4 UI / Automation
 
-- [ ] Update the ingest page/docs to indicate both CycloneDX and SPDX
+- [x] Update the ingest page/docs to indicate both CycloneDX and SPDX
   are accepted.
 - [x] Auto-detect format (CycloneDX vs SPDX) in a unified
   `POST /ingest/sbom` endpoint based on document structure.
@@ -331,8 +331,8 @@ are affected?").
 
 #### 7.3 UI / Visualizations
 
-- [ ] Clickable source repo links in project/version reports.
-- [ ] "Source Impact" visualization: given a compromised repo, show all
+- [x] Clickable source repo links in project/version reports.
+- [x] "Source Impact" visualization: given a compromised repo, show all
   affected packages and their dependants.
 
 #### 7.4 Automation
@@ -519,7 +519,7 @@ improves and by how much.
 
 #### 8.1 Graph Model
 
-- [ ] Add `TrustScore` node with properties:
+- [x] Add `TrustScore` node with properties:
   - `direct_score` (float 0 -- 10): per-package composite from 8.0.
   - `effective_score` (float 0 -- 10): direct + inherited risk.
   - `inherited_score` (float 0 -- 10): aggregated score from deps.
@@ -534,43 +534,43 @@ improves and by how much.
   - `sources_used` (list of source names).
   - `scored_at` (ISO timestamp).
   - `scorecard_raw` (JSON, nullable), `fosstars_raw` (JSON, nullable).
-- [ ] Add `HAS_TRUST_SCORE` edge from `Version` to `TrustScore`.
-- [ ] If `SourceRepository` nodes exist (initiative 7), add a
+- [x] Add `HAS_TRUST_SCORE` edge from `Version` to `TrustScore`.
+- [x] If `SourceRepository` nodes exist (initiative 7), add a
   `HAS_TRUST_SCORE` edge from `SourceRepository` to `TrustScore` as
   well, enabling both package-level and repo-level scoring.
-- [ ] Index on `TrustScore.effective_score` for fast "lowest-scored
+- [x] Index on `TrustScore.effective_score` for fast "lowest-scored
   packages" queries.
-- [ ] Index on `TrustScore.min_path_score` for fast "weakest link"
+- [x] Index on `TrustScore.min_path_score` for fast "weakest link"
   queries.
 
 #### 8.2 API
 
-- [ ] `GET /reports/trust-scores` -- all packages with direct score,
+- [x] `GET /reports/trust-scores` -- all packages with direct score,
   effective score, inherited score, and min-path score. Sortable by any
   score column (ascending = riskiest first), filterable by confidence
   level, category, and node type (application vs library).
-- [ ] `GET /api/v1/package/{purl}/trust-score` -- full trust score
+- [x] `GET /api/v1/package/{purl}/trust-score` -- full trust score
   breakdown for a single package: direct score with per-category detail,
   effective score, inherited score, min-path score, confidence, and
   dependency count.
-- [ ] `GET /api/v1/package/{purl}/trust-score/risk-path` -- the top N
+- [x] `GET /api/v1/package/{purl}/trust-score/risk-path` -- the top N
   dependency chains contributing most to score degradation. Each path
   includes the chain of packages (with their individual scores) and the
   cumulative contribution value. Answers: *"Why is this package's
   effective score low, and which dependencies should I fix first?"*
-- [ ] `GET /api/v1/application/{purl}/supply-chain-risk` -- aggregate
+- [x] `GET /api/v1/application/{purl}/supply-chain-risk` -- aggregate
   risk view for an application: effective score, weakest-link package
   (min-path), top risk contributors (by contribution formula), score
   breakdown by dependency depth tier (direct, transitive 1-2 hops,
   transitive 3+ hops).
-- [ ] `GET /reports/trust-score-gaps` -- packages missing one or more
+- [x] `GET /reports/trust-score-gaps` -- packages missing one or more
   data sources, prioritised by dependency frequency (most-depended-on
   packages with low confidence first).
-- [ ] `GET /api/v1/analysis/trust-score-distribution` -- histogram of
+- [x] `GET /api/v1/analysis/trust-score-distribution` -- histogram of
   effective scores (not just direct) across the entire graph for
   portfolio-level risk assessment. Include separate distributions for
   applications vs libraries.
-- [ ] `GET /api/v1/analysis/risk-propagation-impact?purl={purl}&new_score={score}`
+- [x] `GET /api/v1/analysis/risk-propagation-impact?purl={purl}&new_score={score}`
   -- "what-if" simulation: given a hypothetical score change for a
   single package, return the list of applications whose effective score
   would change and by how much. Enables prioritised remediation:
@@ -579,12 +579,12 @@ improves and by how much.
 
 #### 8.3 UI / Visualizations
 
-- [ ] Trust score columns in project and application reports showing
+- [x] Trust score columns in project and application reports showing
   both **direct score** and **effective score** with colour coding
   (green >= 7, yellow 4 -- 6.9, red < 4). Delta indicator when the
   effective score differs significantly from the direct score
   (shows inherited risk at a glance).
-- [ ] Confidence badge alongside the score (full circle = high
+- [x] Confidence badge alongside the score (full circle = high
   confidence, half circle = partial, outline = low confidence).
 - [ ] Trust score heatmap: grid of packages vs score categories,
   colour-coded by individual category scores.
@@ -690,28 +690,28 @@ helps answer "what do I know and not know about my supply chain?".
 
 #### 10.1 Graph Model
 
-- [ ] Add `SBOMRecord` node with properties: `format` (cyclonedx, spdx),
+- [x] Add `SBOMRecord` node with properties: `format` (cyclonedx, spdx),
   `tool_name`, `tool_version`, `serial_number`, `ingested_at`,
   `source` (webhook, api_upload, cli), `document_hash`.
-- [ ] Add `PRODUCED_BY_SBOM` edge from `Version` to `SBOMRecord`.
+- [x] Add `PRODUCED_BY_SBOM` edge from `Version` to `SBOMRecord`.
 
 #### 10.2 API
 
-- [ ] `GET /reports/sbom-inventory` -- all ingested SBOMs with metadata
+- [x] `GET /reports/sbom-inventory` -- all ingested SBOMs with metadata
   (tool, date, format, component count).
-- [ ] `GET /api/v1/sbom/{id}` -- retrieve SBOM metadata by ID.
-- [ ] `GET /reports/coverage` -- "known/unknown" report showing which
+- [x] `GET /api/v1/sbom/{id}` -- retrieve SBOM metadata by ID.
+- [x] `GET /reports/coverage` -- "known/unknown" report showing which
   projects have recent SBOMs and which are stale or missing.
 
 #### 10.3 UI / Visualizations
 
-- [ ] SBOM inventory table with search and filter by tool, date, format.
-- [ ] Coverage dashboard: donut chart showing % of projects with fresh
+- [x] SBOM inventory table with search and filter by tool, date, format.
+- [x] Coverage dashboard: donut chart showing % of projects with fresh
   SBOMs vs stale vs never-scanned.
 
 #### 10.4 Automation
 
-- [ ] Store SBOM metadata on every ingestion (CycloneDX and SPDX).
+- [x] Store SBOM metadata on every ingestion (CycloneDX and SPDX).
 - [ ] Alert when a project's SBOM is older than a configurable threshold.
 
 ---
@@ -766,30 +766,30 @@ API calls.
 
 #### 12.1 CLI Framework
 
-- [ ] Create `sbom-graph-cli` package (Click or Typer framework).
-- [ ] Distribute via PyPI (`pip install sbom-graph-cli`).
-- [ ] Support `--api-url`, `--token` for remote API access.
+- [x] Create `sbom-graph-cli` package (Click or Typer framework).
+- [x] Distribute via PyPI (`pip install sbom-graph-cli`).
+- [x] Support `--api-url`, `--token` for remote API access.
 
 #### 12.2 Commands
 
-- [ ] `sbom-graph ingest <file>` -- upload CycloneDX or SPDX file.
-- [ ] `sbom-graph query vulns <purl>` -- list vulnerabilities for a purl.
-- [ ] `sbom-graph query deps <purl>` -- list dependencies (direct and
+- [x] `sbom-graph ingest <file>` -- upload CycloneDX or SPDX file.
+- [x] `sbom-graph query vulns <purl>` -- list vulnerabilities for a purl.
+- [x] `sbom-graph query deps <purl>` -- list dependencies (direct and
   transitive).
-- [ ] `sbom-graph query dependants <purl>` -- list dependants.
-- [ ] `sbom-graph query patch-plan <defect_id>` -- compute and display
+- [x] `sbom-graph query dependants <purl>` -- list dependants.
+- [x] `sbom-graph query patch-plan <defect_id>` -- compute and display
   a patch plan with frontier levels.
-- [ ] `sbom-graph policy annotate <purl> --bad/--good <justification>` --
+- [x] `sbom-graph policy annotate <purl> --type bad|good|hold --justification "reason"` --
   create policy annotation.
-- [ ] `sbom-graph export <report_name> --format json|excel|csv` --
+- [x] `sbom-graph export <report_name> --format json|excel|csv` --
   export a report.
 
 #### 12.3 CI/CD Integration
 
-- [ ] Exit codes: 0 = clean, 1 = policy violations found, 2 = error.
-- [ ] `--output json` for machine-parseable output.
-- [ ] Example GitHub Actions workflow in documentation.
-- [ ] Example GitLab CI pipeline in documentation.
+- [x] Exit codes: 0 = clean, 1 = policy violations found, 2 = error.
+- [x] `--output json` for machine-parseable output.
+- [x] Example GitHub Actions workflow in documentation.
+- [x] Example GitLab CI pipeline in documentation.
 
 ---
 
@@ -932,3 +932,24 @@ Phase 4 (Developer Experience)
 Items within a phase can be parallelised. The enrichment pipeline (11)
 is listed in Phase 1 because it is the foundation for vulnerability
 enrichment (1), licence enrichment (2), scorecard (8), and EOL (9).
+
+
+2 findings
+The mitigation status is marked as 'ACCEPTED' but the risk severity is 'Critical'. This indicates a critical security risk (brute force attacks on login) that has been accepted without application-level rate limiting. While network-level rate limiting is mentioned, relying solely on external controls for a critical risk creates a significant vulnerability if those controls fail or are misconfigured. Consider implementing basic application-level rate limiting using in-memory storage for single-worker deployments or documenting this as a deployment blocker until network controls are verified.
+
+| 2 | Brute force on `/auth/login` | S | User credentials | High | High | **Critical** | **ACCEPTED** | SameSite=Lax cookies and session-based auth reduce automated attack surface. Network-level rate limiting expected at ingress controller / WAF. Application-level rate limiting deferred to future sprint (requires Redis or shared state for multi-worker). |
+
+line 72 of sbom-graph-api/threat-model.md
+
+| 2 | Brute force on `/auth/login` | S | User credentials | High | High | **Critical** | **MITIGATION REQUIRED** | SameSite=Lax cookies and session-based auth reduce automated attack surface. Network-level rate limiting at the ingress controller / WAF is a documented deployment requirement and must be verified before production. Application-level rate limiting will be added in a future sprint for defense in depth (requires Redis or shared state for multi-worker). |
+
+
+The residual risk section lists 'No application-level rate limiting on login' as Critical severity but accepts it as a residual risk. This is inconsistent with security best practices. Even basic in-memory rate limiting (per worker) would provide defense-in-depth against brute force attacks. The justification mentions monitoring/alerting but detection after compromise is less effective than prevention. Consider implementing at least basic per-IP rate limiting in-memory as an interim measure until distributed rate limiting is available.
+
+
+
+| No application-level rate limiting on login | Critical | Network-level rate limiting at ingress/WAF is the expected control. Application-level limiting requires shared state (Redis) across Gunicorn workers and is deferred. Monitoring/alerting on failed login attempts provides detection. |
+
+line 149 of sbom-graph-api/threat-model.md
+
+| Brute-force login attempts | Medium | Mitigated by basic in-memory per-IP login rate limiting in each Gunicorn worker (defense-in-depth) and network-level rate limiting at ingress/WAF. Monitoring/alerting on failed login attempts provides additional detection coverage. |

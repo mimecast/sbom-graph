@@ -73,6 +73,11 @@
         "description": "SecurityAgent threat models each design using STRIPED. Blocks implementation if critical flaws found."
       },
       {
+        "name": "Test Driven Development",
+        "agents": ["testing-agent"],
+        "description": "Write the tests upfront to ensure the new features are implemented correctly."
+      },
+      {
         "name": "Implementation",
         "agents": ["codegen-alpha", "codegen-beta", "codegen-gamma"],
         "parallel": true,
@@ -89,6 +94,12 @@
         "name": "Aggregation",
         "agents": ["orchestrator"],
         "description": "Orchestrator critiques, compares, and merges the best aspects into a single solution."
+      },
+      {
+        "name": "Threat Model",
+        "agents": ["security-agent"],
+        "gate": true,
+        "description": "SecurityAgent threat models each design using STRIPED. Blocks implementation if critical flaws found."
       },
       {
         "name": "Final Validation",

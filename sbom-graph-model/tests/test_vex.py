@@ -23,7 +23,13 @@ class TestProcessValidDocument:
                 {
                     "status": "not_affected",
                     "vulnerability": {"@id": "CVE-2024-12345"},
-                    "products": [{"identifiers": {"purl": "pkg:maven/com.example/lib@1.0"}}],
+                    "products": [
+                        {
+                            "identifiers": {
+                                "purl": "pkg:maven/com.example/lib@1.0"
+                            }
+                        }
+                    ],
                 },
                 {
                     "status": "affected",

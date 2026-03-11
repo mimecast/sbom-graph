@@ -1,8 +1,8 @@
 # sbom-graph-enrichment
 
 Celery-based enrichment pipeline for the sbom-graph platform. Runs background
-certifiers to enrich graph data with vulnerability, license, and scorecard
-information.
+certifiers to enrich graph data with vulnerability, license, scorecard, and
+trust score information.
 
 ## Architecture
 
@@ -15,6 +15,17 @@ and result backend (database 2), avoiding additional infrastructure.
 |-----------|--------|--------------|
 | `osv` | [OSV.dev](https://osv.dev) | Vulnerability |
 | `clearlydefined` | [ClearlyDefined](https://clearlydefined.io) | License |
+| `scorecard` | [OpenSSF Scorecard](https://scorecard.dev) | Security practices |
+| `ossindex` | [Sonatype OSS Index](https://ossindex.sonatype.org) | Vulnerability |
+| `depsdev` | [deps.dev](https://deps.dev) | Project health |
+
+### Trust Score Computation
+
+The pipeline computes a composite trust score (0–10) for each package by
+aggregating findings from OpenSSF Scorecard, OSV, Sonatype OSS Index, and
+deps.dev. Scores are propagated through the dependency graph with configurable
+alpha blending and depth attenuation. The `propagate_effective_scores` task runs
+periodically to update inherited risk.
 
 ## Development
 

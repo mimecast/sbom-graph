@@ -17,6 +17,9 @@ from sbom_graph_api.services.falkordb_service import (
     FalkorDBService,
     get_falkordb_service,
 )
+from sbom_graph_api.utils.validation import (
+    sanitize_content_disposition,
+)
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -37,12 +40,13 @@ def excel_response(
         Flask response with correct MIME type and
         ``Content-Disposition`` header.
     """
+    safe_disp = sanitize_content_disposition(
+        f"attachment; filename={filename}",
+    )
     return FlaskResponse(
         buffer.getvalue(),
         mimetype=XLSX_MIME,
-        headers={
-            "Content-Disposition": (f"attachment; filename={filename}"),
-        },
+        headers={"Content-Disposition": safe_disp},
     )
 
 
@@ -322,6 +326,22 @@ def create_all_projects_excel(
         service = get_falkordb_service()
 
     projects = service.get_all_projects(limit, internal_only)
+    purls: list[str] = [
+        p["package_url"] for p in projects
+        if isinstance(p.get("package_url"), str)
+    ]
+    policy_map = service.get_policy_annotations_for_purls(purls) if purls else {}
+
+    def _policy_label(purl: str | None) -> str:
+        if purl is None:
+            return ""
+        ptype = policy_map.get(purl, "")
+        label_map = {
+            "bad": "Banned",
+            "good": "Approved",
+            "hold": "Deprecated",
+        }
+        return label_map.get(ptype, "")
 
     wb = Workbook()
     ws = wb.active
@@ -329,14 +349,47 @@ def create_all_projects_excel(
     ws.title = "Internal Projects" if internal_only else "All Projects"
 
     # Headers
-    ws.cell(row=1, column=1, value="Project Name")
-    ws.cell(row=1, column=2, value="Version")
-    style_header_row(ws, 2)
+    headers = [
+        "Project Name",
+        "Version",
+        "Policy",
+        "License",
+        "License Risk",
+        "Source Repo",
+        "Direct Score",
+        "Effective Score",
+        "Confidence",
+    ]
+    for col, header in enumerate(headers, start=1):
+        ws.cell(row=1, column=col, value=header)
+    style_header_row(ws, len(headers))
 
     # Data
     for idx, project in enumerate(projects, start=2):
         ws.cell(row=idx, column=1, value=project["project_name"])
         ws.cell(row=idx, column=2, value=project["version"])
+        ws.cell(
+            row=idx,
+            column=3,
+            value=_policy_label(project.get("package_url")),
+        )
+        ws.cell(row=idx, column=4, value=project.get("spdx_id", ""))
+        ws.cell(row=idx, column=5, value=project.get("risk_category", ""))
+        ws.cell(
+            row=idx,
+            column=6,
+            value=project.get("source_repo_url") or "",
+        )
+        ds = project.get("direct_score")
+        es = project.get("effective_score")
+        conf = project.get("confidence")
+        ws.cell(row=idx, column=7, value=round(ds, 2) if ds is not None else "")
+        ws.cell(row=idx, column=8, value=round(es, 2) if es is not None else "")
+        ws.cell(
+            row=idx,
+            column=9,
+            value=round(conf * 100, 1) if conf is not None else "",
+        )
 
     auto_adjust_column_widths(ws)
 
@@ -353,6 +406,62 @@ def create_all_projects_excel(
     summary_ws.cell(row=3, column=1, value="Filter")
     summary_ws.cell(row=3, column=2, value="Internal Only" if internal_only else "All")
 
+    auto_adjust_column_widths(summary_ws)
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def create_source_impact_excel(
+    impact: dict[str, Any],
+    repo_url: str,
+) -> BytesIO:
+    """Create an Excel file for the source impact report.
+
+    Args:
+        impact: Dict from get_source_repo_impact with packages, stats
+        repo_url: The source repository URL
+
+    Returns:
+        BytesIO buffer containing the Excel file
+    """
+    packages = impact.get("packages", [])
+    stats = impact.get("stats", {})
+
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Source Impact"
+
+    headers = [
+        "Package",
+        "Version",
+        "Direct Dependants",
+        "Transitive Dependants",
+    ]
+    for col, header in enumerate(headers, start=1):
+        ws.cell(row=1, column=col, value=header)
+    style_header_row(ws, len(headers))
+
+    for idx, pkg in enumerate(packages, start=2):
+        ws.cell(row=idx, column=1, value=pkg.get("project_name", ""))
+        ws.cell(row=idx, column=2, value=pkg.get("version", ""))
+        ws.cell(row=idx, column=3, value=pkg.get("direct_dependants", 0))
+        ws.cell(row=idx, column=4, value=pkg.get("transitive_dependants", 0))
+
+    auto_adjust_column_widths(ws)
+
+    summary_ws = wb.create_sheet("Summary")
+    summary_ws.cell(row=1, column=1, value="Source Repository")
+    summary_ws.cell(row=1, column=2, value=repo_url)
+    summary_ws.cell(row=2, column=1, value="Packages from Repo")
+    summary_ws.cell(row=2, column=2, value=stats.get("packages_from_repo", 0))
+    summary_ws.cell(row=3, column=1, value="Total Downstream Consumers")
+    summary_ws.cell(row=3, column=2, value=stats.get("total_downstream_consumers", 0))
+    summary_ws.cell(row=4, column=1, value="Affected Applications")
+    summary_ws.cell(row=4, column=2, value=stats.get("affected_applications", 0))
     auto_adjust_column_widths(summary_ws)
 
     buffer = BytesIO()
@@ -404,6 +513,11 @@ def create_applications_excel(
         "Public ID",
         "Repo URL",
         "Is Internal",
+        "License",
+        "License Risk",
+        "Direct Score",
+        "Effective Score",
+        "Confidence",
     ]
     for col, header in enumerate(headers, start=1):
         ws.cell(row=1, column=col, value=header)
@@ -418,6 +532,18 @@ def create_applications_excel(
         ws.cell(row=idx, column=5, value=app.get("public_id"))
         ws.cell(row=idx, column=6, value=app.get("repo_url"))
         ws.cell(row=idx, column=7, value="Yes" if app.get("is_internal") else "No")
+        ws.cell(row=idx, column=8, value=app.get("spdx_id", ""))
+        ws.cell(row=idx, column=9, value=app.get("risk_category", ""))
+        ds = app.get("direct_score")
+        es = app.get("effective_score")
+        conf = app.get("confidence")
+        ws.cell(row=idx, column=10, value=round(ds, 2) if ds is not None else "")
+        ws.cell(row=idx, column=11, value=round(es, 2) if es is not None else "")
+        ws.cell(
+            row=idx,
+            column=12,
+            value=round(conf * 100, 1) if conf is not None else "",
+        )
 
     auto_adjust_column_widths(ws)
 
@@ -954,6 +1080,8 @@ def create_vulnerabilities_excel(
         "Title",
         "CWE",
         "Published Date",
+        "Last Scanned",
+        "VEX Status",
         "Affected Project",
         "Affected Version",
     ]
@@ -1140,6 +1268,90 @@ def create_vulnerability_dependants_excel(
     return buffer
 
 
+def create_incident_response_excel(
+    defect_id: str,
+    blast_radius: dict[str, Any],
+    patch_plan: list[dict[str, Any]],
+    internal_only: bool = False,  # noqa: ARG001  # pylint: disable=unused-argument
+) -> BytesIO:
+    """Create Excel file for incident response report.
+
+    Two sheets: Blast Radius (affected packages/apps) and Patch Plan.
+
+    Args:
+        defect_id: The vulnerability ID (used in sheet title).
+        blast_radius: Dict from get_blast_radius.
+        patch_plan: List from get_patch_plan.
+        internal_only: Reserved for future filter mode.
+
+    Returns:
+        BytesIO buffer containing the Excel file.
+    """
+    wb = Workbook()
+    ws_br = wb.active
+    assert ws_br is not None
+    ws_br.title = f"Blast Radius - {defect_id[:30]}"
+
+    headers_br = [
+        "Project Name",
+        "Version",
+        "PURL",
+        "Type",
+    ]
+    for col, h in enumerate(headers_br, 1):
+        ws_br.cell(row=1, column=col, value=h)
+    style_header_row(ws_br, len(headers_br))
+
+    row_idx = 2
+    for av in blast_radius.get("affected_versions", []):
+        ws_br.cell(row=row_idx, column=1, value=av.get("project_name", ""))
+        ws_br.cell(row=row_idx, column=2, value=av.get("version", ""))
+        ws_br.cell(row=row_idx, column=3, value="")
+        ws_br.cell(row=row_idx, column=4, value="affected")
+        row_idx += 1
+
+    for app in blast_radius.get("affected_applications", []):
+        ws_br.cell(row=row_idx, column=1, value=app.get("project_name", ""))
+        ws_br.cell(row=row_idx, column=2, value=app.get("version", ""))
+        ws_br.cell(row=row_idx, column=3, value=app.get("purl", ""))
+        ws_br.cell(row=row_idx, column=4, value="application")
+        row_idx += 1
+
+    auto_adjust_column_widths(ws_br)
+
+    ws_pp = wb.create_sheet("Patch Plan")
+    headers_pp = [
+        "Priority",
+        "Package",
+        "Version",
+        "PURL",
+        "Direct?",
+        "Dependant Count",
+        "Recommended Action",
+    ]
+    for col, h in enumerate(headers_pp, 1):
+        ws_pp.cell(row=1, column=col, value=h)
+    style_header_row(ws_pp, len(headers_pp))
+
+    row_idx = 2
+    for item in patch_plan:
+        ws_pp.cell(row=row_idx, column=1, value=item.get("priority", ""))
+        ws_pp.cell(row=row_idx, column=2, value=item.get("project_name", ""))
+        ws_pp.cell(row=row_idx, column=3, value=item.get("version_name", ""))
+        ws_pp.cell(row=row_idx, column=4, value=item.get("purl", ""))
+        ws_pp.cell(row=row_idx, column=5, value="Yes" if item.get("is_direct") else "No")
+        ws_pp.cell(row=row_idx, column=6, value=item.get("dependant_count", 0))
+        ws_pp.cell(row=row_idx, column=7, value=item.get("recommended_action", ""))
+        row_idx += 1
+
+    auto_adjust_column_widths(ws_pp)
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
 def create_centrality_excel(
     centrality_data: list[dict[str, Any]],
 ) -> BytesIO:
@@ -1262,3 +1474,68 @@ def create_generic_excel(
     buf.seek(0)
 
     return excel_response(buf, filename)
+
+
+def create_license_dashboard_excel(
+    data: dict[str, Any],
+    internal_only: bool = False,
+) -> BytesIO:
+    """Create an Excel file for the licence compliance dashboard.
+
+    Args:
+        data: Dict with total_packages and categories (each with
+            count, pct, packages list).
+        internal_only: If True, indicates internal-only filter was applied.
+
+    Returns:
+        BytesIO buffer containing the Excel file.
+    """
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "License Dashboard"
+
+    headers = [
+        "Risk Category",
+        "PURL",
+        "Project Name",
+        "Version",
+        "SPDX ID",
+        "License Name",
+    ]
+    for col, header in enumerate(headers, start=1):
+        ws.cell(row=1, column=col, value=header)
+    style_header_row(ws, len(headers))
+
+    row_idx = 2
+    categories = data.get("categories", {})
+    for cat_key, cat_data in categories.items():
+        for pkg in cat_data.get("packages", []):
+            ws.cell(row=row_idx, column=1, value=cat_key.replace("_", " "))
+            ws.cell(row=row_idx, column=2, value=pkg.get("purl", ""))
+            ws.cell(row=row_idx, column=3, value=pkg.get("project_name", ""))
+            ws.cell(row=row_idx, column=4, value=pkg.get("version_name", ""))
+            ws.cell(row=row_idx, column=5, value=pkg.get("spdx_id", ""))
+            ws.cell(row=row_idx, column=6, value=pkg.get("license_name", ""))
+            row_idx += 1
+
+    auto_adjust_column_widths(ws)
+
+    summary_ws = wb.create_sheet("Summary")
+    summary_ws.cell(row=1, column=1, value="Total Packages")
+    summary_ws.cell(row=1, column=2, value=data.get("total_packages", 0))
+    summary_ws.cell(row=2, column=1, value="Filter")
+    summary_ws.cell(row=2, column=2, value="Internal Only" if internal_only else "All")
+    row = 3
+    for cat_key, cat_data in categories.items():
+        summary_ws.cell(row=row, column=1, value=cat_key.replace("_", " "))
+        summary_ws.cell(row=row, column=2, value=cat_data.get("count", 0))
+        summary_ws.cell(row=row, column=3, value=f"{cat_data.get('pct', 0)}%")
+        row += 1
+
+    auto_adjust_column_widths(summary_ws)
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer

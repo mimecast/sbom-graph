@@ -198,9 +198,7 @@ class UserStorageService:
 
             # Check if username already exists
             existing = (
-                session.query(LocalUser)
-                .filter(LocalUser.username == username)
-                .first()  # pyright: ignore[reportGeneralTypeIssues]
+                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
             )
             if existing:
                 session.close()
@@ -334,9 +332,7 @@ class UserStorageService:
         try:
             session = self._get_session()
             user = (
-                session.query(LocalUser)
-                .filter(LocalUser.id == user_id)
-                .first()  # pyright: ignore[reportGeneralTypeIssues]
+                session.query(LocalUser).filter(LocalUser.id == user_id).first()  # pyright: ignore[reportGeneralTypeIssues]
             )
 
             if user:
@@ -361,9 +357,7 @@ class UserStorageService:
         try:
             session = self._get_session()
             user = (
-                session.query(LocalUser)
-                .filter(LocalUser.username == username)
-                .first()  # pyright: ignore[reportGeneralTypeIssues]
+                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
             )
 
             if user:
@@ -384,9 +378,7 @@ class UserStorageService:
         try:
             session = self._get_session()
             users = (
-                session.query(LocalUser)
-                .order_by(LocalUser.username)
-                .all()  # pyright: ignore[reportGeneralTypeIssues]
+                session.query(LocalUser).order_by(LocalUser.username).all()  # pyright: ignore[reportGeneralTypeIssues]
             )
 
             # Detach all users
@@ -419,9 +411,7 @@ class UserStorageService:
             session = self._get_session()
 
             user = (
-                session.query(LocalUser)
-                .filter(LocalUser.username == username)
-                .first()  # pyright: ignore[reportGeneralTypeIssues]
+                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
             )
 
             if not user:
@@ -465,9 +455,7 @@ class UserStorageService:
             session = self._get_session()
 
             user = (
-                session.query(LocalUser)
-                .filter(LocalUser.username == username)
-                .first()  # pyright: ignore[reportGeneralTypeIssues]
+                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
             )
 
             if not user:
@@ -507,9 +495,7 @@ class UserStorageService:
             session = self._get_session()
 
             user = (
-                session.query(LocalUser)
-                .filter(LocalUser.username == username)
-                .first()  # pyright: ignore[reportGeneralTypeIssues]
+                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
             )
 
             if not user:
@@ -545,9 +531,7 @@ class UserStorageService:
             session = self._get_session()
 
             user = (
-                session.query(LocalUser)
-                .filter(LocalUser.username == username)
-                .first()  # pyright: ignore[reportGeneralTypeIssues]
+                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
             )
 
             if not user:
@@ -582,9 +566,7 @@ class UserStorageService:
             session = self._get_session()
 
             user = (
-                session.query(LocalUser)
-                .filter(LocalUser.username == username)
-                .first()  # pyright: ignore[reportGeneralTypeIssues]
+                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
             )
 
             if not user:
@@ -622,9 +604,7 @@ class UserStorageService:
             session = self._get_session()
 
             user = (
-                session.query(LocalUser)
-                .filter(LocalUser.username == username)
-                .first()  # pyright: ignore[reportGeneralTypeIssues]
+                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
             )
 
             if not user:

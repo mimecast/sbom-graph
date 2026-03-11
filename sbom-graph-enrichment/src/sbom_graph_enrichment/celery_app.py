@@ -96,7 +96,11 @@ class _RedactSecretsFilter(logging.Filter):
         if record.args:
             if isinstance(record.args, dict):
                 record.args = {
-                    k: _REDIS_URL_RE.sub(r"\1:*****@", str(v)) if isinstance(v, str) else v
+                    k: (
+                        _REDIS_URL_RE.sub(r"\1:*****@", str(v))
+                        if isinstance(v, str)
+                        else v
+                    )
                     for k, v in record.args.items()
                 }
             elif isinstance(record.args, tuple):

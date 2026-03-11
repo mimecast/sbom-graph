@@ -11,7 +11,7 @@ import operator
 from functools import reduce
 from typing import Optional
 
-from ..model import Defect, License, Project, Version, VersionDefect
+from ..model import Defect, License, Project, ProjectType, Version, VersionDefect
 from ..persistence import Persistence
 from ..vcs import parse_repo_url
 
@@ -66,24 +66,34 @@ class CycloneDXProcessor:
             raise CycloneDXValidationError("'metadata' must be a JSON object")
 
         if "component" not in metadata:
-            raise CycloneDXValidationError("Missing required field: 'metadata.component'")
+            raise CycloneDXValidationError(
+                "Missing required field: 'metadata.component'"
+            )
 
         component = metadata["component"]
         if not isinstance(component, dict):
             raise CycloneDXValidationError("'metadata.component' must be a JSON object")
 
         if "bom-ref" not in component:
-            raise CycloneDXValidationError("Missing required field: 'metadata.component.bom-ref'")
+            raise CycloneDXValidationError(
+                "Missing required field: 'metadata.component.bom-ref'"
+            )
 
         if "name" not in component:
-            raise CycloneDXValidationError("Missing required field: 'metadata.component.name'")
+            raise CycloneDXValidationError(
+                "Missing required field: 'metadata.component.name'"
+            )
 
         for section, expected_type in [
             ("components", list),
             ("dependencies", list),
             ("vulnerabilities", list),
         ]:
-            if section in json_data and not isinstance(json_data[section], expected_type):
+            present = section in json_data
+            wrong_type = present and not isinstance(
+                json_data[section], expected_type
+            )
+            if wrong_type:
                 raise CycloneDXValidationError(
                     f"'{section}' must be a {expected_type.__name__}"
                 )
@@ -110,7 +120,7 @@ class CycloneDXProcessor:
         Returns:
             The property value, or empty string if not found.
         """
-        logger.debug(f"Looking for property {property_name} in {properties}")
+        logger.debug("Looking for property %s in %s", property_name, properties)
         for prop in properties:
             if prop['name'] == property_name:
                 return prop['value']
@@ -145,10 +155,18 @@ class CycloneDXProcessor:
         application.public_app_id = public_app_id
         application.name = component.get('name')
         application.group = component.get('group')
-        application.type = component.get('type')
+        raw_type = component.get('type')
+        if raw_type is not None:
+            application.type = (
+                ProjectType.Application
+                if str(raw_type).lower() == 'application'
+                else ProjectType.Library
+            )
         application.purl = component.get('purl')
         application.repo = gitlab_project_url
-        application.licenses = CycloneDXProcessor.parse_licenses_from_component(component)
+        application.licenses = (
+            CycloneDXProcessor.parse_licenses_from_component(component)
+        )
 
         version = Version()
         version.scan_id = scan_id
@@ -178,9 +196,17 @@ class CycloneDXProcessor:
         project = Project()
         project.name = json_component.get('name')
         project.group = json_component.get('group')
-        project.type = json_component.get('type')
+        raw_type = json_component.get('type')
+        if raw_type is not None:
+            project.type = (
+                ProjectType.Application
+                if str(raw_type).lower() == 'application'
+                else ProjectType.Library
+            )
         project.purl = json_component.get('purl')
-        project.licenses = CycloneDXProcessor.parse_licenses_from_component(json_component)
+        project.licenses = (
+            CycloneDXProcessor.parse_licenses_from_component(json_component)
+        )
 
         version = Version()
         version.project = project
@@ -284,7 +310,9 @@ class CycloneDXProcessor:
         )
 
         if len(cyclone_dx_json['ratings']) > 1:
-            raise ValueError('Vulnerability has multiple ratings - this is not currently handled')
+            raise ValueError(
+                'Vulnerability has multiple ratings - not currently handled'
+            )
 
         defect.severity = cyclone_dx_json['ratings'][0]['severity']
         defect.cwes = cyclone_dx_json.get('cwes', [])
@@ -313,7 +341,7 @@ class CycloneDXProcessor:
             if ref and ref in projects:
                 result.append(projects[ref][1])
             else:
-                logger.warning(f"Reference {ref} not found in projects")
+                logger.warning("Reference %s not found in projects", ref)
         return result
 
     def process_cyclone_dx_json(
@@ -358,8 +386,10 @@ class CycloneDXProcessor:
         # Parse components
         if 'components' in json_data:
             projects.update({
-                component['bom-ref']: self.parse_component_from_cyclone_dx(component, scan_id)
-                for component in json_data['components']
+                comp['bom-ref']: self.parse_component_from_cyclone_dx(
+                    comp, scan_id
+                )
+                for comp in json_data['components']
             })
 
         # Parse dependencies
@@ -390,7 +420,9 @@ class CycloneDXProcessor:
         dependency_versions_ref_set.update(
             reduce(operator.iconcat, dependency_versions.values(), [])
         )
-        unlinked_libraries = set(projects.keys()).difference(dependency_versions_ref_set)
+        unlinked_libraries = set(projects.keys()).difference(
+            dependency_versions_ref_set
+        )
 
         if len(unlinked_libraries) > 0:
             if bom_ref not in dependency_versions:
@@ -423,7 +455,7 @@ class CycloneDXProcessor:
         logger.info("Persisting %d project versions", len(projects))
         for project, version in projects.values():
             if version is None:
-                logger.warning(f"Skipping project {project}: version is None")
+                logger.warning("Skipping project %s: version is None", project)
                 continue
             self.persistence.create_project_version(version=version)
 
@@ -499,25 +531,28 @@ class CycloneDXProcessor:
             dependency_versions: Dictionary mapping parent ref to set of child refs.
             projects: Dictionary mapping bom-ref to (Project, Version) tuples.
         """
-        logger.info("Persisting dependency edges for %d parent refs", len(dependency_versions))
+        logger.info(
+            "Persisting dependency edges for %d parent refs",
+            len(dependency_versions),
+        )
         for ref, dependency_refs in dependency_versions.items():
             if ref not in projects:
-                logger.warning(f"Parent reference {ref} not found in projects")
+                logger.warning("Parent reference %s not found in projects", ref)
                 continue
 
             parent = projects[ref][1]
             if parent is None:
-                logger.warning(f"Parent version is None for ref {ref}")
+                logger.warning("Parent version is None for ref %s", ref)
                 continue
 
             for dep_ref in dependency_refs:
                 if dep_ref not in projects:
-                    logger.warning(f"Child reference {dep_ref} not found in projects")
+                    logger.warning("Child reference %s not found in projects", dep_ref)
                     continue
 
                 child = projects[dep_ref][1]
                 if child is None:
-                    logger.warning(f"Child version is None for ref {dep_ref}")
+                    logger.warning("Child version is None for ref %s", dep_ref)
                     continue
 
                 self.persistence.create_dependency(parent=parent, child=child)
@@ -565,7 +600,7 @@ class CycloneDXProcessor:
 
             for version in versions:
                 if version is None:
-                    logger.warning(f"Skipping None version for defect {defect.id}")
+                    logger.warning("Skipping None version for defect %s", defect.id)
                     continue
 
                 version_defect = VersionDefect()

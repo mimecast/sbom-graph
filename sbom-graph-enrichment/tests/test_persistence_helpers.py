@@ -138,3 +138,15 @@ class TestCreatePersistence:
             ssl_ca_certs="/tls/ca.crt",
             internal_prefixes=["group:com.acme"],
         )
+
+    @patch("sbom_graph_enrichment.persistence_helpers.Persistence")
+    def test_ssl_ca_certs_from_env(
+        self, mock_cls: MagicMock, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        monkeypatch.setenv("FALKORDB_CACERTS", "/custom/ca.pem")
+
+        create_persistence()
+
+        mock_cls.assert_called_once()
+        call_kwargs = mock_cls.call_args.kwargs
+        assert call_kwargs["ssl_ca_certs"] == "/custom/ca.pem"

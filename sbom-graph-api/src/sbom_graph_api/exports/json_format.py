@@ -324,6 +324,30 @@ def vulnerability_dependants_json(
     return payload, filename
 
 
+def incident_response_json(
+    defect_id: str,
+    blast_radius: dict[str, Any],
+    patch_plan: list[dict[str, Any]],
+    internal_only: bool,
+) -> tuple[dict[str, Any], str]:
+    """Build the JSON payload for *incident-response* report."""
+    payload = {
+        "report_type": "incident-response",
+        "generated_at": _ts(),
+        "filter": "internal_only" if internal_only else "all",
+        "defect_id": defect_id,
+        "blast_radius": blast_radius,
+        "patch_plan": patch_plan,
+        "stats": {
+            "affected_versions": len(blast_radius.get("affected_versions", [])),
+            "affected_applications": len(blast_radius.get("affected_applications", [])),
+            "patch_plan_items": len(patch_plan),
+        },
+    }
+    filename = f"incident_response_{_safe_name(defect_id)}.json"
+    return payload, filename
+
+
 def centrality_json(
     centrality_data: list[dict[str, Any]],
     total_libs: int,
@@ -418,6 +442,30 @@ def policy_violations_json(
     return payload, "policy_violations.json"
 
 
+def enrichment_coverage_json(
+    data: dict[str, Any],
+    internal_only: bool,
+) -> tuple[dict[str, Any], str]:
+    """Build the JSON payload for *enrichment-coverage*."""
+    filename = "enrichment_coverage_internal.json" if internal_only else "enrichment_coverage.json"
+    payload = {
+        "report_type": "enrichment-coverage",
+        "generated_at": _ts(),
+        "filter": "internal_only" if internal_only else "all",
+        "stats": {
+            "total": data["total"],
+            "recent": data["recent"],
+            "stale": data["stale"],
+            "never": data["never"],
+            "recent_pct": data["recent_pct"],
+            "stale_pct": data["stale_pct"],
+            "never_pct": data["never_pct"],
+        },
+        "packages": data["packages"],
+    }
+    return payload, filename
+
+
 def vex_coverage_json(
     coverage: dict[str, Any],
     vulns: list[dict[str, Any]],
@@ -432,6 +480,27 @@ def vex_coverage_json(
         "data": vulns,
     }
     return payload, "vex_coverage.json"
+
+
+def license_dashboard_json(
+    data: dict[str, Any],
+    internal_only: bool,
+) -> tuple[dict[str, Any], str]:
+    """Build the JSON payload for *license-dashboard*."""
+    filename = "license_dashboard_internal.json" if internal_only else "license_dashboard.json"
+    payload = {
+        "report_type": "license-dashboard",
+        "generated_at": _ts(),
+        "filter": "internal_only" if internal_only else "all",
+        "stats": {
+            "total_packages": data["total_packages"],
+            "categories": {
+                k: {"count": v["count"], "pct": v["pct"]} for k, v in data["categories"].items()
+            },
+        },
+        "categories": data["categories"],
+    }
+    return payload, filename
 
 
 def license_conflicts_json(
@@ -462,3 +531,23 @@ def source_repos_json(
         "total": len(repos),
     }
     return payload, "source_repos.json"
+
+
+def source_impact_json(
+    impact: dict[str, Any],
+    repo_url: str,
+) -> tuple[dict[str, Any], str]:
+    """Build the JSON payload for *source-impact* report."""
+    filename = _safe_name(repo_url) + "_source_impact.json"
+    payload = {
+        "report_type": "source-impact",
+        "generated_at": _ts(),
+        "repo_url": repo_url,
+        "stats": impact.get("stats", {}),
+        "packages": impact.get("packages", []),
+        "dependants": impact.get("dependants", []),
+        "affected_applications": impact.get("affected_applications", []),
+        "graph_nodes": impact.get("graph_nodes", []),
+        "graph_edges": impact.get("graph_edges", []),
+    }
+    return payload, filename

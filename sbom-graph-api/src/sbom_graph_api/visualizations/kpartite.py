@@ -41,6 +41,46 @@ def get_partition_color(partition: int) -> str:
     return PARTITION_COLORS[-1]
 
 
+def get_severity_color(severity: str) -> str | None:
+    """Return hex colour for vulnerability severity, or None if unknown.
+
+    Args:
+        severity: CRITICAL, HIGH, MEDIUM, or LOW (case-insensitive).
+
+    Returns:
+        Hex colour string, or None if severity is not recognised.
+    """
+    mapping = {
+        "CRITICAL": "#d32f2f",
+        "HIGH": "#f57c00",
+        "MEDIUM": "#fbc02d",
+        "LOW": "#377eb8",
+    }
+    return mapping.get((severity or "").upper())
+
+
+def get_license_risk_color(risk_category: str) -> str | None:
+    """Return hex colour for licence risk category, or None if unknown.
+
+    Colour priority in visualizations: severity > licence risk > partition.
+
+    Args:
+        risk_category: permissive, weak_copyleft, strong_copyleft,
+            proprietary, or unknown (case-insensitive).
+
+    Returns:
+        Hex colour string, or None if risk_category is not recognised.
+    """
+    mapping = {
+        "permissive": "#388e3c",
+        "weak_copyleft": "#fbc02d",
+        "strong_copyleft": "#d32f2f",
+        "proprietary": "#7b1fa2",
+        "unknown": "#757575",
+    }
+    return mapping.get((risk_category or "").lower())
+
+
 def calculate_partitions_longest_path(graph: nx.DiGraph, root_id: str) -> dict[str, int]:
     """Calculate partition levels based on the LONGEST path from root to each node.
 
@@ -174,6 +214,20 @@ def create_kpartite_visualization(
     # Calculate partitions using longest path
     partitions = calculate_partitions_longest_path(graph, root_id)
 
+    # Query vulnerability severities, licence risks, and VEX status for nodes
+    purls = [
+        d.get("properties", {}).get("package_url")
+        for d in node_data.values()
+        if d.get("properties", {}).get("package_url")
+    ]
+    severity_map: dict[str, str] = {}
+    license_risk_map: dict[str, str] = {}
+    vex_status_map: dict[str, str] = {}
+    if purls:
+        severity_map = service.get_vulnerability_severities_for_versions(purls)
+        license_risk_map = service.get_license_risks_for_versions(purls)
+        vex_status_map = service.get_vex_statuses_for_versions(purls)
+
     # Create PyVis network
     net = Network(
         notebook=False,
@@ -216,15 +270,30 @@ def create_kpartite_visualization(
     """
     )
 
+    # Unicode shield for not_affected VEX status (U+1F6E1)
+    _vex_shield = "\U0001f6e1"
+
     # Add nodes to PyVis
     for node_id, data in node_data.items():
         partition = partitions.get(node_id, 0)
-        color = get_partition_color(partition)
+        purl = data.get("properties", {}).get("package_url")
+        severity = severity_map.get(purl) if purl else None
+        risk_category = license_risk_map.get(purl) if purl else None
+        vex_status = vex_status_map.get(purl) if purl else None
+        severity_color = get_severity_color(severity) if severity else None
+        license_color = get_license_risk_color(risk_category) if risk_category else None
+        color = (
+            severity_color
+            if severity_color
+            else (license_color if license_color else get_partition_color(partition))
+        )
 
         # Escape all user-controlled data to prevent XSS
         safe_project = escape(data["project_name"])
         safe_version = escape(data["version"])
         label = f"{safe_project}\n{safe_version}"
+        if vex_status == "not_affected":
+            label += f" {_vex_shield}"
 
         labels_str = escape(", ".join(data.get("labels", [])))
         properties = data.get("properties", {})
@@ -235,6 +304,12 @@ def create_kpartite_visualization(
             f"Partition Level: {partition}\n",
             f"Labels: {labels_str}\n",
         ]
+        if severity:
+            title_parts.append(f"Highest vulnerability severity: {severity}\n")
+        if risk_category:
+            title_parts.append(f"License risk: {escape(risk_category.replace('_', ' '))}\n")
+        if vex_status:
+            title_parts.append(f"VEX status: {escape(vex_status.replace('_', ' '))}\n")
 
         if properties:
             title_parts.append("=======================\n")

@@ -16,7 +16,39 @@ from sbom_graph_api.visualizations.kpartite import (
     create_kpartite_visualization,
     format_properties_for_tooltip,
     get_partition_color,
+    get_severity_color,
 )
+
+
+class TestGetSeverityColor:
+    """Tests for get_severity_color function."""
+
+    def test_critical_returns_red(self):
+        """CRITICAL severity returns red hex colour."""
+        assert get_severity_color("CRITICAL") == "#d32f2f"
+
+    def test_high_returns_orange(self):
+        """HIGH severity returns orange hex colour."""
+        assert get_severity_color("HIGH") == "#f57c00"
+
+    def test_medium_returns_yellow(self):
+        """MEDIUM severity returns yellow hex colour."""
+        assert get_severity_color("MEDIUM") == "#fbc02d"
+
+    def test_low_returns_blue(self):
+        """LOW severity returns blue hex colour."""
+        assert get_severity_color("LOW") == "#377eb8"
+
+    def test_case_insensitive(self):
+        """Severity is case-insensitive."""
+        assert get_severity_color("critical") == "#d32f2f"
+        assert get_severity_color("High") == "#f57c00"
+
+    def test_unknown_returns_none(self):
+        """Unknown severity returns None."""
+        assert get_severity_color("UNKNOWN") is None
+        assert get_severity_color("") is None
+        assert get_severity_color(None) is None
 
 
 class TestPartitionColors:
@@ -221,6 +253,7 @@ class TestCreateKpartiteVisualization:
             "labels": ["Version"],
         }
         mock_service.get_transitive_dependencies.return_value = ([], [])
+        mock_service.get_vulnerability_severities_for_versions.return_value = {}
 
         create_kpartite_visualization(
             project_name="test",
@@ -237,6 +270,48 @@ class TestCreateKpartiteVisualization:
             True,
             project_group=None,
         )
+
+    def test_queries_severity_when_nodes_have_package_url(self):
+        """Severity lookup is called when nodes have package_url."""
+        mock_service = MagicMock()
+        mock_service.find_version.return_value = {
+            "properties": {
+                "project_name": "root",
+                "name": "1.0.0",
+                "package_url": "pkg:maven/com.example/root@1.0",
+            },
+            "labels": ["Version"],
+        }
+        mock_service.get_transitive_dependencies.return_value = (
+            [
+                {
+                    "id": "root:1.0.0",
+                    "project_name": "root",
+                    "version": "1.0.0",
+                    "labels": ["Version"],
+                    "properties": {
+                        "project_name": "root",
+                        "name": "1.0.0",
+                        "package_url": "pkg:maven/com.example/root@1.0",
+                    },
+                },
+            ],
+            [],
+        )
+        mock_service.get_vulnerability_severities_for_versions.return_value = {
+            "pkg:maven/com.example/root@1.0": "HIGH",
+        }
+
+        result = create_kpartite_visualization(
+            project_name="root",
+            version_name="1.0.0",
+            service=mock_service,
+        )
+
+        assert result is not None
+        mock_service.get_vulnerability_severities_for_versions.assert_called_once()
+        call_args = mock_service.get_vulnerability_severities_for_versions.call_args
+        assert "pkg:maven/com.example/root@1.0" in call_args[0][0]
 
     # Negative tests
 
@@ -612,3 +687,81 @@ class TestCreateDependenciesGraphVisualization:
         )
 
         assert result is None
+
+
+class TestCreateSourceImpactGraph:
+    """Tests for create_source_impact_graph visualization."""
+
+    def test_returns_html_with_nodes_and_edges(self):
+        """Graph with nodes and edges returns self-contained HTML."""
+        from sbom_graph_api.visualizations.source_impact import (
+            NODE_COLORS,
+            create_source_impact_graph,
+        )
+
+        nodes = [
+            {"id": "repo:url", "label": "https://github.com/org/repo", "type": "source_repo"},
+            {"id": "pkg:a", "label": "pkg-a", "type": "package"},
+            {"id": "app:b", "label": "app-b", "type": "application"},
+        ]
+        edges = [
+            {"source": "repo:url", "target": "pkg:a", "type": "HAS_SOURCE"},
+            {"source": "pkg:a", "target": "app:b", "type": "DEPENDS_ON"},
+        ]
+
+        html = create_source_impact_graph(nodes, edges)
+
+        assert isinstance(html, str)
+        assert "vis-network" in html or "pyvis" in html.lower() or "<html" in html.lower()
+        assert "repo:url" in html or "pkg-a" in html
+        assert NODE_COLORS["source_repo"] in html
+        assert NODE_COLORS["package"] in html
+        assert NODE_COLORS["application"] in html
+
+    def test_empty_graph_returns_html(self):
+        """Empty nodes and edges still returns valid HTML."""
+        from sbom_graph_api.visualizations.source_impact import create_source_impact_graph
+
+        html = create_source_impact_graph([], [])
+
+        assert isinstance(html, str)
+        assert len(html) > 0
+
+    def test_custom_dimensions(self):
+        """Custom height and width are applied."""
+        from sbom_graph_api.visualizations.source_impact import create_source_impact_graph
+
+        html = create_source_impact_graph(
+            [{"id": "n1", "label": "Node", "type": "dependant"}],
+            [],
+            height="800px",
+            width="90%",
+        )
+
+        assert "800" in html or "90" in html
+
+    def test_unknown_node_type_uses_default_color(self):
+        """Unknown node type uses fallback grey color."""
+        from sbom_graph_api.visualizations.source_impact import create_source_impact_graph
+
+        nodes = [{"id": "x", "label": "Unknown", "type": "custom_type"}]
+        html = create_source_impact_graph(nodes, [])
+
+        assert "#999999" in html
+
+    def test_skips_empty_source_or_target_edges(self):
+        """Edges with empty source or target are skipped (no crash)."""
+        from sbom_graph_api.visualizations.source_impact import create_source_impact_graph
+
+        nodes = [
+            {"id": "a", "label": "A", "type": "package"},
+            {"id": "b", "label": "B", "type": "dependant"},
+        ]
+        edges = [
+            {"source": "a", "target": "b", "type": "DEP"},
+            {"source": "", "target": "b", "type": "DEP"},
+            {"source": "a", "target": "", "type": "DEP"},
+        ]
+
+        html = create_source_impact_graph(nodes, edges)
+        assert isinstance(html, str)

@@ -214,7 +214,8 @@ class AppConfig:
         return cls(
             debug=os.environ.get("FLASK_DEBUG", "false").lower() == "true",
             host=os.environ.get(  # nosec B104
-                "FLASK_HOST", "0.0.0.0",
+                "FLASK_HOST",
+                "0.0.0.0",
             ),
             port=int(os.environ.get("FLASK_PORT", "8080")),
             secret_key=os.environ.get("FLASK_SECRET_KEY", "dev-secret-key-change-in-production"),

@@ -5,6 +5,8 @@ from typing import Any
 
 from flask import Response, jsonify
 
+from sbom_graph_api.utils.validation import sanitize_content_disposition
+
 TABLE_TEMPLATE = "table.html"
 
 
@@ -40,9 +42,8 @@ def build_json_response(
         Flask Response with JSON content
     """
     response = jsonify(data)
-    response.headers["Content-Disposition"] = (
-        f'attachment; filename="{filename}"'
-    )
+    safe_header = sanitize_content_disposition(filename).replace("inline", "attachment")
+    response.headers["Content-Disposition"] = safe_header
     return response
 
 

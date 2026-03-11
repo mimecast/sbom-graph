@@ -1,0 +1,12 @@
+{
+  "@context": "https://openvex.dev/ns",
+  "@id": "https://example.com/vex/doc-1",
+  "timestamp": "2024-06-01T00:00:00Z",
+  "statements": [
+    {
+      "status": "not_affected",
+      "vulnerability": {"@id": "CVE-2024-12345"},
+      "products": [{"identifiers": {"purl": "pkg:maven/com.example/lib@1.0"}}]
+    }
+  ]
+}
