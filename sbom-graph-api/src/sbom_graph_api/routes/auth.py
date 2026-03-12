@@ -66,7 +66,7 @@ _LOGIN_CLEANUP_INTERVAL = 300  # purge stale entries every 5 min
 
 _login_attempts: dict[str, tuple[int, float]] = {}
 _login_lock = threading.Lock()
-_last_cleanup = time.monotonic()
+_login_state = {"last_cleanup": time.monotonic()}
 
 
 def _cleanup_stale_entries() -> None:
@@ -86,16 +86,16 @@ def _check_login_rate_limit() -> tuple[Response, int] | None:
 
     Returns ``None`` when the request is within limits.
     """
-    global _last_cleanup  # noqa: PLW0603
 
     client_ip = request.remote_addr or "unknown"
     now = time.monotonic()
 
     with _login_lock:
         # Periodic housekeeping to prevent unbounded memory growth
-        if now - _last_cleanup > _LOGIN_CLEANUP_INTERVAL:
+        last_cleanup = _login_state["last_cleanup"]
+        if now - last_cleanup > _LOGIN_CLEANUP_INTERVAL:
             _cleanup_stale_entries()
-            _last_cleanup = now
+            _login_state["last_cleanup"] = now
 
         entry = _login_attempts.get(client_ip)
         if entry is not None:
