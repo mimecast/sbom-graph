@@ -56,6 +56,10 @@ spec:
               value: "true"
             - name: FALKORDB_CA_FILE
               value: /tls/ca.crt
+            - name: FALKORDB_CLIENT_CERT
+              value: /tls/client.crt
+            - name: FALKORDB_CLIENT_KEY
+              value: /tls/client.key
             {{- end }}
           resources:
             limits:
@@ -90,5 +94,9 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
+              - key: client.crt
+                path: client.crt
+              - key: client.key
+                path: client.key
         {{- end }}
 {{- end }}

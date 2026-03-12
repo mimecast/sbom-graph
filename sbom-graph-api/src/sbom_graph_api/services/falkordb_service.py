@@ -83,6 +83,10 @@ class FalkorDBService:
                 connection_kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
                 if self.config.ssl_ca_certs:
                     connection_kwargs["ssl_ca_certs"] = self.config.ssl_ca_certs
+                if self.config.ssl_certfile:
+                    connection_kwargs["ssl_certfile"] = self.config.ssl_certfile
+                if self.config.ssl_keyfile:
+                    connection_kwargs["ssl_keyfile"] = self.config.ssl_keyfile
             self._db = FalkorDB(**connection_kwargs)
         return self._db
 

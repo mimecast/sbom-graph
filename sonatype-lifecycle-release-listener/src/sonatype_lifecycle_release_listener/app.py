@@ -40,7 +40,7 @@ def _configure_logging():
             try:
                 logging.config.fileConfig(conf_path, disable_existing_loggers=False)
                 return
-            except OSError, ValueError:
+            except (OSError, ValueError):
                 continue
 
     # Fall back to basic configuration
@@ -81,7 +81,14 @@ def create_app(config: Optional[dict] = None) -> Flask:
     )
     app.config.setdefault("FALKORDB_PASSWORD", os.environ.get("FALKORDB_PASSWORD", ""))
     app.config.setdefault(
-        "FALKORDB_CACERTS", os.environ.get("FALKORDB_CACERTS", "certs/ca_bundle.pem")
+        "FALKORDB_CACERTS", os.environ.get("FALKORDB_CACERTS")
+    )
+    app.config.setdefault("FALKORDB_SSL", os.environ.get("FALKORDB_SSL", "false"))
+    app.config.setdefault(
+        "FALKORDB_CLIENT_CERT", os.environ.get("FALKORDB_CLIENT_CERT")
+    )
+    app.config.setdefault(
+        "FALKORDB_CLIENT_KEY", os.environ.get("FALKORDB_CLIENT_KEY")
     )
     app.config.setdefault("INTERNAL_PREFIXES", os.environ.get("INTERNAL_PREFIXES", ""))
     app.config.setdefault("WEBHOOK_SECRET", os.environ.get("WEBHOOK_SECRET", ""))
@@ -212,7 +219,7 @@ def create_app(config: Optional[dict] = None) -> Flask:
                     }
                 ), 500
 
-        except NotFound, RedisError:
+        except (NotFound, RedisError):
             logger.exception(
                 "Error processing webhook", extra={"request_id": request_id}
             )
@@ -307,13 +314,18 @@ class CycloneDXHelper:
         internal_prefixes = Persistence.parse_internal_prefixes(
             config.get("INTERNAL_PREFIXES", "")
         )
+        ssl_enabled = config.get("FALKORDB_SSL", "false")
+        if isinstance(ssl_enabled, str):
+            ssl_enabled = ssl_enabled.lower() == "true"
         self.persistence = Persistence(
             host=config.get("FALKORDB_HOST", ""),
             port=int(config.get("FALKORDB_PORT", 6379)),
             graph_name=config.get("FALKORDB_GRAPH_NAME", "acme-corp"),
             password=config.get("FALKORDB_PASSWORD", ""),
-            ssl=True,
-            ssl_ca_certs=config.get("FALKORDB_CACERTS", "certs/ca_bundle.pem"),
+            ssl=ssl_enabled,
+            ssl_ca_certs=config.get("FALKORDB_CACERTS"),
+            ssl_certfile=config.get("FALKORDB_CLIENT_CERT"),
+            ssl_keyfile=config.get("FALKORDB_CLIENT_KEY"),
             internal_prefixes=internal_prefixes,
         )
         self.sonatype_client = SonaTypeClient(config)
@@ -408,13 +420,18 @@ class VexHelper:
         internal_prefixes = Persistence.parse_internal_prefixes(
             config.get("INTERNAL_PREFIXES", "")
         )
+        ssl_enabled = config.get("FALKORDB_SSL", "false")
+        if isinstance(ssl_enabled, str):
+            ssl_enabled = ssl_enabled.lower() == "true"
         self.persistence = Persistence(
             host=config.get("FALKORDB_HOST", ""),
             port=int(config.get("FALKORDB_PORT", 6379)),
             graph_name=config.get("FALKORDB_GRAPH_NAME", "acme-corp"),
             password=config.get("FALKORDB_PASSWORD", ""),
-            ssl=True,
-            ssl_ca_certs=config.get("FALKORDB_CACERTS", "certs/ca_bundle.pem"),
+            ssl=ssl_enabled,
+            ssl_ca_certs=config.get("FALKORDB_CACERTS"),
+            ssl_certfile=config.get("FALKORDB_CLIENT_CERT"),
+            ssl_keyfile=config.get("FALKORDB_CLIENT_KEY"),
             internal_prefixes=internal_prefixes,
         )
         self.sonatype_client = SonaTypeClient(config)
@@ -536,7 +553,7 @@ class SonaTypeClient:
                 stage_id,
             )
             return None
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             logger.debug(
                 "Invalid VEX response for app_id=%s stage_id=%s",
                 app_id,
@@ -578,7 +595,7 @@ def process_release_scan(
             logger.warning("VEX processing failed for %s (non-fatal)", public_id)
 
         return {"success": True}
-    except NotFound, RedisError:
+    except (NotFound, RedisError):
         logger.exception("Error processing release scan for %s", public_id)
         return {"success": False, "error": "SBOM processing failed"}
 

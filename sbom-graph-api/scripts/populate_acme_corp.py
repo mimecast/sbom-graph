@@ -1895,6 +1895,8 @@ def create_graph(
     graph_name: str = "acme_corp",
     ssl_enabled: bool = False,
     ssl_ca_certs: str | None = None,
+    ssl_certfile: str | None = None,
+    ssl_keyfile: str | None = None,
 ) -> None:
     """Create and populate the FalkorDB graph with acme-corp demo data."""
     _log(f"Connecting to FalkorDB at {host}:{port} (ssl={ssl_enabled}, ca={ssl_ca_certs})...")
@@ -1915,6 +1917,10 @@ def create_graph(
         connection_kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
         if ssl_ca_certs:
             connection_kwargs["ssl_ca_certs"] = ssl_ca_certs
+        if ssl_certfile:
+            connection_kwargs["ssl_certfile"] = ssl_certfile
+        if ssl_keyfile:
+            connection_kwargs["ssl_keyfile"] = ssl_keyfile
 
     _log("Creating FalkorDB client...")
     db = FalkorDB(**connection_kwargs)
@@ -2193,6 +2199,8 @@ def main():
         graph_name = os.environ.get("FALKORDB_GRAPH_NAME", "acme_corp")
         ssl_enabled = os.environ.get("FALKORDB_SSL", "false").lower() == "true"
         ssl_ca_certs = os.environ.get("FALKORDB_CA_FILE") or os.environ.get("FALKORDB_CACERTS")
+        ssl_certfile = os.environ.get("FALKORDB_CLIENT_CERT")
+        ssl_keyfile = os.environ.get("FALKORDB_CLIENT_KEY")
 
         create_graph(
             host=host,
@@ -2201,6 +2209,8 @@ def main():
             graph_name=graph_name,
             ssl_enabled=ssl_enabled,
             ssl_ca_certs=ssl_ca_certs,
+            ssl_certfile=ssl_certfile,
+            ssl_keyfile=ssl_keyfile,
         )
     except Exception as e:
         _log(f"FATAL: {e}")

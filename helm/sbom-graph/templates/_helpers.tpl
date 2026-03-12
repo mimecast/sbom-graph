@@ -186,6 +186,10 @@ Deployments.  Include via: {{- include "sbom-graph.enrichment.env" . | nindent N
   value: "true"
 - name: FALKORDB_CACERTS
   value: /tls/ca.crt
+- name: FALKORDB_CLIENT_CERT
+  value: /tls/client.crt
+- name: FALKORDB_CLIENT_KEY
+  value: /tls/client.key
 - name: CELERY_REDIS_SSL
   value: "true"
 {{- end }}
@@ -260,6 +264,12 @@ Parameters:
           kwargs["ssl_cert_reqs"] = ssl_lib.CERT_REQUIRED
           if ssl_ca_certs:
               kwargs["ssl_ca_certs"] = ssl_ca_certs
+          ssl_certfile = os.environ.get("FALKORDB_CLIENT_CERT")
+          ssl_keyfile = os.environ.get("FALKORDB_CLIENT_KEY")
+          if ssl_certfile:
+              kwargs["ssl_certfile"] = ssl_certfile
+          if ssl_keyfile:
+              kwargs["ssl_keyfile"] = ssl_keyfile
       print(f"Waiting for FalkorDB graph module at {host}:{port} (ssl={ssl_enabled})...")
       while True:
           try:
@@ -283,6 +293,10 @@ Parameters:
       value: "true"
     - name: FALKORDB_CA_FILE
       value: /tls/ca.crt
+    - name: FALKORDB_CLIENT_CERT
+      value: /tls/client.crt
+    - name: FALKORDB_CLIENT_KEY
+      value: /tls/client.key
     {{- end }}
   resources:
     limits:

@@ -51,8 +51,14 @@ spec:
               value: {{ .Values.global.internalPrefixes | quote }}
             {{- end }}
             {{- if .Values.falkordb.tls.enabled }}
+            - name: FALKORDB_SSL
+              value: "true"
             - name: FALKORDB_CACERTS
               value: /tls/ca.crt
+            - name: FALKORDB_CLIENT_CERT
+              value: /tls/client.crt
+            - name: FALKORDB_CLIENT_KEY
+              value: /tls/client.key
             {{- end }}
           readinessProbe:
             httpGet:
@@ -100,4 +106,8 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
+              - key: client.crt
+                path: client.crt
+              - key: client.key
+                path: client.key
         {{- end }}

@@ -69,5 +69,9 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
+              - key: client.crt
+                path: client.crt
+              - key: client.key
+                path: client.key
         {{- end }}
 {{- end }}

@@ -55,6 +55,12 @@ if _REDIS_SSL:
     _ca_certs = os.environ.get("FALKORDB_CACERTS")
     if _ca_certs:
         _ssl_opts["ssl_ca_certs"] = _ca_certs
+    _client_cert = os.environ.get("FALKORDB_CLIENT_CERT")
+    _client_key = os.environ.get("FALKORDB_CLIENT_KEY")
+    if _client_cert:
+        _ssl_opts["ssl_certfile"] = _client_cert
+    if _client_key:
+        _ssl_opts["ssl_keyfile"] = _client_key
     app.conf.update(
         broker_use_ssl=_ssl_opts,
         redis_backend_use_ssl=_ssl_opts,

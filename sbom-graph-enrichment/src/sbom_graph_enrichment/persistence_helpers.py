@@ -43,6 +43,8 @@ def create_persistence() -> Persistence:
     password = os.environ.get("FALKORDB_PASSWORD", "")
     ssl = os.environ.get("FALKORDB_SSL", "false").lower() == "true"
     ssl_ca_certs = os.environ.get("FALKORDB_CACERTS") or None
+    ssl_certfile = os.environ.get("FALKORDB_CLIENT_CERT") or None
+    ssl_keyfile = os.environ.get("FALKORDB_CLIENT_KEY") or None
 
     if not password:
         logger.warning(
@@ -58,6 +60,8 @@ def create_persistence() -> Persistence:
         password=password,
         ssl=ssl,
         ssl_ca_certs=ssl_ca_certs,
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
         internal_prefixes=internal_prefixes,
     )
 

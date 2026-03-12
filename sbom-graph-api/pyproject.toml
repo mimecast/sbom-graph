@@ -1,6 +1,6 @@
 [project]
 name = "sbom-graph-api"
-version = "0.2.0-alpha"
+version = "0.2.0-alpha2"
 description = "SBOM Graph API - Flask application for FalkorDB graph data visualizations"
 authors = [
     {name = "Brett Crawley"}

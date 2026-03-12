@@ -225,25 +225,54 @@ Prints all commands that would be executed without making any changes.
 ## TLS Certificates
 
 The Helm chart supports TLS encryption between all components and FalkorDB.
-There are two modes: **self-signed** (default) and **user-provided**.
+By default it generates a self-signed CA, a server certificate for FalkorDB,
+and a client certificate for all services. This provides full **mutual TLS
+(mTLS)** out of the box — no manual certificate management required.
+
+### TLS Modes
+
+| Mode | `requireClientAuth` | Encryption | Client Certs | Description |
+|------|---------------------|------------|--------------|-------------|
+| **mTLS (default)** | `true` | Yes | Required | Full mutual TLS. FalkorDB verifies client identity. |
+| **Server-side TLS** | `false` | Yes | Not required | Encrypted transport only. Clients trust the server CA but don't present their own cert. |
+| **No TLS** | N/A (`tls.enabled: false`) | No | No | Plaintext. Not recommended for production. |
 
 ### Option A: Auto-Generated Self-Signed Certificates (Default)
 
 When `falkordb.tls.enabled` is `true` (the default) and no certificates are
-provided, Helm automatically generates a self-signed CA and server certificate.
-These are persisted across `helm upgrade` operations.
+provided, Helm automatically generates:
 
-No action is required -- just deploy.
+1. A **self-signed CA** (valid 365 days)
+2. A **server certificate** for FalkorDB (signed by the CA, with service DNS SANs)
+3. A **client certificate** for all services to use when connecting to FalkorDB
 
-### Option B: User-Provided Certificates
+All certificates are stored in a single Kubernetes Secret and are persisted
+across `helm upgrade` operations.
 
-Generate a CA and server certificate for FalkorDB. The server certificate
-must include the Kubernetes service DNS name as a SAN.
+**No action is required** — just deploy. Mutual TLS works out of the box.
+
+### Option B: Disable Client Certificate Requirement
+
+If you want encrypted connections without requiring client certificates
+(e.g. for simpler debugging or when connecting external tools):
+
+```bash
+helm install sbom-graph ./helm/sbom-graph \
+  --set falkordb.tls.requireClientAuth=false
+```
+
+Traffic is still encrypted (server-side TLS), but FalkorDB does not verify
+client identity via certificates. Client certs are still generated and
+mounted — they are simply not required by the server.
+
+### Option C: User-Provided Certificates
+
+Generate a CA, server certificate, and client certificate manually. The
+server certificate must include the Kubernetes service DNS name as a SAN.
 
 #### Generate with OpenSSL
 
 ```bash
-# Create a directory for the certificates
 mkdir -p certs && cd certs
 
 # 1. Generate a CA key and certificate
@@ -252,12 +281,11 @@ openssl req -x509 -newkey rsa:4096 -nodes \
   -days 365 \
   -subj "/CN=sbom-graph-ca"
 
-# 2. Generate a server key
-openssl genrsa -out tls.key 4096
-
-# 3. Create a certificate signing request (CSR)
+# 2. Generate a server key and certificate
 #    Replace <RELEASE_NAME> and <NAMESPACE> with your Helm release name and namespace.
 #    The default release name is "sbom-graph" and namespace is "default".
+openssl genrsa -out tls.key 4096
+
 cat > san.cnf <<EOF
 [req]
 distinguished_name = req_dn
@@ -277,12 +305,18 @@ DNS.3 = sbom-graph-falkordb.default.svc.cluster.local
 EOF
 
 openssl req -new -key tls.key -out tls.csr -config san.cnf
-
-# 4. Sign the server certificate with the CA
 openssl x509 -req -in tls.csr \
   -CA ca.crt -CAkey ca.key -CAcreateserial \
   -out tls.crt -days 365 \
   -extensions v3_req -extfile san.cnf
+
+# 3. Generate a client key and certificate (signed by the same CA)
+openssl genrsa -out client.key 4096
+openssl req -new -key client.key -out client.csr \
+  -subj "/CN=sbom-graph-client"
+openssl x509 -req -in client.csr \
+  -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out client.crt -days 365
 
 cd ..
 ```
@@ -290,10 +324,22 @@ cd ..
 > **Important:** If you use a custom release name or namespace, update the
 > DNS names in `san.cnf` to match `<RELEASE_NAME>-falkordb.<NAMESPACE>.svc`.
 
-Pass the certificates to Helm:
+Pass all certificates to Helm:
 
 ```bash
 helm install sbom-graph ./helm/sbom-graph \
+  --set-file falkordb.tls.key=certs/tls.key \
+  --set-file falkordb.tls.cert=certs/tls.crt \
+  --set-file falkordb.tls.caCert=certs/ca.crt \
+  --set-file falkordb.tls.clientKey=certs/client.key \
+  --set-file falkordb.tls.clientCert=certs/client.crt
+```
+
+To use user-provided certs **without** client auth:
+
+```bash
+helm install sbom-graph ./helm/sbom-graph \
+  --set falkordb.tls.requireClientAuth=false \
   --set-file falkordb.tls.key=certs/tls.key \
   --set-file falkordb.tls.cert=certs/tls.crt \
   --set-file falkordb.tls.caCert=certs/ca.crt
@@ -325,9 +371,12 @@ configuration values and their defaults.
 | `falkordb.persistence.size` | `5Gi` | PVC size |
 | `falkordb.persistence.storageClass` | `""` (cluster default) | Storage class name |
 | `falkordb.tls.enabled` | `true` | Enable TLS for FalkorDB connections |
-| `falkordb.tls.key` | `""` | PEM-encoded TLS private key (auto-generates self-signed if empty) |
-| `falkordb.tls.cert` | `""` | PEM-encoded TLS certificate |
+| `falkordb.tls.requireClientAuth` | `true` | Require mutual TLS (client certificates). When `false`, traffic is encrypted but clients connect without presenting a cert |
+| `falkordb.tls.key` | `""` | PEM-encoded server TLS private key (auto-generates self-signed if empty) |
+| `falkordb.tls.cert` | `""` | PEM-encoded server TLS certificate |
 | `falkordb.tls.caCert` | `""` | PEM-encoded CA certificate |
+| `falkordb.tls.clientKey` | `""` | PEM-encoded client TLS private key (auto-generates if empty) |
+| `falkordb.tls.clientCert` | `""` | PEM-encoded client TLS certificate |
 
 ### SBOM Graph API
 
@@ -806,12 +855,21 @@ helm upgrade sbom-graph ./helm/sbom-graph
 
 ### TLS connection errors
 
-If you see `SSL: CERTIFICATE_VERIFY_FAILED` in logs:
+**`SSL: CERTIFICATE_VERIFY_FAILED`** — The client cannot verify the server's certificate:
 
 - **Self-signed mode:** Ensure the CA certificate is being mounted correctly.
   Check `kubectl describe pod <api-pod>` and look for the `tls-ca` volume mount.
 - **User-provided certs:** Verify the SAN names match the FalkorDB service DNS
   name (`<release>-falkordb.<namespace>.svc`).
+
+**`SSL: TLSV13_ALERT_CERTIFICATE_REQUIRED`** — FalkorDB requires a client
+certificate but the client is not presenting one:
+
+- Verify `falkordb.tls.requireClientAuth` matches your intent. Set to `false`
+  if you don't need mTLS.
+- Ensure client cert files (`client.crt`, `client.key`) are present in the TLS
+  secret: `kubectl get secret <release>-tls -o jsonpath='{.data}' | jq keys`
+- Check that the pod's volume mount includes `client.crt` and `client.key`.
 
 ### Cannot connect to FalkorDB from outside the cluster
 
@@ -822,10 +880,29 @@ design. To connect from your workstation:
 kubectl port-forward svc/sbom-graph-falkordb 6379:6379
 ```
 
-Then connect using the `redis-cli` or FalkorDB client:
+Then connect using `redis-cli` or a FalkorDB client. If client auth is
+enabled (the default), you must present the client certificate:
 
 ```bash
-redis-cli -h 127.0.0.1 -p 6379 --tls --cacert certs/ca.crt -a "$(kubectl get secret sbom-graph-falkordb -o jsonpath='{.data.password}' | base64 -d)"
+# Extract client certs from the Kubernetes secret
+kubectl get secret sbom-graph-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > /tmp/ca.crt
+kubectl get secret sbom-graph-tls -o jsonpath='{.data.client\.crt}' | base64 -d > /tmp/client.crt
+kubectl get secret sbom-graph-tls -o jsonpath='{.data.client\.key}' | base64 -d > /tmp/client.key
+
+# Connect with mTLS
+redis-cli -h 127.0.0.1 -p 6379 --tls \
+  --cacert /tmp/ca.crt \
+  --cert /tmp/client.crt \
+  --key /tmp/client.key \
+  -a "$(kubectl get secret sbom-graph-falkordb -o jsonpath='{.data.password}' | base64 -d)"
+```
+
+If `requireClientAuth` is `false`, omit `--cert` and `--key`:
+
+```bash
+redis-cli -h 127.0.0.1 -p 6379 --tls \
+  --cacert /tmp/ca.crt \
+  -a "$(kubectl get secret sbom-graph-falkordb -o jsonpath='{.data.password}' | base64 -d)"
 ```
 
 ### PVC pending (no storage provisioner)

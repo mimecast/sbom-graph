@@ -47,6 +47,8 @@ def _create_persistence() -> Persistence:
         password=config.password or "",
         ssl=config.ssl,
         ssl_ca_certs=config.ssl_ca_certs,
+        ssl_certfile=config.ssl_certfile,
+        ssl_keyfile=config.ssl_keyfile,
         internal_prefixes=internal_prefixes,
     )
 

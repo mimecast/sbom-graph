@@ -15,6 +15,31 @@ from .model import LicenseRiskCategory, Project, ProjectType, Version, Defect, V
 
 logger = logging.getLogger(__name__)
 
+
+class _DictQueryResult:
+    """Thin wrapper around a FalkorDB QueryResult that converts
+    positional list rows into dicts keyed by column alias.
+
+    All other attributes are proxied to the underlying result.
+    """
+
+    def __init__(self, raw_result: Any) -> None:
+        self._raw = raw_result
+        if raw_result.header and raw_result.result_set:
+            col_names = [col[1] for col in raw_result.header]
+            self._result_set: list[dict[str, Any]] = [
+                dict(zip(col_names, row)) for row in raw_result.result_set
+            ]
+        else:
+            self._result_set = []
+
+    @property
+    def result_set(self) -> list[dict[str, Any]]:
+        return self._result_set
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._raw, name)
+
 INTERNAL_PREFIX_FIELDS: frozenset[str] = frozenset({"group", "name", "purl"})
 
 # CycloneDX 1.6 component type taxonomy (used as Cypher node labels).
@@ -55,6 +80,8 @@ class Persistence:
         password: The password for the FalkorDB database.
         ssl: Whether to use SSL for the FalkorDB database.
         ssl_ca_certs: The CA certificates for the FalkorDB database.
+        ssl_certfile: Client certificate for mutual TLS.
+        ssl_keyfile: Client private key for mutual TLS.
         internal_prefixes: List of (field, prefix) tuples for INTERNAL
             label assignment. See :meth:`parse_internal_prefixes`.
     """
@@ -67,6 +94,8 @@ class Persistence:
         password: str,
         ssl: bool = True,
         ssl_ca_certs: Optional[str] = None,
+        ssl_certfile: Optional[str] = None,
+        ssl_keyfile: Optional[str] = None,
         internal_prefixes: Optional[list[tuple[str, str]]] = None,
     ):
         """Initialize the Persistence class with database connection.
@@ -78,18 +107,26 @@ class Persistence:
             password: The password for the FalkorDB database.
             ssl: Whether to use SSL for the FalkorDB database.
             ssl_ca_certs: The CA certificates for the FalkorDB database.
+            ssl_certfile: Path to the client certificate for mutual TLS.
+            ssl_keyfile: Path to the client private key for mutual TLS.
             internal_prefixes: List of (field, prefix) tuples used to decide
                 whether a project should receive the INTERNAL label. Supported
                 fields: ``"group"``, ``"name"``, ``"purl"``.
                 Example: ``[("group", "com.acme"), ("name", "acme-")]``.
         """
-        self.db = FalkorDB(
-            host=host,
-            port=port,
-            password=password,
-            ssl=ssl,
-            ssl_ca_certs=ssl_ca_certs,
-        )
+        connection_kwargs: dict = {
+            "host": host,
+            "port": port,
+            "password": password,
+            "ssl": ssl,
+        }
+        if ssl_ca_certs:
+            connection_kwargs["ssl_ca_certs"] = ssl_ca_certs
+        if ssl_certfile:
+            connection_kwargs["ssl_certfile"] = ssl_certfile
+        if ssl_keyfile:
+            connection_kwargs["ssl_keyfile"] = ssl_keyfile
+        self.db = FalkorDB(**connection_kwargs)
         self.graph: Graph = self.db.select_graph(graph_name)
         self.internal_prefixes: list[tuple[str, str]] = internal_prefixes or []
         for field, _ in self.internal_prefixes:
@@ -192,9 +229,12 @@ class Persistence:
             params: Optional parameters for the query.
 
         Returns:
-            The result of the query.
+            The result of the query.  ``result_set`` rows are converted
+            from positional lists to dicts keyed by the column aliases
+            so callers can use ``row["col"]`` / ``row.get("col")``.
         """
-        return self.graph.query(q=query, params=params, timeout=60000)
+        result = self.graph.query(q=query, params=params, timeout=60000)
+        return _DictQueryResult(result)
 
     # Query building utilities
 

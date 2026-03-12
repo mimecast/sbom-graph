@@ -11,10 +11,16 @@ falkordb:
     storageClass: ""
   tls:
     enabled: true
+    # Require mutual TLS (client certificates).  When true FalkorDB
+    # demands a valid client cert signed by the CA.  When false traffic
+    # is still encrypted but clients connect without presenting a cert.
+    requireClientAuth: true
     # When empty and tls.enabled=true, Helm generates self-signed certs.
     key: ""
     cert: ""
     caCert: ""
+    clientKey: ""
+    clientCert: ""
   resources:
     limits:
       cpu: "1"
@@ -25,7 +31,7 @@ falkordb:
 sbomGraphApi:
   image:
     repository: sbom-graph-api
-    tag: 0.2.0-alpha
+    tag: mtls-fix
     pullPolicy: Never
   replicas: 1
   gunicornWorkers: "2"
@@ -75,7 +81,7 @@ enrichment:
   enabled: true
   image:
     repository: sbom-graph-enrichment
-    tag: 0.2.0-alpha
+    tag: row-fix2
     pullPolicy: Never
   replicas: 1
   interval: "3600"
