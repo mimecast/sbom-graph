@@ -592,6 +592,8 @@ def risk_path_explorer(purl: str) -> Response:
             else:
                 score_css = "trust-score-high"
         except (TypeError, ValueError):
+            # Invalid or non-numeric effective_score: leave score_css as the default
+            # (no trust-score-* CSS class) so the page still renders gracefully.
             pass
 
     path_rows = []
