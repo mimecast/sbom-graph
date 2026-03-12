@@ -9,16 +9,18 @@ source on a local Kubernetes cluster (macOS) or a remote Linux cluster.
 
 1. [Prerequisites](#prerequisites)
 2. [Clone and Build](#clone-and-build)
-3. [TLS Certificates](#tls-certificates)
-4. [Helm Values Reference](#helm-values-reference)
-5. [Deploy Locally (macOS)](#deploy-locally-macos)
-6. [Deploy Remotely (Linux)](#deploy-remotely-linux)
-7. [Verify the Deployment](#verify-the-deployment)
-8. [Post-Install: Retrieve Auto-Generated Secrets](#post-install-retrieve-auto-generated-secrets)
-9. [Configure Sonatype Lifecycle Webhook](#configure-sonatype-lifecycle-webhook)
-10. [Upgrading](#upgrading)
-11. [Uninstalling](#uninstalling)
-12. [Troubleshooting](#troubleshooting)
+3. [Release Workflow (`release.sh`)](#release-workflow-releasesh)
+4. [TLS Certificates](#tls-certificates)
+5. [Helm Values Reference](#helm-values-reference)
+6. [Deploy Locally (macOS)](#deploy-locally-macos)
+7. [Deploy Remotely (Linux)](#deploy-remotely-linux)
+8. [Deploy with `deploy.sh`](#deploy-with-deploysh)
+9. [Verify the Deployment](#verify-the-deployment)
+10. [Post-Install: Retrieve Auto-Generated Secrets](#post-install-retrieve-auto-generated-secrets)
+11. [Configure Sonatype Lifecycle Webhook](#configure-sonatype-lifecycle-webhook)
+12. [Upgrading](#upgrading)
+13. [Uninstalling](#uninstalling)
+14. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -152,6 +154,71 @@ sbom-graph --help
 
 The CLI communicates with the sbom-graph API via HTTP; it does not require
 direct access to FalkorDB.
+
+---
+
+## Release Workflow (`release.sh`)
+
+The `release.sh` script automates building, tagging, pushing, and Helm
+synchronisation in a single command. It reads versions from each sub-project's
+`pyproject.toml` and only rebuilds images whose tags don't already exist locally.
+
+```
+./release.sh [--registry REGISTRY] [--push] [--force-build] [--load-minikube] [--dry-run]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--registry REGISTRY` | Docker registry prefix (e.g. `ghcr.io/org`). Also accepted via `REGISTRY` env var. |
+| `--push` | Push built images to the remote registry. |
+| `--force-build` | Rebuild all images from scratch (`--no-cache`), overwriting existing local tags. |
+| `--load-minikube` | Load images into minikube's container runtime (overwrites existing). Sets `pullPolicy: Never` in Helm values. |
+| `--dry-run` | Print what would happen without executing. |
+
+### Local development (Docker Desktop / OrbStack)
+
+```bash
+./release.sh
+```
+
+Builds only changed images and updates `helm/sbom-graph/values.yaml` with
+the correct tags. Locally built images are available to Kubernetes
+automatically on Docker Desktop and OrbStack.
+
+### Local development (minikube)
+
+```bash
+./release.sh --load-minikube
+```
+
+Builds changed images, loads them into minikube, and sets `pullPolicy: Never`
+so Kubernetes uses the preloaded images.
+
+### Force a clean rebuild
+
+```bash
+./release.sh --force-build
+```
+
+Passes `--no-cache` to Docker, rebuilding all images from scratch regardless
+of whether their tags already exist locally.
+
+### Remote cluster with registry
+
+```bash
+./release.sh --registry ghcr.io/myorg --push
+```
+
+Builds changed images with the registry prefix, pushes them, and updates Helm
+values with the correct `image.repository` and `image.tag` for each service.
+
+### Preview changes
+
+```bash
+./release.sh --registry ghcr.io/myorg --push --dry-run
+```
+
+Prints all commands that would be executed without making any changes.
 
 ---
 
@@ -331,13 +398,24 @@ Build images and deploy with all defaults (self-signed TLS, auto-generated
 secrets, demo data loaded):
 
 ```bash
-# Build all images
-./build-images.sh
+# Build images and update Helm tags (recommended)
+./release.sh
 
 # Deploy
-helm install sbom-graph ./helm/sbom-graph
+./deploy.sh
 
 # Wait for pods to be ready
+kubectl get pods -w
+```
+
+For minikube, use `./release.sh --load-minikube` instead so images are loaded
+into the minikube VM and `pullPolicy` is set to `Never`.
+
+Alternatively, build and deploy manually:
+
+```bash
+./build-images.sh
+helm install sbom-graph ./helm/sbom-graph
 kubectl get pods -w
 ```
 
@@ -435,6 +513,61 @@ cluster setup:
 # Port forward for quick access
 kubectl port-forward -n sbom-graph svc/sbom-graph-sbom-graph-api 8080:80
 ```
+
+---
+
+## Deploy with `deploy.sh`
+
+The `deploy.sh` script wraps `helm upgrade --install` with sensible defaults
+that preserve persistent volumes and auto-generated secrets across upgrades.
+
+```
+./deploy.sh [--namespace NS] [--release NAME] [--values FILE] [--dry-run]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--namespace NS` | `sbom-graph` | Kubernetes namespace (also `NAMESPACE` env var) |
+| `--release NAME` | `sbom-graph` | Helm release name (also `RELEASE` env var) |
+| `--values FILE` | — | Additional Helm values file for overrides |
+| `--dry-run` | — | Run `helm upgrade --dry-run` to preview changes |
+
+### How it works
+
+1. Validates that `helm`, `kubectl`, and cluster connectivity are available.
+2. Creates the namespace if it doesn't exist.
+3. Runs `helm upgrade --install` with `--reuse-values` (preserves existing
+   secrets), `--wait`, and `--timeout 5m`.
+4. Prints deployment status: Helm release info, rollout status for each
+   deployment, and PVC status to confirm volumes are intact.
+
+### Typical workflow
+
+```bash
+# 1. Build and tag images
+./release.sh --load-minikube
+
+# 2. Deploy (or upgrade) to Kubernetes
+./deploy.sh
+
+# 3. Preview an upgrade before applying
+./deploy.sh --dry-run
+```
+
+### Remote cluster with custom values
+
+```bash
+./release.sh --registry ghcr.io/myorg --push
+./deploy.sh --namespace production --values prod-overrides.yaml
+```
+
+### Volume preservation
+
+Persistent volumes (FalkorDB data, API token database) are safe during
+upgrades because they use PersistentVolumeClaims that survive Helm upgrades.
+The `--reuse-values` flag preserves auto-generated secrets (FalkorDB password,
+Flask keys, JWT key, webhook secret) so they are not regenerated. The script
+never uses `--reset-values`.
 
 ---
 
@@ -571,6 +704,39 @@ SCA scans complete. To set this up:
 ---
 
 ## Upgrading
+
+### Using `release.sh` and `deploy.sh` (Recommended)
+
+The simplest upgrade path uses the release and deploy scripts together.
+`release.sh` builds only images whose versions have changed and updates
+Helm values automatically; `deploy.sh` applies the upgrade while preserving
+volumes and secrets.
+
+```bash
+# Build changed images and update Helm values
+./release.sh
+
+# Apply the upgrade to Kubernetes
+./deploy.sh
+```
+
+For minikube:
+
+```bash
+./release.sh --load-minikube
+./deploy.sh
+```
+
+For a remote registry:
+
+```bash
+./release.sh --registry ghcr.io/myorg --push
+./deploy.sh --namespace production
+```
+
+### Manual upgrade
+
+If you prefer to manage the process manually:
 
 ```bash
 helm upgrade sbom-graph ./helm/sbom-graph

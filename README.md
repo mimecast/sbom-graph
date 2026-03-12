@@ -93,6 +93,9 @@ sbom-graph/
 ├── helm/
 │   └── sbom-graph/                          # Umbrella Helm chart for all components
 ├── build-images.sh                          # Docker build script
+├── release.sh                               # Build, tag, push images + update Helm values
+├── deploy.sh                                # Helm upgrade/install preserving volumes
+├── sync-helm-tags.sh                        # Sync pyproject.toml versions to Helm tags
 └── SPECIFICATION.md                         # Detailed architecture documentation
 ```
 
@@ -189,7 +192,41 @@ Enrichment tasks can be triggered on-demand via the API (`POST /api/v1/enrich/vu
 
 ## Deployment
 
-Deploy all components (FalkorDB, data-views, sonatype-lifecycle-release-listener) with the umbrella Helm chart:
+### Recommended: `release.sh` + `deploy.sh`
+
+Build images (only those that changed), update Helm tags, and deploy:
+
+```bash
+./release.sh            # Build changed images, update helm/sbom-graph/values.yaml
+./deploy.sh             # helm upgrade --install, preserving volumes and secrets
+```
+
+For minikube, load images directly into the VM:
+
+```bash
+./release.sh --load-minikube
+./deploy.sh
+```
+
+For a remote registry:
+
+```bash
+./release.sh --registry ghcr.io/myorg --push
+./deploy.sh --namespace production
+```
+
+Use `--force-build` to rebuild all images from scratch (passes `--no-cache` to
+Docker), and `--dry-run` to preview without executing:
+
+```bash
+./release.sh --force-build --dry-run
+```
+
+Run `./release.sh --help` or `./deploy.sh --help` for the full list of options.
+
+### Manual Helm install
+
+Deploy all components directly with the umbrella Helm chart:
 
 ```bash
 helm install sbom-graph ./helm/sbom-graph
@@ -197,11 +234,26 @@ helm install sbom-graph ./helm/sbom-graph
 
 ## Docker Builds
 
+### Using `release.sh` (Recommended)
+
+The `release.sh` script reads versions from each sub-project's `pyproject.toml`,
+builds only images whose tags don't already exist locally, and updates Helm
+values automatically:
+
+```bash
+./release.sh                                    # Build changed images
+./release.sh --force-build                      # Clean rebuild of all images
+./release.sh --registry ghcr.io/myorg --push    # Build, tag with registry prefix, push
+./release.sh --load-minikube                    # Build and load into minikube
+```
+
+### Using `build-images.sh` directly
+
 All Docker images are built from the **repository root** because Dockerfiles
-reference sibling project directories. A build script is provided to handle
+reference sibling project directories. The low-level build script handles
 build ordering and dependencies.
 
-### Build all images
+#### Build all images
 
 ```bash
 ./build-images.sh
@@ -212,22 +264,24 @@ This will:
 1. Build the `sbom-graph-model` wheel (required by `sonatype-lifecycle-release-listener`)
 2. Build the `sbom-graph-api` Docker image
 3. Build the `sonatype-lifecycle-release-listener` Docker image
+4. Build the `sbom-graph-enrichment` Docker image
 
-### Build individual targets
+#### Build individual targets
 
 ```bash
-./build-images.sh model                # Wheel only
-./build-images.sh sbom-graph-api    # sbom-graph-api image only
-./build-images.sh sonatype-lifecycle-release-listener     # sonatype-lifecycle-release-listener image only (auto-builds wheel if missing)
+./build-images.sh model                                  # Wheel only
+./build-images.sh sbom-graph-api                         # sbom-graph-api image only
+./build-images.sh sonatype-lifecycle-release-listener     # release listener image only
+./build-images.sh sbom-graph-enrichment                  # enrichment image only
 ```
 
-### Custom image tags
+#### Custom image tags
 
 ```bash
 ./build-images.sh --adv-tag myrepo/adv:v2 --rl-tag myrepo/rl:v2
 ```
 
-### Rebuild without cache
+#### Rebuild without cache
 
 ```bash
 ./build-images.sh --no-cache
