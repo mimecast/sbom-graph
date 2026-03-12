@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/report.css') }}">
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        .risk-graph-container {
+            background: white;
+            border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            min-height: 600px;
+        }
+        #riskGraph { width: 100%; height: 600px; }
+        .risk-graph-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin: 15px 0;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 4px;
+        }
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .legend-color { width: 20px; height: 20px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <h1>{{ title }}</h1>
+
+    <div class="controls">
+        <div class="toggle-container">
+            <span class="toggle-label">Filter:</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="internalOnlyToggle" {{ 'checked' if internal_only else '' }}>
+                <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-status" id="toggleStatus">{{ 'Internal Only' if internal_only else 'All projects' }}</span>
+        </div>
+    </div>
+
+    <div class="risk-graph-legend">
+        <div class="legend-item"><span class="legend-color" style="background:#388e3c"></span> High score (7-10)</div>
+        <div class="legend-item"><span class="legend-color" style="background:#fbc02d"></span> Medium (4-6.99)</div>
+        <div class="legend-item"><span class="legend-color" style="background:#d32f2f"></span> Low (0-3.99)</div>
+        <div class="legend-item"><span class="legend-color" style="background:#757575"></span> No score</div>
+        <div class="legend-item"><span style="color:#d32f2f;font-weight:bold">—</span> Risk flow edge</div>
+    </div>
+
+    <div class="risk-graph-container">
+        <div id="riskGraph"></div>
+    </div>
+
+    <div id="pathInfo" class="stats" style="display:none;">
+        <h3>Paths to affected applications</h3>
+        <div id="pathList"></div>
+    </div>
+
+    <script>
+        (function() {
+            const apiBase = '{{ api_base }}';
+            const internalOnly = {{ 'true' if internal_only else 'false' }};
+
+            function scoreToColor(score) {
+                if (score == null) return '#757575';
+                const s = parseFloat(score);
+                if (s >= 7) return '#388e3c';
+                if (s >= 4) return '#fbc02d';
+                return '#d32f2f';
+            }
+
+            function loadGraph() {
+                Promise.all([
+                    fetch(apiBase + '/analysis/trust-score-distribution').then(r => r.json()),
+                    fetch(apiBase + '/analysis/remediation-priorities?limit=50').then(r => r.json())
+                ]).then(([distResp, priorResp]) => {
+                    const priorities = priorResp.priorities || [];
+                    const nodes = new vis.DataSet();
+                    const edges = new vis.DataSet();
+                    const purlToId = {};
+                    let idGen = 1;
+
+                    priorities.forEach((p) => {
+                        const purl = p.purl || '';
+                        if (!purl || purlToId[purl]) return;
+                        purlToId[purl] = idGen;
+                        const score = p.effective_score != null ? p.effective_score : p.direct_score;
+                        const size = 20 + Math.min((p.dependents_count || 0) * 2, 40);
+                        const shortLabel = (p.project_name || purl.split('/').pop() || purl).substring(0, 30);
+                        nodes.add({
+                            id: idGen,
+                            label: shortLabel,
+                            title: purl + (score != null ? ' (score: ' + score.toFixed(1) + ')' : ''),
+                            color: scoreToColor(score),
+                            size: size
+                        });
+                        idGen++;
+                    });
+
+                    const container = document.getElementById('riskGraph');
+                    const data = { nodes: nodes, edges: edges };
+                    const options = {
+                        nodes: { font: { size: 11 } },
+                        edges: { arrows: 'to' },
+                        physics: { enabled: true }
+                    };
+                    const network = new vis.Network(container, data, options);
+
+                    network.on('click', function(params) {
+                        if (params.nodes.length > 0) {
+                            const nodeId = params.nodes[0];
+                            const node = nodes.get(nodeId);
+                            if (node && node.title) {
+                                document.getElementById('pathInfo').style.display = 'block';
+                                document.getElementById('pathList').innerHTML =
+                                    '<p>Selected: ' + (node.title || node.label) + '</p>' +
+                                    '<p><em>Path highlighting requires additional API data.</em></p>';
+                            }
+                        }
+                    });
+                }).catch(err => {
+                    document.getElementById('riskGraph').innerHTML =
+                        '<p style="padding:20px;color:#666">Failed to load graph data. Ensure API is accessible.</p>';
+                });
+            }
+
+            document.getElementById('internalOnlyToggle').addEventListener('change', function() {
+                const url = new URL(window.location.href);
+                if (this.checked) url.searchParams.set('internal_only', 'true');
+                else url.searchParams.delete('internal_only');
+                window.location.href = url.toString();
+            });
+
+            loadGraph();
+        })();
+    </script>
+</body>
+</html>

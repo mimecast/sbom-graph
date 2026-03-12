@@ -89,7 +89,8 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | Enrichment Worker -> ClearlyDefined API | License queries | HTTPS (connection-pooled httpx.Client) |
 | Enrichment Worker -> Scorecard API | Scorecard queries | HTTPS (connection-pooled httpx.Client) |
 | Enrichment Worker -> OSS Index API | Vulnerability queries | HTTPS (connection-pooled httpx.Client) |
-| Enrichment Worker -> deps.dev API | Package metadata queries | HTTPS (connection-pooled httpx.Client) |
+| Enrichment Worker -> deps.dev API | Package metadata and source repo queries | HTTPS (connection-pooled httpx.Client) |
+| Enrichment Worker -> endoflife.date API | EOL product lifecycle queries | HTTPS (connection-pooled httpx.Client) |
 | Enrichment Beat -> Redis | Task scheduling | Redis protocol |
 | Init Job -> FalkorDB | Demo data load | Redis protocol |
 
@@ -113,7 +114,7 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | S12 | Denial of service via oversized SBOM upload | D | sbom-graph-api | **Medium** | **Medium** | **Medium** | **MITIGATED** | Large CycloneDX payloads could exhaust memory or CPU during parsing. Mitigated by Flask `MAX_CONTENT_LENGTH` (50 MB), Gunicorn worker timeouts, and Kubernetes resource limits. |
 | S13 | Information disclosure in SBOM processing errors | I | sbom-graph-api | **Low** | **Low** | **Low** | **MITIGATED** | SBOM processing errors could leak internal paths or database details. Mitigated by generic error messages for 500 responses (only `CycloneDXValidationError` details are returned to the client at 422). |
 | S14 | Mass assignment via extra JSON fields in ingest request | T | sbom-graph-api | **Low** | **Medium** | **Low** | **MITIGATED** | Attacker could include extra fields (e.g., `role`, `is_admin`) in the ingest JSON body. Mitigated by: (1) JSON Schema validation (Draft-07) with `additionalProperties: false` on all POST endpoints, rejecting unexpected fields before processing; (2) explicit field extraction: only `sbom`, `app_id`, `public_app_id`, and `project_url` are read from the request body. |
-| S15 | Enrichment worker SSRF via crafted purl | S, T | sbom-graph-enrichment -> OSV/ClearlyDefined | **Low** | **Medium** | **Low** | **MITIGATED** | A malicious purl stored in the graph could cause the enrichment worker to construct requests to unintended hosts. Mitigated by: (1) hardcoded API base URLs in certifiers (`OSV_API_URL`, `CLEARLY_DEFINED_API`) — purl only populates the URL path, (2) `_purl_to_coordinates` rejects unknown package types via `provider_map` allowlist, (3) 30 s `httpx.Client` timeout prevents slow-loris, (4) opt-in NetworkPolicy restricts egress to port 443 on public IPs only. Design decision documented in `certifiers/license.py` module docstring. |
+| S15 | Enrichment worker SSRF via crafted purl | S, T | sbom-graph-enrichment -> OSV/ClearlyDefined | **Low** | **Medium** | **Low** | **MITIGATED** | A malicious purl stored in the graph could cause the enrichment worker to construct requests to unintended hosts. Mitigated by: (1) hardcoded API base URLs in certifiers (`OSV_API_URL`, `CLEARLY_DEFINED_API`) — purl only populates the URL path, (2) `_purl_to_coordinates` rejects unknown package types via `provider_map` allowlist, (3) 30 s `httpx.Client` timeout prevents slow-loris, (4) opt-in NetworkPolicy restricts egress to port 443 on public IPs only. The source_repo certifier additionally enforces a host allowlist (github.com, gitlab.com, bitbucket.org, sourcehut.org, codeberg.org) on URLs extracted from deps.dev responses before persisting or using them. Design decision documented in `certifiers/license.py` module docstring. |
 | S16 | Enrichment worker DoS via unbounded fan-out | D | sbom-graph-enrichment | **Medium** | **Medium** | **Medium** | **MITIGATED** | `enrich_all_packages` dispatches a task per purl in the graph. For very large graphs (100K+ packages) this could overwhelm the Redis broker. Mitigated by batched dispatch (`_DISPATCH_BATCH_SIZE = 500`), Celery `worker_prefetch_multiplier=1`, `task_acks_late=True`, and `result_expires=86400` to prevent indefinite Redis key accumulation. |
 | S17 | Graph poisoning via compromised external API response | T | OSV/ClearlyDefined -> sbom-graph-enrichment -> FalkorDB | **Low** | **High** | **Medium** | **PARTIALLY MITIGATED** | If OSV.dev or ClearlyDefined returns malicious data, it is persisted to the graph. Mitigated by: HTTPS transport validation, explicit field extraction from API responses (only expected keys), and `LicenseRiskCategory.from_str()` validation. Residual risk: structurally valid but semantically misleading data cannot be detected. |
 | S18 | Redis password exposure in Celery broker URL | I | sbom-graph-enrichment | **Medium** | **Medium** | **Medium** | **PARTIALLY MITIGATED** | The Redis password is embedded in the Celery broker URL string. Celery's standard Redis transport requires this — `broker_transport_options` only supports password separation for Redis Sentinel, which is not used here. Mitigated by: a `_RedactSecretsFilter` logging filter on `celery` and `kombu` loggers that replaces `redis://:password@` patterns with `redis://:*****@` in all log messages, tuple args, and dict args. Residual: password remains in the process-internal URL string and may appear in core dumps, tracebacks printed to stderr, or debugger inspection. |
@@ -129,6 +130,7 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | S28 | Denial-of-service via Scorecard/deps.dev API rate exhaustion | D | sbom-graph-enrichment | **Medium** | **Medium** | **Medium** | **MITIGATED** | The trust score computation queries up to 4 external APIs per package. For large graphs (100K+ packages), this could generate millions of API calls, exhausting rate limits and potentially triggering IP bans. Mitigated by: per-certifier token-bucket rate limiting (30 req/min Scorecard, 60/120 req/min OSS Index, 150 req/min deps.dev), batched dispatch, configurable TRUST_SCORE_INTERVAL (default 7200s). |
 | S29 | Misleading effective scores from manipulated dependency graphs | T | sbom-graph-enrichment propagation task -> FalkorDB | **Low** | **High** | **Medium** | **PARTIALLY MITIGATED** | An attacker who can inject false dependency edges (via poisoned SBOMs -- see S1, S11, S24) could manipulate the inherited risk propagation, artificially raising or lowering effective scores for target packages. A single low-scoring fake dependency could drag down an entire application's effective score (denial of service on the trust metric), or a fake high-scoring dependency could mask inherited risk. Mitigated by: SBOM ingestion authentication (S11), alpha blending limits pure inheritance influence, min_path_score exposes the weakest link regardless of blending, SBOM format validation. Residual: authenticated users can still inject misleading dependency data. |
 | S30 | OSS Index credential leakage | I | sbom-graph-enrichment | **Low** | **Medium** | **Low** | **MITIGATED** | OSSINDEX_USER and OSSINDEX_TOKEN are passed as environment variables from a Kubernetes Secret. If leaked, an attacker could use the credentials for their own OSS Index queries (limited blast radius -- read-only API). Mitigated by: credentials stored in Kubernetes Secret (not Helm values by default), optional (system works without auth), read-only API access, Secret template gated on non-empty user value. |
+| S31 | endoflife.date API integrity or availability | T, D | sbom-graph-enrichment -> endoflife.date | **Low** | **Medium** | **Low** | **ACCEPTED** | The EOL certifier queries endoflife.date for product lifecycle data. If the API returns manipulated data, EOL metadata in the graph may be incorrect. If the API is unavailable, EOL enrichment fails gracefully (no EOL data stored). Mitigated by: HTTPS transport, 30 req/min rate limiting, explicit field extraction. Residual: community-maintained API with no SLA; EOL data is advisory, not security-critical. |
 
 ### Data Flow Threats
 
@@ -183,7 +185,8 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | Kubernetes Secrets for credentials | Helm charts | **Moderate** -- base64, not encrypted by default |
 | Redis URL log redaction | sbom-graph-enrichment | **Strong** -- `_RedactSecretsFilter` on celery/kombu loggers |
 | NetworkPolicy (opt-in) | Helm chart (enrichment) | **Strong** -- restricts egress to DNS, FalkorDB, HTTPS only |
-| SSRF-safe certifier design | sbom-graph-enrichment | **Strong** -- hardcoded hosts, path-only purl interpolation |
+| SSRF-safe certifier design | sbom-graph-enrichment | **Strong** -- hardcoded hosts, path-only purl interpolation; source_repo certifier enforces host allowlist on extracted URLs |
+| Login rate limiting | sbom-graph-api | **Moderate** -- in-memory per-IP on /auth/login (10 attempts / 15 min per worker) |
 | Auto-generated FalkorDB password | Helm chart | **Strong** -- `falkordb-secret.yaml` generates 32-char random password |
 | Empty password startup warning | sbom-graph-enrichment | **Moderate** -- warns when FALKORDB_PASSWORD env var is empty |
 | JWT auth on policy/enrichment endpoints | sbom-graph-api | **Strong** -- all write endpoints require `@auth_required` |
@@ -210,7 +213,7 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | FalkorDB ingress NetworkPolicy | High | Umbrella chart |
 | TLS CA distribution | High | Umbrella chart |
 | Application secrets provisioning | Critical | Umbrella chart -> sbom-graph-api |
-| Rate limiting | Medium | sonatype-lifecycle-release-listener, sbom-graph-api |
+| Rate limiting | Medium | sonatype-lifecycle-release-listener, sbom-graph-api (login endpoint has per-IP rate limiting; other endpoints do not) |
 | Structured audit logging | Medium | sonatype-lifecycle-release-listener |
 | Request size limits | Medium | sonatype-lifecycle-release-listener |
 | Image digest pinning | Medium | Umbrella chart |
@@ -295,6 +298,7 @@ Before deploying to production, verify:
 | httpx | 0.x | 0 | Active | BSD-3 | Low (already in enrichment, now used by 3 additional certifiers) |
 | cryptography | 44.x | 2 (patched) | Very active | Apache-2/BSD | Low |
 | Alpine (init) | 3.20 | Varies | Active | MIT | Low |
+| endoflife.date API | N/A | N/A | Community | N/A | **Low** -- Public REST API for product lifecycle data. No authentication required. Community-maintained; no SLA. Used by EOL certifier for advisory EOL metadata. |
 
 All primary dependencies are actively maintained with no unpatched critical vulnerabilities. The main supply chain risk is the unpinned Alpine init container image and the FalkorDB `latest` tag. BusyBox was removed as a dependency; the init-data job now reuses the application image.
 
@@ -335,6 +339,7 @@ All primary dependencies are actively maintained with no unpatched critical vuln
 
 | Date | Author | Changes |
 |------|--------|---------|
+| 2026-03-12 | AI-assisted threat model | Added EOL certifier (endoflife.date API) and Source Repository certifier (deps.dev API). Added S31 (endoflife.date API integrity/availability). Documented source_repo SSRF mitigation (host allowlist) in S15 and Controls Present. Added login rate limiting (10 attempts / 15 min per IP on /auth/login) to Controls Present. Updated Trust Boundaries and Third-Party Component Assessment. |
 | 2026-02-28 | AI-assisted threat model | Added trust score threats S27-S30 (data poisoning, rate exhaustion, dependency graph manipulation, OSS Index credential leakage). Updated Summary, Assets, Trust Boundaries, Security Controls, Risk Heat Map, Residual Risk, Deployment Checklist, Third-Party Assessment. |
 | 2026-03-01 | AI-assisted threat model | Initial system-level STRIPED analysis |
 | 2026-02-28 | AI-assisted threat model | Added enrichment pipeline data flows and threats (S15-S18) |

@@ -2,7 +2,7 @@
 
 ## Summary
 
-The enrichment pipeline is a Celery-based asynchronous system that queries five external APIs (OSV.dev, ClearlyDefined, OpenSSF Scorecard, Sonatype OSS Index, deps.dev) to enrich package metadata in the FalkorDB graph database. It also computes composite trust scores and propagates inherited risk through the dependency graph. Key risks include external API data integrity, credential management for OSS Index, rate limiting exhaustion, and stale/incorrect scoring data.
+The enrichment pipeline is a Celery-based asynchronous system that queries six external APIs (OSV.dev, ClearlyDefined, OpenSSF Scorecard, Sonatype OSS Index, deps.dev, endoflife.date) to enrich package metadata in the FalkorDB graph database. It also computes composite trust scores and propagates inherited risk through the dependency graph. Key risks include external API data integrity, credential management for OSS Index, rate limiting exhaustion, and stale/incorrect scoring data.
 
 ## Assets and Trust Boundaries
 
@@ -28,6 +28,7 @@ The enrichment pipeline is a Celery-based asynchronous system that queries five 
 | Worker -> Scorecard API        | HTTPS                       |
 | Worker -> OSS Index API        | HTTPS (optional Basic auth) |
 | Worker -> deps.dev API         | HTTPS                       |
+| Worker -> endoflife.date API   | HTTPS                       |
 | Worker -> FalkorDB             | Redis protocol (+/- TLS)    |
 | Worker -> Redis broker         | Redis protocol (+/- TLS)    |
 | Beat scheduler -> Redis broker | Redis protocol              |
@@ -48,6 +49,8 @@ The enrichment pipeline is a Celery-based asynchronous system that queries five 
 | E8  | Trust score manipulation via dependency graph injection | T      | Effective scores                | Low        | High   | Medium | SBOM authentication, alpha blending limits, min_path_score exposes weakest link                                 |
 | E9  | Unbounded fan-out during enrichment                     | D      | Redis broker                    | Medium     | Medium | Medium | Batched dispatch (500), worker_prefetch_multiplier=1, task_acks_late=True                                       |
 | E10 | Redis broker URL password in logs                       | I      | Redis password                  | Medium     | Medium | Medium | _RedactSecretsFilter on celery/kombu loggers                                                                    |
+| E11 | endoflife.date API data integrity or unavailability    | T, D   | EOL data on Version nodes      | Low        | Medium | Low    | Token bucket rate limiting (30 req/min), explicit field extraction, graceful handling of API errors              |
+| E12 | SSRF via source repo URLs from deps.dev                 | S      | Worker process, internal hosts | Low        | High   | Medium | Hardcoded host allowlist (github.com, gitlab.com, bitbucket.org, etc.), URL validation before persistence       |
 
 
 ## Recommendations
@@ -67,4 +70,10 @@ The enrichment pipeline is a Celery-based asynchronous system that queries five 
 | OSS Index credentials in process memory | Low      | Standard Kubernetes pattern; distroless prevents memory dumps                  |
 | Stale scores between computation cycles | Low      | Acceptable for advisory use; CI/CD gates should check scored_at freshness      |
 
+## Revision History
+
+| Date       | Change                                                                 |
+| ---------- | ---------------------------------------------------------------------- |
+| 2025-03-12 | Added EOL certifier (endoflife.date API): E11 threat for data integrity and availability |
+| 2025-03-12 | Added Source Repo certifier (deps.dev): E12 threat for SSRF mitigation via host allowlist |
 

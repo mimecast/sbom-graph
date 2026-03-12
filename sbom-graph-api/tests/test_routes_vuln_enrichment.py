@@ -78,9 +78,9 @@ class TestPackageVulnerabilities:
         resp = client.get("/api/v1/package/not-a-purl/vulns")
         assert resp.status_code == 400
 
-    def test_empty_purl_returns_400(self, client) -> None:
-        """Empty PURL path returns 400 or 404."""
-        resp = client.get("/api/v1/package//vulns")
+    def test_empty_purl_returns_error(self, client) -> None:
+        """Empty PURL path (double slash) returns 404 after redirect."""
+        resp = client.get("/api/v1/package//vulns", follow_redirects=True)
         assert resp.status_code in (400, 404)
 
 

@@ -615,6 +615,46 @@ def validate_int_param(
     return result
 
 
+ALLOWED_SORT_ORDERS = frozenset({"asc", "desc"})
+
+
+def validate_sort_param(
+    value: str | None,
+    allowed: frozenset[str],
+    default: str,
+) -> str:
+    """Validate a sort/sort_by query parameter against an allowlist.
+
+    Args:
+        value: Raw query string value
+        allowed: Set of allowed sort field names
+        default: Default sort field
+
+    Returns:
+        Validated sort field or default
+    """
+    if not value:
+        return default
+    val = str(value).strip().lower()
+    return val if val in allowed else default
+
+
+def validate_sort_order(value: str | None, default: str = "desc") -> str:
+    """Validate sort order parameter (asc/desc).
+
+    Args:
+        value: Raw query string value
+        default: Default sort order
+
+    Returns:
+        Validated sort order or default
+    """
+    if not value:
+        return default
+    val = str(value).strip().lower()
+    return val if val in ALLOWED_SORT_ORDERS else default
+
+
 def sanitize_content_disposition(filename: str) -> str:
     """Produce a safe Content-Disposition header value.
 

@@ -8,6 +8,9 @@ from sbom_graph_enrichment.certifiers.base import Finding, FindingKind
 from sbom_graph_enrichment.tasks import (
     _persist_vulnerability,
     _persist_license,
+    _persist_eol,
+    _persist_source_repo,
+    _persist_depsdev,
     enrich_package,
     enrich_all_packages,
     compute_trust_score,
@@ -157,6 +160,257 @@ class TestPersistLicense:
         )
 
 
+class TestPersistEol:
+    """Tests for the EOL persistence helper."""
+
+    def test_basic_eol_persistence(self) -> None:
+        persistence = MagicMock()
+        finding = Finding(
+            kind=FindingKind.EOL,
+            source="endoflife.date",
+            package_url="pkg:pypi/python@3.12.2",
+            data={
+                "eol": True,
+                "eol_date": "2025-10-06",
+                "product": "python",
+                "cycle": "3.12",
+            },
+        )
+
+        _persist_eol(persistence, finding)
+
+        persistence.run_query.assert_called_once()
+        call_args = persistence.run_query.call_args
+        assert "MATCH (v:Version" in call_args.kwargs["query"]
+        params = call_args.kwargs["params"]
+        assert params["purl"] == "pkg:pypi/python@3.12.2"
+        assert params["eol"] is True
+        assert params["eol_date"] == "2025-10-06"
+        assert params["product"] == "python"
+        assert params["cycle"] == "3.12"
+
+    def test_boolean_eol_true(self) -> None:
+        persistence = MagicMock()
+        finding = Finding(
+            kind=FindingKind.EOL,
+            source="endoflife.date",
+            package_url="pkg:npm/foo@1.0",
+            data={"eol": True, "product": "foo", "cycle": "1"},
+        )
+
+        _persist_eol(persistence, finding)
+
+        params = persistence.run_query.call_args.kwargs["params"]
+        assert params["eol"] is True
+
+    def test_boolean_eol_false(self) -> None:
+        persistence = MagicMock()
+        finding = Finding(
+            kind=FindingKind.EOL,
+            source="endoflife.date",
+            package_url="pkg:npm/foo@1.0",
+            data={"eol": False, "product": "foo", "cycle": "1"},
+        )
+
+        _persist_eol(persistence, finding)
+
+        params = persistence.run_query.call_args.kwargs["params"]
+        assert params["eol"] is False
+
+    def test_string_eol_not_false(self) -> None:
+        persistence = MagicMock()
+        finding = Finding(
+            kind=FindingKind.EOL,
+            source="endoflife.date",
+            package_url="pkg:npm/foo@1.0",
+            data={"eol": "2025-01-01", "eol_date": "2025-01-01", "product": "foo"},
+        )
+
+        _persist_eol(persistence, finding)
+
+        params = persistence.run_query.call_args.kwargs["params"]
+        assert params["eol"] is True
+        assert params["eol_date"] == "2025-01-01"
+
+    def test_string_eol_false(self) -> None:
+        persistence = MagicMock()
+        finding = Finding(
+            kind=FindingKind.EOL,
+            source="endoflife.date",
+            package_url="pkg:npm/foo@1.0",
+            data={"eol": "false", "product": "foo", "cycle": "1"},
+        )
+
+        _persist_eol(persistence, finding)
+
+        params = persistence.run_query.call_args.kwargs["params"]
+        assert params["eol"] is False
+
+
+class TestPersistSourceRepo:
+    """Tests for the source repository persistence helper."""
+
+    def test_basic_persistence(self) -> None:
+        persistence = MagicMock()
+        finding = Finding(
+            kind=FindingKind.SOURCE_REPO,
+            source="depsdev",
+            package_url="pkg:npm/foo@1.0",
+            data={
+                "repo_url": "https://github.com/owner/repo",
+                "repo_host": "github.com",
+            },
+        )
+
+        _persist_source_repo(persistence, finding)
+
+        persistence.run_query.assert_called_once()
+        params = persistence.run_query.call_args.kwargs["params"]
+        assert params["repo_url"] == "https://github.com/owner/repo"
+        assert params["host"] == "github.com"
+        assert params["purl"] == "pkg:npm/foo@1.0"
+
+    def test_no_repo_url_early_return(self) -> None:
+        persistence = MagicMock()
+        finding = Finding(
+            kind=FindingKind.SOURCE_REPO,
+            source="depsdev",
+            package_url="pkg:npm/foo@1.0",
+            data={"repo_host": "github.com"},
+        )
+
+        _persist_source_repo(persistence, finding)
+
+        persistence.run_query.assert_not_called()
+
+    def test_empty_repo_url_early_return(self) -> None:
+        persistence = MagicMock()
+        finding = Finding(
+            kind=FindingKind.SOURCE_REPO,
+            source="depsdev",
+            package_url="pkg:npm/foo@1.0",
+            data={"repo_url": "", "repo_host": "github.com"},
+        )
+
+        _persist_source_repo(persistence, finding)
+
+        persistence.run_query.assert_not_called()
+
+
+class TestPersistDepsdev:
+    """Tests for the deps.dev persistence helper."""
+
+    def test_basic_metadata_persistence(self) -> None:
+        persistence = MagicMock()
+        finding = Finding(
+            kind=FindingKind.DEPSDEV,
+            source="depsdev",
+            package_url="pkg:npm/lodash@4.17.21",
+            data={
+                "advisory_count": 1,
+                "published_at": "2021-02-20T00:00:00Z",
+                "is_default": True,
+                "licenses": ["MIT"],
+            },
+        )
+
+        _persist_depsdev(persistence, finding)
+
+        call_count = persistence.run_query.call_count
+        assert call_count >= 1
+        first_call = persistence.run_query.call_args_list[0]
+        params = first_call.kwargs["params"]
+        assert params["purl"] == "pkg:npm/lodash@4.17.21"
+        assert params["advisory_count"] == 1
+        assert params["published_at"] == "2021-02-20T00:00:00Z"
+        assert params["is_default"] is True
+        assert params["licenses"] == '["MIT"]'
+
+    def test_scorecard_creation_when_present(self) -> None:
+        persistence = MagicMock()
+        finding = Finding(
+            kind=FindingKind.DEPSDEV,
+            source="depsdev",
+            package_url="pkg:npm/express@4.18.2",
+            data={
+                "advisory_count": 0,
+                "scorecard_overall": 7.2,
+                "scorecard_checks": {"Maintained": 10, "Code-Review": 6},
+            },
+        )
+
+        _persist_depsdev(persistence, finding)
+
+        assert persistence.run_query.call_count >= 2
+        calls = [c.kwargs["query"] for c in persistence.run_query.call_args_list]
+        assert any("Scorecard" in q or "HAS_SCORECARD" in q for q in calls)
+
+    def test_oss_fuzz_persistence_when_present(self) -> None:
+        persistence = MagicMock()
+        finding = Finding(
+            kind=FindingKind.DEPSDEV,
+            source="depsdev",
+            package_url="pkg:npm/foo@1.0",
+            data={
+                "advisory_count": 0,
+                "oss_fuzz": {"fuzzed": True},
+            },
+        )
+
+        _persist_depsdev(persistence, finding)
+
+        oss_fuzz_calls = [
+            c
+            for c in persistence.run_query.call_args_list
+            if "oss_fuzz_json" in c.kwargs.get("params", {})
+        ]
+        assert len(oss_fuzz_calls) == 1
+        assert oss_fuzz_calls[0].kwargs["params"]["oss_fuzz_json"] == '{"fuzzed": true}'
+
+    def test_project_key_persistence(self) -> None:
+        persistence = MagicMock()
+        finding = Finding(
+            kind=FindingKind.DEPSDEV,
+            source="depsdev",
+            package_url="pkg:npm/foo@1.0",
+            data={
+                "advisory_count": 0,
+                "project_key": "github.com/owner/repo",
+            },
+        )
+
+        _persist_depsdev(persistence, finding)
+
+        project_key_calls = [
+            c
+            for c in persistence.run_query.call_args_list
+            if "project_key" in c.kwargs.get("params", {})
+        ]
+        assert len(project_key_calls) == 1
+        assert (
+            project_key_calls[0].kwargs["params"]["project_key"]
+            == "github.com/owner/repo"
+        )
+
+    def test_minimal_data_no_optional_fields(self) -> None:
+        persistence = MagicMock()
+        finding = Finding(
+            kind=FindingKind.DEPSDEV,
+            source="depsdev",
+            package_url="pkg:npm/minimal@1.0",
+            data={},
+        )
+
+        _persist_depsdev(persistence, finding)
+
+        persistence.run_query.assert_called_once()
+        params = persistence.run_query.call_args.kwargs["params"]
+        assert params["advisory_count"] == 0
+        assert params["published_at"] == ""
+        assert params["is_default"] is False
+        assert params["licenses"] == "[]"
+
+
 class TestEnrichPackage:
     """Tests for the enrich_package task."""
 
@@ -275,6 +529,193 @@ class TestEnrichPackage:
         assert result["vulnerabilities"] == 0
         assert result["licenses"] == 0
 
+    @patch("sbom_graph_enrichment.tasks.get_http_client")
+    @patch("sbom_graph_enrichment.tasks.get_persistence")
+    @patch("sbom_graph_enrichment.tasks._TRUST_SCORE_ENABLED", False)
+    def test_enrich_package_persists_eol(
+        self,
+        mock_get_pers: MagicMock,
+        mock_get_http: MagicMock,
+    ) -> None:
+        mock_client = MagicMock()
+        mock_get_http.return_value = mock_client
+        mock_pers = MagicMock()
+        mock_get_pers.return_value = mock_pers
+
+        mock_eol = MagicMock()
+        mock_eol.enrich.return_value = [
+            Finding(
+                kind=FindingKind.EOL,
+                source="endoflife.date",
+                package_url="pkg:pypi/python@3.12.2",
+                data={"eol": True, "product": "python", "cycle": "3.12"},
+            ),
+        ]
+
+        with patch.dict(
+            "sbom_graph_enrichment.tasks._CERTIFIERS",
+            {"eol": MagicMock(return_value=mock_eol)},
+            clear=True,
+        ):
+            result = enrich_package.apply(
+                args=["pkg:pypi/python@3.12.2"],
+                kwargs={"sources": ["eol"]},
+            ).get()
+
+        assert result["eol"] == 1
+        mock_pers.run_query.assert_called()
+
+    @patch("sbom_graph_enrichment.tasks.get_http_client")
+    @patch("sbom_graph_enrichment.tasks.get_persistence")
+    @patch("sbom_graph_enrichment.tasks._TRUST_SCORE_ENABLED", False)
+    def test_enrich_package_persists_source_repo(
+        self,
+        mock_get_pers: MagicMock,
+        mock_get_http: MagicMock,
+    ) -> None:
+        mock_client = MagicMock()
+        mock_get_http.return_value = mock_client
+        mock_pers = MagicMock()
+        mock_get_pers.return_value = mock_pers
+
+        mock_sr = MagicMock()
+        mock_sr.enrich.return_value = [
+            Finding(
+                kind=FindingKind.SOURCE_REPO,
+                source="depsdev",
+                package_url="pkg:npm/foo@1.0",
+                data={"repo_url": "https://github.com/owner/repo", "repo_host": "github.com"},
+            ),
+        ]
+
+        with patch.dict(
+            "sbom_graph_enrichment.tasks._CERTIFIERS",
+            {"source_repo": MagicMock(return_value=mock_sr)},
+            clear=True,
+        ):
+            result = enrich_package.apply(
+                args=["pkg:npm/foo@1.0"],
+                kwargs={"sources": ["source_repo"]},
+            ).get()
+
+        assert result["source_repo"] == 1
+        mock_pers.run_query.assert_called()
+
+    @patch("sbom_graph_enrichment.tasks.get_http_client")
+    @patch("sbom_graph_enrichment.tasks.get_persistence")
+    @patch("sbom_graph_enrichment.tasks._TRUST_SCORE_ENABLED", False)
+    def test_enrich_package_persists_depsdev(
+        self,
+        mock_get_pers: MagicMock,
+        mock_get_http: MagicMock,
+    ) -> None:
+        mock_client = MagicMock()
+        mock_get_http.return_value = mock_client
+        mock_pers = MagicMock()
+        mock_get_pers.return_value = mock_pers
+
+        mock_dd = MagicMock()
+        mock_dd.enrich.return_value = [
+            Finding(
+                kind=FindingKind.DEPSDEV,
+                source="depsdev",
+                package_url="pkg:npm/lodash@4.17.21",
+                data={"advisory_count": 1, "licenses": ["MIT"]},
+            ),
+        ]
+
+        with patch.dict(
+            "sbom_graph_enrichment.tasks._CERTIFIERS",
+            {"depsdev": MagicMock(return_value=mock_dd)},
+            clear=True,
+        ):
+            result = enrich_package.apply(
+                args=["pkg:npm/lodash@4.17.21"],
+                kwargs={"sources": ["depsdev"]},
+            ).get()
+
+        assert result["depsdev"] == 1
+        mock_pers.run_query.assert_called()
+
+    @patch("sbom_graph_enrichment.tasks.get_http_client")
+    @patch("sbom_graph_enrichment.tasks.get_persistence")
+    @patch("sbom_graph_enrichment.tasks._TRUST_SCORE_ENABLED", False)
+    @patch("sbom_graph_enrichment.tasks.enrich_package.retry")
+    def test_enrich_package_certifier_exception_retries(
+        self,
+        mock_retry: MagicMock,
+        mock_get_pers: MagicMock,
+        mock_get_http: MagicMock,
+    ) -> None:
+        mock_client = MagicMock()
+        mock_get_http.return_value = mock_client
+        mock_pers = MagicMock()
+        mock_get_pers.return_value = mock_pers
+
+        mock_retry.side_effect = RuntimeError("retry")
+
+        mock_cert = MagicMock()
+        mock_cert.enrich.side_effect = RuntimeError("API unavailable")
+
+        with patch.dict(
+            "sbom_graph_enrichment.tasks._CERTIFIERS",
+            {"osv": MagicMock(return_value=mock_cert)},
+            clear=True,
+        ):
+            task = enrich_package.apply(
+                args=["pkg:npm/foo@1.0"],
+                kwargs={"sources": ["osv"]},
+            )
+            try:
+                task.get()
+            except RuntimeError as e:
+                if "retry" not in str(e):
+                    raise
+            mock_retry.assert_called_once()
+
+    @patch("sbom_graph_enrichment.tasks.compute_trust_score")
+    @patch("sbom_graph_enrichment.tasks.get_http_client")
+    @patch("sbom_graph_enrichment.tasks.get_persistence")
+    @patch("sbom_graph_enrichment.tasks._TRUST_SCORE_ENABLED", True)
+    def test_enrich_package_dispatches_trust_score_when_enabled(
+        self,
+        mock_get_pers: MagicMock,
+        mock_get_http: MagicMock,
+        mock_compute: MagicMock,
+    ) -> None:
+        mock_client = MagicMock()
+        mock_get_http.return_value = mock_client
+        mock_pers = MagicMock()
+        mock_get_pers.return_value = mock_pers
+
+        mock_cert = MagicMock()
+        mock_cert.enrich.return_value = [
+            Finding(
+                kind=FindingKind.LICENSE,
+                source="clearlydefined",
+                package_url="pkg:npm/foo@1.0",
+                data={"spdx_id": "MIT"},
+            ),
+        ]
+
+        with patch.dict(
+            "sbom_graph_enrichment.tasks._CERTIFIERS",
+            {"clearlydefined": MagicMock(return_value=mock_cert)},
+            clear=True,
+        ):
+            result = enrich_package.apply(
+                args=["pkg:npm/foo@1.0"],
+                kwargs={"sources": ["clearlydefined"]},
+            ).get()
+
+        assert result["licenses"] == 1
+        mock_compute.delay.assert_called_once()
+        call_args = mock_compute.delay.call_args
+        assert call_args[0][0] == "pkg:npm/foo@1.0"
+        findings_data = call_args[0][1]
+        assert len(findings_data) == 1
+        assert findings_data[0]["kind"] == "license"
+
 
 class TestEnrichAllPackages:
     """Tests for the enrich_all_packages task."""
@@ -370,3 +811,28 @@ class TestPropagateEffectiveScores:
     def test_propagate_skipped_when_disabled(self) -> None:
         result = propagate_effective_scores.apply(args=[]).get()
         assert result["skipped"] is True
+
+    @patch("sbom_graph_enrichment.tasks.create_persistence")
+    @patch("sbom_graph_enrichment.tasks._TRUST_SCORE_ENABLED", True)
+    @patch.dict("os.environ", {"TRUST_SCORE_ALERT_THRESHOLD": "5.0"}, clear=False)
+    def test_propagate_with_low_score_alerts(
+        self, mock_create_pers: MagicMock
+    ) -> None:
+        mock_pers = MagicMock()
+        mock_pers.get_all_trust_scores.return_value = [
+            {"purl": "pkg:npm/low@1", "direct_score": 2.0},
+            {"purl": "pkg:npm/high@1", "direct_score": 8.0},
+        ]
+        mock_pers.get_dependency_graph_for_propagation.return_value = []
+        mock_create_pers.return_value = mock_pers
+
+        with patch(
+            "sbom_graph_enrichment.tasks.logger"
+        ) as mock_logger:
+            result = propagate_effective_scores.apply(args=[]).get()
+
+        assert result["updated"] == 2
+        assert result["alerts"] >= 1
+        mock_logger.warning.assert_called_once()
+        call_args = mock_logger.warning.call_args[0]
+        assert "below threshold" in call_args[0]

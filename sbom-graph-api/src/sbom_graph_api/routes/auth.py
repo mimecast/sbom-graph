@@ -1,6 +1,8 @@
 """Flask routes for authentication (login, logout, token management)."""
 
 import logging
+import threading
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from functools import wraps
@@ -8,6 +10,7 @@ from typing import Any
 
 from flask import (
     Blueprint,
+    Response,
     jsonify,
     make_response,
     redirect,
@@ -40,12 +43,101 @@ from sbom_graph_api.utils.validation import (
     MAX_EXPIRES_DAYS,
     MAX_TOKEN_DESCRIPTION_LENGTH,
     get_safe_redirect_url,
+    validate_format,
     validate_username,
 )
 
 logger = logging.getLogger(__name__)
 
 bp = Blueprint("auth", __name__, url_prefix="/auth")
+
+
+# ---------------------------------------------------------------------------
+# In-memory per-IP login rate limiter (defense-in-depth)
+#
+# Each Gunicorn worker maintains its own dict.  This provides per-worker
+# protection against brute-force attacks.  Network-level rate limiting at
+# ingress / WAF remains the primary control; this is a secondary safeguard.
+# ---------------------------------------------------------------------------
+
+_LOGIN_MAX_ATTEMPTS = 10
+_LOGIN_WINDOW_SECONDS = 900  # 15 minutes
+_LOGIN_CLEANUP_INTERVAL = 300  # purge stale entries every 5 min
+
+_login_attempts: dict[str, tuple[int, float]] = {}
+_login_lock = threading.Lock()
+_last_cleanup = time.monotonic()
+
+
+def _cleanup_stale_entries() -> None:
+    """Remove entries whose window has expired.  Called under ``_login_lock``."""
+    now = time.monotonic()
+    stale_keys = [
+        ip
+        for ip, (_, window_start) in _login_attempts.items()
+        if now - window_start > _LOGIN_WINDOW_SECONDS
+    ]
+    for ip in stale_keys:
+        del _login_attempts[ip]
+
+
+def _check_login_rate_limit() -> tuple[Response, int] | None:
+    """Return a 429 response if the caller has exceeded the login rate limit.
+
+    Returns ``None`` when the request is within limits.
+    """
+    global _last_cleanup  # noqa: PLW0603
+
+    client_ip = request.remote_addr or "unknown"
+    now = time.monotonic()
+
+    with _login_lock:
+        # Periodic housekeeping to prevent unbounded memory growth
+        if now - _last_cleanup > _LOGIN_CLEANUP_INTERVAL:
+            _cleanup_stale_entries()
+            _last_cleanup = now
+
+        entry = _login_attempts.get(client_ip)
+        if entry is not None:
+            count, window_start = entry
+            elapsed = now - window_start
+            if elapsed < _LOGIN_WINDOW_SECONDS:
+                if count >= _LOGIN_MAX_ATTEMPTS:
+                    retry_after = int(_LOGIN_WINDOW_SECONDS - elapsed) + 1
+                    logger.warning(
+                        "Login rate limit exceeded for IP %s (%d attempts in %.0fs)",
+                        client_ip,
+                        count,
+                        elapsed,
+                    )
+                    resp = jsonify({"error": "Too many login attempts. Please try again later."})
+                    resp.headers["Retry-After"] = str(retry_after)
+                    return resp, 429
+            else:
+                # Window expired -- reset
+                _login_attempts[client_ip] = (0, now)
+
+    return None
+
+
+def _record_login_attempt() -> None:
+    """Increment the attempt counter for the current request IP."""
+    client_ip = request.remote_addr or "unknown"
+    now = time.monotonic()
+
+    with _login_lock:
+        entry = _login_attempts.get(client_ip)
+        if entry is None or (now - entry[1]) >= _LOGIN_WINDOW_SECONDS:
+            _login_attempts[client_ip] = (1, now)
+        else:
+            _login_attempts[client_ip] = (entry[0] + 1, entry[1])
+
+
+def _reset_login_attempts() -> None:
+    """Clear the counter after a successful login."""
+    client_ip = request.remote_addr or "unknown"
+    with _login_lock:
+        _login_attempts.pop(client_ip, None)
 
 
 def get_current_user() -> str | None:
@@ -169,10 +261,16 @@ def login() -> ResponseReturnValue:
         info = "Welcome! Create your admin account by entering your desired username and password."
 
     if request.method == "POST":
+        # Defense-in-depth: per-IP rate limiting (per Gunicorn worker)
+        rate_limit_resp = _check_login_rate_limit()
+        if rate_limit_resp is not None:
+            return rate_limit_resp
+
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
 
         if not username or not password:
+            _record_login_attempt()
             error = "Username and password are required"
         else:
             # Try LDAP authentication if enabled
@@ -214,10 +312,13 @@ def login() -> ResponseReturnValue:
                         set_access_cookies(response, access_token)
                         set_refresh_cookies(response, refresh_token)
 
+                        _reset_login_attempts()
                         return response
+                    _record_login_attempt()
                     error = "Invalid username or password"
 
                 except LDAPAuthenticationError as e:
+                    _record_login_attempt()
                     # Log the actual error for debugging, show generic message to user
                     logger.error("LDAP authentication error: %s", e)
                     error = "Authentication failed. Please try again."
@@ -249,7 +350,9 @@ def login() -> ResponseReturnValue:
                         set_access_cookies(response, access_token)
                         set_refresh_cookies(response, refresh_token)
 
+                        _reset_login_attempts()
                         return response
+                    _record_login_attempt()
                     error = "Failed to create admin account. Please try again."
                 else:
                     # Authenticate against local database
@@ -283,7 +386,9 @@ def login() -> ResponseReturnValue:
                         set_access_cookies(response, access_token)
                         set_refresh_cookies(response, refresh_token)
 
+                        _reset_login_attempts()
                         return response
+                    _record_login_attempt()
                     error = "Invalid username or password"
 
     return render_template(
@@ -358,7 +463,7 @@ def list_tokens() -> ResponseReturnValue:
     tokens = token_storage.list_tokens(identity, include_revoked=True)
     logger.info("Found %d tokens for user '%s'", len(tokens), identity)
 
-    if request.is_json or request.args.get("format") == "json":
+    if request.is_json or validate_format(request.args.get("format")) == "json":
         return jsonify(
             {
                 "tokens": tokens,

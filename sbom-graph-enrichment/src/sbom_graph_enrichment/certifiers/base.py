@@ -28,6 +28,8 @@ class FindingKind(str, Enum):
     OSSINDEX = "ossindex"
     DEPSDEV = "depsdev"
     TRUST_SCORE = "trust_score"
+    EOL = "eol"
+    SOURCE_REPO = "source_repo"
 
 
 @dataclass(slots=True)

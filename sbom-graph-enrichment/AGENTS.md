@@ -16,6 +16,8 @@ src/sbom_graph_enrichment/
     ├── scorecard.py       # OpenSSF Scorecard certifier
     ├── ossindex.py        # Sonatype OSS Index certifier
     ├── depsdev.py         # deps.dev project health certifier
+    ├── eol.py             # endoflife.date EOL certifier
+    ├── source_repo.py     # Source repository URL certifier (from deps.dev)
     └── trust_score.py     # Trust score calculator (compositor, not a Certifier)
 tests/
 ├── conftest.py
@@ -30,6 +32,17 @@ tests/
 └── test_persistence_helpers.py
 ```
 
+## Certifiers
+| Certifier | FindingKind | Notes |
+|-----------|-------------|-------|
+| osv | VULNERABILITY | OSV.dev |
+| clearlydefined | LICENSE | ClearlyDefined |
+| scorecard | SCORECARD | OpenSSF Scorecard |
+| ossindex | OSSINDEX | Sonatype OSS Index |
+| depsdev | DEPSDEV | deps.dev project health, scorecard, licenses, advisory count; persists Version metadata + Scorecard nodes |
+| eol | EOL | endoflife.date API, 30 req/min, maps PURL to product names |
+| source_repo | SOURCE_REPO | deps.dev, 100 req/min, SSRF mitigation via host allowlist |
+
 ## Certifier Interface Pattern
 Every certifier extends `Certifier` (from `base.py`) and implements:
 - `name` property: short string identifier
@@ -41,8 +54,9 @@ A shared `httpx.Client` is passed in for connection pooling. Rate limiting is in
 1. Create `certifiers/new_source.py` implementing the `Certifier` interface
 2. Add a new `FindingKind` enum value in `base.py`
 3. Register the certifier in `tasks.py` `_CERTIFIERS` dict
-4. If the certifier contributes to trust scores, update `trust_score.py` category scoring
-5. Add unit tests using `httpx.Response` mocking (see existing test files for pattern)
+4. Add a `_persist_*` handler in `tasks.py` (e.g. `_persist_eol` stores EOL on Version nodes, `_persist_source_repo` creates/links SourceRepository nodes)
+5. If the certifier contributes to trust scores, update `trust_score.py` category scoring
+6. Add unit tests using `httpx.Response` mocking (see existing test files for pattern)
 
 ## Testing Patterns
 - Mock `httpx.Client` with `MagicMock(spec=httpx.Client)`
@@ -55,6 +69,7 @@ A shared `httpx.Client` is passed in for connection pooling. Rate limiting is in
 - 4 categories with configurable weights sum to direct_score (0-10 scale)
 - `propagate_effective_scores` task runs periodically to compute inherited risk
 - Bottom-up graph traversal with alpha blending and decay attenuation
+- Trust score drop alerting: when packages fall below `TRUST_SCORE_ALERT_THRESHOLD`, the task logs WARNING with top 20 at-risk packages
 
 ## Environment Variables
 | Variable | Default | Description |
@@ -70,3 +85,5 @@ A shared `httpx.Client` is passed in for connection pooling. Rate limiting is in
 | TRUST_SCORE_MAX_DEPTH | 20 | Maximum traversal depth |
 | OSSINDEX_USER | "" | Optional OSS Index username |
 | OSSINDEX_TOKEN | "" | Optional OSS Index API token |
+| ENRICHMENT_SOURCES | null | JSON list of certifier names to run (empty = all) |
+| TRUST_SCORE_ALERT_THRESHOLD | 4.0 | Score below which packages trigger WARNING alerts |

@@ -24,7 +24,7 @@ The project is made up of 5 parts:
 
 1. **sbom-graph-model** -- A Python library for processing CycloneDX and SPDX files and storing them in a GraphDB
 2. **sbom-graph-api** -- A Flask application for visualizing graph data, ingesting SBOMs (CycloneDX and SPDX) via authenticated API, and providing reports on dependency relationships, vulnerabilities, licenses, policy compliance, and supply-chain trust scores
-3. **sbom-graph-enrichment** -- A Celery-based asynchronous enrichment pipeline that queries external APIs (OSV, ClearlyDefined, OpenSSF Scorecard, Sonatype OSS Index, deps.dev) to enrich package metadata and compute trust scores
+3. **sbom-graph-enrichment** -- A Celery-based asynchronous enrichment pipeline that queries external APIs (OSV, ClearlyDefined, OpenSSF Scorecard, Sonatype OSS Index, deps.dev, endoflife.date) to enrich package metadata and compute trust scores
 4. **sonatype-lifecycle-release-listener** -- A release listener for SCA scans that retrieves the CycloneDX file and processes it
 5. **sbom-graph-cli** -- Command-line interface for ingestion, querying, policy annotation, and report export (scripting and CI/CD)
 
@@ -40,13 +40,14 @@ For a full deployment walkthrough (prerequisites, TLS setup, Helm configuration,
 - **Patch Planning and Blast Radius**: Frontier-level patch plans for vulnerabilities and blast radius analysis for compromised packages
 - **Policy Annotations**: Mark packages as approved/denied/hold (certifyBad/certifyGood) with CI/CD gate endpoints for binary authorisation
 - **Source Repository Tracking**: Link packages to their source repos for provenance checks and scorecard lookups
-- **Supply-Chain Trust Score**: Composite trust scores from OpenSSF Scorecard, OSV, Sonatype OSS Index, and deps.dev with inherited risk propagation (see [dedicated section below](#supply-chain-trust-score))
+- **Supply-Chain Trust Score**: Composite trust scores from OpenSSF Scorecard, OSV, Sonatype OSS Index, and deps.dev with inherited risk propagation and drop alerting (see [dedicated section below](#supply-chain-trust-score))
 - **Visualizations**:
   - K-Partite Dependency Visualization with color-coded partition levels
   - Bi-Partite Graph of project versions and their direct dependants
   - Dependants Graph (full reverse dependency tree)
   - Dependencies Graph with multiple layouts (spring, radial, shell, BFS, circular) and cycle detection
   - Interactive layout switcher and cycle edge highlighting
+  - Trust score heatmap, risk propagation graph, application risk dashboard, risk path explorer, risk outliers, and what-if simulator
 - **Reports**: HTML tables, Excel exports, and JSON exports for:
   - All projects with versions
   - Application inventory with latest-version filtering
@@ -72,7 +73,7 @@ For a full deployment walkthrough (prerequisites, TLS setup, Helm configuration,
   - Source impact (affected applications by compromised source repo)
   - SBOM inventory (ingested SBOM records)
   - SBOM coverage (provenance coverage per application)
-- **Programmatic API (v1)**: JSON-only endpoints for CI/CD pipelines including package vulnerability lookup, policy checks, trust score gates, and enrichment triggers
+- **Programmatic API (v1)**: JSON-only endpoints for CI/CD pipelines with `{data, pagination?, meta}` envelope. Includes package metadata, dependency/dependant trees, critical dependencies, risk summary, OpenAPI spec, vulnerability lookup, policy checks, trust score gates, and enrichment triggers
 - **CLI Tooling**: `sbom-graph` CLI for ingest, query (vulns, deps, dependants, patch-plan), policy annotate, and report export with `--output json` for pipelines
 - **Interactive UI Features**:
   - Internal Only Toggle across all reports and visualizations
@@ -132,6 +133,10 @@ effective_score(v) = α × direct_score(v) + (1 − α) × inherited_score(v)
 - **Minimum-path score** tracks the worst individual component on any path from an application to a leaf node ("weakest link")
 - Scores are computed **bottom-up** via reverse topological order; improvements propagate automatically when dependencies are upgraded
 
+### Trust Score Drop Alerting
+
+When a package's effective score falls below `TRUST_SCORE_ALERT_THRESHOLD` (default 4.0), the enrichment pipeline emits WARNING-level log alerts with the top 20 at-risk packages. Configure the threshold via `trustScore.alertThreshold` in Helm values or the `TRUST_SCORE_ALERT_THRESHOLD` environment variable.
+
 ### API Endpoints
 
 | Endpoint | Description |
@@ -168,6 +173,7 @@ Scoring parameters are configurable via environment variables or Helm values:
 | `trustScore.propagation.alpha` | `0.4` | Own-score vs inherited-score balance |
 | `trustScore.propagation.decay` | `0.8` | Per-depth attenuation factor |
 | `trustScore.propagation.maxDepth` | `20` | Maximum traversal depth |
+| `trustScore.alertThreshold` | `4.0` | Effective score below which WARNING-level alerts are emitted |
 
 ## Enrichment Pipeline
 
@@ -175,6 +181,8 @@ The `sbom-graph-enrichment` component is a Celery-based asynchronous worker that
 
 - **Vulnerability Enrichment**: Queries OSV.dev and Sonatype OSS Index for known vulnerabilities, creating `Vulnerability` nodes and `HAS_VULNERABILITY` edges in the graph
 - **License Enrichment**: Queries ClearlyDefined for license metadata, categorising licenses by risk (Copyleft, Weak Copyleft, Permissive)
+- **EOL Enrichment**: Queries the endoflife.date API for product lifecycle information (end-of-life dates)
+- **Source Repository Enrichment**: Queries deps.dev for source repository URLs, with host allowlist for SSRF mitigation
 - **Trust Score Computation**: Queries OpenSSF Scorecard, OSV, Sonatype, and deps.dev to compute the composite trust score and propagate inherited risk through the dependency graph
 
 Enrichment tasks can be triggered on-demand via the API (`POST /api/v1/enrich/vulnerabilities`) or run on a configurable schedule. The pipeline is designed to be idempotent: re-running enrichment updates existing nodes rather than creating duplicates.
@@ -255,8 +263,10 @@ alternatively-licensed graph database.
 ### Other Dependencies
 
 All Python library dependencies use permissive licences (MIT, BSD-3, Apache-2.0)
-with one exception: **ldap3** (LGPL-3, weak copyleft). See
-[threat-model.md](threat-model.md) for the full licence assessment.
+with two exceptions: **ldap3** (LGPL-3, weak copyleft) and **certifi** (MPL-2.0,
+weak copyleft). certifi provides the Mozilla CA bundle and is universally
+accepted for TLS certificate verification. See [threat-model.md](threat-model.md)
+for the full licence assessment.
 
 ## Contributing
 

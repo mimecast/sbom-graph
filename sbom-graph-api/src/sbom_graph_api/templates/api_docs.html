@@ -534,6 +534,63 @@
         <div class="params">Params: <code>format</code></div>
     </div>
 
+    <h2>Trust Score Reports</h2>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/trust-scores">/reports/trust-scores</a></span>
+        <div class="description">All packages with trust score columns (direct, effective, confidence)</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code>, <code>min_score</code>, <code>sort_by</code></div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/trust-score-gaps">/reports/trust-score-gaps</a></span>
+        <div class="description">Packages with low confidence (gaps in trust score data)</div>
+        <div class="params">Params: <code>format</code>, <code>limit</code></div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/trust-score-heatmap">/reports/trust-score-heatmap</a></span>
+        <div class="description">Colour-coded heatmap grid by score category</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code>, <code>limit</code></div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/risk-propagation-graph">/reports/risk-propagation-graph</a></span>
+        <div class="description">Risk propagation network (vis.js) with nodes sized by fan-in, coloured by score</div>
+        <div class="params">Params: <code>internal_only</code></div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/application-risk-dashboard">/reports/application-risk-dashboard</a></span>
+        <div class="description">Per-application supply-chain risk with direct/transitive dep counts</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code>, <code>limit</code></div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/reports/risk-path-explorer/{purl}</span>
+        <div class="description">Dependency risk path drill-down for a package</div>
+        <div class="params">Params: <code>format</code>, <code>limit</code></div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/risk-outliers">/reports/risk-outliers</a></span>
+        <div class="description">Packages with score &lt; 4 and ≥ 3 dependants (high-impact remediation targets)</div>
+        <div class="params">Params: <code>format</code>, <code>min_dependents</code>, <code>limit</code></div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/whatif-simulator">/reports/whatif-simulator</a></span>
+        <div class="description">What-if simulator: enter package and hypothetical score to see projected impact</div>
+    </div>
+
     <h2>Ingestion Endpoints</h2>
 
     <div class="section-note">

@@ -410,8 +410,10 @@ All certifiers implement the abstract `Certifier` interface with `name` property
 | OpenSSF Scorecard | `certifiers/scorecard.py` | `GET https://api.scorecard.dev/projects/github.com/{owner}/{repo}` | 30 req/min | Security practices scoring (requires GitHub URL) |
 | Sonatype OSS Index | `certifiers/ossindex.py` | `POST https://ossindex.sonatype.org/api/v3/component-report` | 60/120 req/min | Vulnerability data (optional auth) |
 | deps.dev | `certifiers/depsdev.py` | `GET https://api.deps.dev/v3/systems/{system}/packages/{pkg}/versions/{ver}` | 150 req/min | Package metadata, advisories, Scorecard |
+| EOL | `certifiers/eol.py` | `GET https://endoflife.date/api/{product}/{cycle}.json` | Unspecified | End-of-life status (FindingKind.EOL) |
+| Source Repository | `certifiers/source_repo.py` | `GET https://api.deps.dev/v3/systems/{system}/packages/{pkg}/versions/{ver}` | 150 req/min | Source repo linking with SSRF host allowlist (FindingKind.SOURCE_REPO) |
 
-**Finding kinds:** `FindingKind` enum: `VULNERABILITY`, `LICENSE`, `SCORECARD`, `OSSINDEX`, `DEPSDEV`
+**Finding kinds:** `FindingKind` enum: `VULNERABILITY`, `LICENSE`, `SCORECARD`, `OSSINDEX`, `DEPSDEV`, `EOL`, `SOURCE_REPO`
 
 **Rate limiting:** Each certifier implements token-bucket rate limiting to respect external API limits.
 
@@ -443,6 +445,7 @@ The `TrustScoreCalculator` aggregates findings from all certifiers into a compos
 
 Trust scores propagate bottom-up through the dependency graph:
 
+- **Alerting** -- When `effective_score` falls below `TRUST_SCORE_ALERT_THRESHOLD` (default 4.0), the propagation task emits WARNING-level logs.
 - **Alpha blending** -- Direct and inherited scores combined via `TRUST_SCORE_ALPHA` (default 0.4)
 - **Decay** -- Transitive influence decays by `TRUST_SCORE_DECAY` (default 0.8) per depth level
 - **Max depth** -- Traversal limited by `TRUST_SCORE_MAX_DEPTH` (default 20)
@@ -518,7 +521,7 @@ enrichment:
   image: { repository: sbom-graph-enrichment, tag: latest }
   replicas: 1
   interval: "3600"
-  sources: ["osv", "clearlydefined", "scorecard", "ossindex", "depsdev"]
+  sources: ["osv", "clearlydefined", "scorecard", "ossindex", "depsdev", "eol", "source_repo"]
   celeryBrokerDb: "1"
   celeryResultDb: "2"
   concurrency: 2
@@ -528,6 +531,7 @@ enrichment:
     alpha: "0.4"
     decay: "0.8"
     maxDepth: "20"
+    alertThreshold: "4.0"
     weights: { security: "0.3", vulnerability: "0.3", maintenance: "0.2", supplyChain: "0.2" }
     ossindex: { user: "", token: "" }
   networkPolicy:
@@ -937,6 +941,19 @@ All visualization endpoints return self-contained HTML pages with inline JavaScr
 | `bfs` | BFS tree -- traditional hierarchical layout |
 | `circular` | Nodes arranged in a circle |
 
+#### Trust Score Visualizations (`/reports`)
+
+Interactive HTML visualizations for trust score and risk analysis:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/reports/trust-score-heatmap` | Trust score heatmap by package |
+| `GET` | `/reports/risk-propagation-graph` | Risk propagation through the dependency graph |
+| `GET` | `/reports/application-risk-dashboard` | Application-level risk dashboard |
+| `GET` | `/reports/risk-path-explorer` | Explore weakest-link paths in the graph |
+| `GET` | `/reports/risk-outliers` | Packages with anomalous risk profiles |
+| `GET` | `/reports/whatif-simulator` | What-if simulation for trust score changes |
+
 #### Visualization Endpoints
 
 | Method | Path | Description |
@@ -951,7 +968,28 @@ All visualization endpoints also have `/purl/<path:purl>` variants.
 
 ### 5.4 Programmatic API (`/api/v1`)
 
-All endpoints return JSON. Authentication required when `AUTH_ENABLED=true`.
+All endpoints return JSON with a standard envelope `{data, pagination?, meta}`. Authentication required when `AUTH_ENABLED=true` (JWT via `Authorization: Bearer <token>` or session cookie).
+
+#### Package Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/package/{purl}` | Package metadata for a specific PURL |
+| `GET` | `/api/v1/package/{purl}/dependencies` | Direct and transitive dependencies |
+| `GET` | `/api/v1/package/{purl}/dependants` | Direct and transitive dependants |
+
+#### Analysis Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/analysis/critical-dependencies` | Packages with low trust scores or high risk |
+| `GET` | `/api/v1/analysis/risk-summary` | Aggregate risk metrics across the graph |
+
+#### OpenAPI
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/openapi.json` | OpenAPI 3.0 specification for the v1 API |
 
 #### License Endpoints
 
@@ -1117,7 +1155,7 @@ Policy annotation management. Requires authentication; POST and DELETE require a
 | `CELERY_RESULT_DB` | `2` | Redis DB number for Celery results |
 | `CELERY_REDIS_SSL` | `false` | Enable TLS for Redis connections |
 | `ENRICHMENT_INTERVAL` | `3600` | Seconds between full enrichment runs |
-| `ENRICHMENT_SOURCES` | `osv,clearlydefined` | Comma-separated list of enabled certifiers |
+| `ENRICHMENT_SOURCES` | (varies) | JSON string list of certifier names to enable (e.g. osv, clearlydefined, scorecard, ossindex, depsdev, eol, source_repo) |
 | `ENRICHMENT_HTTP_TIMEOUT` | `30` | HTTP timeout for external API calls (seconds) |
 
 #### Trust Score
@@ -1133,6 +1171,7 @@ Policy annotation management. Requires authentication; POST and DELETE require a
 | `TRUST_SCORE_WEIGHT_VULNERABILITY` | `0.3` | Weight for vulnerability profile category |
 | `TRUST_SCORE_WEIGHT_MAINTENANCE` | `0.2` | Weight for maintenance health category |
 | `TRUST_SCORE_WEIGHT_SUPPLY_CHAIN` | `0.2` | Weight for supply chain hygiene category |
+| `TRUST_SCORE_ALERT_THRESHOLD` | `4.0` | Effective score below which WARNING-level logs are emitted |
 | `OSSINDEX_USER` | (empty) | Sonatype OSS Index username |
 | `OSSINDEX_TOKEN` | (empty) | Sonatype OSS Index API token |
 
@@ -1303,6 +1342,8 @@ All path parameters, query parameters, and response headers that accept user inp
 | `validate_limit()` | Enforce maximum result count |
 | `validate_css_dimension()` | Allowlist CSS dimension patterns |
 | `validate_layout()` | Restrict to known layout algorithms |
+| `validate_sort_param()` | Centralized validation for sort field parameters |
+| `validate_sort_order()` | Centralized validation for sort order (asc/desc) |
 | `validate_project_group()` | Sanitize group parameter |
 | `validate_json_body()` | Validate JSON request body against a JSON Schema (Draft-07) |
 | `sanitize_content_disposition()` | Prevent header injection in Content-Disposition headers |
@@ -1330,6 +1371,7 @@ Validation errors return HTTP 400 with a JSON body containing `{"error": "Valida
 
 ### 8.3 Authentication Security
 
+- **Login rate limiting:** In-memory per-IP rate limiting on `/auth/login` (10 attempts per 15 minutes per worker) to mitigate brute-force attacks.
 - Passwords hashed with PBKDF2-SHA256 using 600,000 iterations and random salt.
 - JWT tokens signed with HS256 (configurable) using explicit algorithm specification.
 - Token values are SHA-256 hashed for lookup and Fernet-encrypted at rest in SQLite.
@@ -1359,10 +1401,14 @@ Validation errors return HTTP 400 with a JSON body containing `{"error": "Valida
 
 - **Log redaction:** Redis passwords in broker URLs are redacted from Celery and Kombu logs via `_RedactSecretsFilter`.
 - **Network egress policy:** Optional `NetworkPolicy` restricts enrichment worker egress to DNS (port 53), FalkorDB (port 6379), and HTTPS (port 443) to non-RFC1918 addresses. Beat is restricted to DNS and FalkorDB only.
-- **SSRF mitigation:** The ClearlyDefined license certifier constructs URLs with a hardcoded host (`api.clearlydefined.io`); path components from graph data cannot influence the target host. The `httpx` client enforces a 30-second timeout.
+- **SSRF mitigation:** The ClearlyDefined license certifier constructs URLs with a hardcoded host (`api.clearlydefined.io`); path components from graph data cannot influence the target host. The Source Repository certifier uses an SSRF host allowlist when resolving repository URLs via deps.dev. The `httpx` client enforces a 30-second timeout.
 - **Rate limiting:** Token-bucket rate limiters on all external API certifiers prevent rate exhaustion and associated IP bans.
 
-### 8.7 External API Dependencies
+### 8.7 License Compliance
+
+A dependency audit confirmed no unexpected copyleft dependencies. Accepted exceptions: `ldap3` (LGPL-3.0) for LDAP authentication and FalkorDB server (SSPLv1) as the graph database.
+
+### 8.8 External API Dependencies
 
 | API | Authentication | TLS | Rate Limit |
 |-----|---------------|-----|------------|
@@ -1371,6 +1417,7 @@ Validation errors return HTTP 400 with a JSON body containing `{"error": "Valida
 | api.scorecard.dev | None | HTTPS | 30 req/min |
 | ossindex.sonatype.org | Optional Basic Auth | HTTPS | 60/120 req/min |
 | api.deps.dev | None | HTTPS | 150 req/min |
+| endoflife.date | None | HTTPS | Unspecified |
 
 ## License
 

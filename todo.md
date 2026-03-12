@@ -339,7 +339,7 @@ are affected?").
 
 - [x] Extract `externalReferences` with type `vcs` from CycloneDX
   components during ingestion.
-- [ ] Enrichment worker that queries deps.dev or GitHub API to discover
+- [x] Enrichment worker that queries deps.dev or GitHub API to discover
   source repos for packages missing this data.
 
 ---
@@ -586,45 +586,45 @@ improves and by how much.
   (shows inherited risk at a glance).
 - [x] Confidence badge alongside the score (full circle = high
   confidence, half circle = partial, outline = low confidence).
-- [ ] Trust score heatmap: grid of packages vs score categories,
+- [x] Trust score heatmap: grid of packages vs score categories,
   colour-coded by individual category scores.
-- [ ] **Risk propagation graph**: dependency graph where nodes are
+- [x] **Risk propagation graph**: dependency graph where nodes are
   sized by dependency fan-in (how many things depend on them) and
   colour-coded by effective trust score. Edges coloured to show risk
   flow: red edges where a low-scoring dependency is degrading its
   parent's effective score. Clicking a node highlights all paths to
   applications it affects.
-- [ ] **Application risk dashboard**: for each application, show the
+- [x] **Application risk dashboard**: for each application, show the
   effective score, a sparkline of effective score over time, and a
   "risk decomposition" bar showing what percentage of inherited risk
   comes from direct dependencies vs transitive tiers (1-2 hops,
   3+ hops).
-- [ ] **Risk path explorer**: drill into a specific application to see
+- [x] **Risk path explorer**: drill into a specific application to see
   the ordered list of dependency chains dragging down its effective
   score. Each chain shows the package names, their individual scores,
   and the calculated contribution. One-click link to each package's
   detail page.
-- [ ] "Risk Outliers" dashboard widget: packages with effective
+- [x] "Risk Outliers" dashboard widget: packages with effective
   score < 4 that are dependencies of >= 3 applications.
-- [ ] **What-if simulator**: UI widget where users select a package,
+- [x] **What-if simulator**: UI widget where users select a package,
   enter a hypothetical new score, and see real-time projected changes
   to all affected applications' effective scores (calls the
   `risk-propagation-impact` API).
 
 #### 8.4 Automation
 
-- [ ] **Trust Score Certifier** in the enrichment pipeline that
+- [x] **Trust Score Certifier** in the enrichment pipeline that
   orchestrates calls to all four data sources and computes the direct
   composite score. Runs as a Celery task alongside the existing OSV
   and License certifiers.
-- [ ] **Effective Score Propagation Task**: a separate Celery task
+- [x] **Effective Score Propagation Task**: a separate Celery task
   (triggered after the Trust Score Certifier completes a batch, or on
   a schedule) that performs the bottom-up graph traversal to compute
   `effective_score`, `inherited_score`, and `min_path_score` for all
   packages. Uses reverse topological ordering for efficiency; only
   recomputes subtrees where a direct score has changed since the last
   run.
-- [ ] Configurable scoring parameters via Helm values:
+- [x] Configurable scoring parameters via Helm values:
   - `trustScore.enabled`, `trustScore.interval`,
     `trustScore.sources: [scorecard, osv, sonatype, fosstars]`,
     `trustScore.weights.*` (category weights).
@@ -634,16 +634,16 @@ improves and by how much.
     attenuation factor.
   - `trustScore.propagation.maxDepth` (default 20): depth cutoff to
     limit traversal in very deep graphs.
-- [ ] CI/CD gate: `GET /api/v1/package/{purl}/trust-check` returns
+- [x] CI/CD gate: `GET /api/v1/package/{purl}/trust-check` returns
   pass/fail against a configurable minimum **effective score** threshold
   (not just direct score). This catches cases where a package itself
   looks fine but its dependencies are risky.
-- [ ] Alert when a package's **effective score** drops below a
+- [x] Alert when a package's **effective score** drops below a
   configurable threshold, including the top risk contributors that
   caused the drop (e.g., *"App X effective score dropped from 7.5 to
   4.1 because dependency Y's direct score fell to 1.3 due to 2 new
   critical CVEs"*).
-- [ ] **Remediation priority queue**: automatically rank packages by
+- [x] **Remediation priority queue**: automatically rank packages by
   remediation leverage -- the number of applications whose effective
   score would improve if that package were upgraded, multiplied by the
   average improvement. Exposes this via
@@ -737,9 +737,11 @@ enrichment.
 - [x] **License Certifier**: query ClearlyDefined for licence data.
 - [x] **Trust Score Certifier**: composite scoring from OpenSSF Scorecard,
   OSV, Sonatype OSS Index, and deps.dev (see [initiative 8](#8-supply-chain-trust-score-composite-security-rating)).
-- [ ] **EOL Certifier**: query endoflife.date for EOL status.
-- [ ] **Deps.dev Certifier**: query deps.dev for additional dependency
+- [x] **EOL Certifier**: query endoflife.date for EOL status.
+- [x] **Deps.dev Certifier**: query deps.dev for additional dependency
   and source metadata.
+- [x] **Source Repository Certifier**: query deps.dev for source
+  repository URLs with SSRF mitigation via host allowlist.
 
 #### 11.3 Helm / Deployment
 
@@ -802,27 +804,27 @@ with optional JSON/Excel).
 
 #### 13.1 API Endpoints
 
-- [ ] `GET /api/v1/package/{purl}` -- resolve a purl and return all
+- [x] `GET /api/v1/package/{purl}` -- resolve a purl and return all
   known metadata (versions, vulnerabilities, licences, scorecard,
   policy annotations).
-- [ ] `GET /api/v1/package/{purl}/vulns?include_dependencies=true` --
+- [x] `GET /api/v1/package/{purl}/vulns?include_dependencies=true` --
   vulnerabilities for a package and optionally its transitive
   dependencies.
-- [ ] `GET /api/v1/package/{purl}/dependencies` -- dependency tree
+- [x] `GET /api/v1/package/{purl}/dependencies` -- dependency tree
   (direct and transitive).
-- [ ] `GET /api/v1/package/{purl}/dependants` -- reverse dependency tree.
-- [ ] `GET /api/v1/analysis/critical-dependencies?sort=frequency|scorecard`
+- [x] `GET /api/v1/package/{purl}/dependants` -- reverse dependency tree.
+- [x] `GET /api/v1/analysis/critical-dependencies?sort=frequency|scorecard`
   -- most depended-on packages or lowest-scorecard packages.
-- [ ] `GET /api/v1/analysis/risk-summary` -- aggregate risk metrics
+- [x] `GET /api/v1/analysis/risk-summary` -- aggregate risk metrics
   (total vulns by severity, licence risk distribution, EOL count,
   policy violations).
 
 #### 13.2 Design
 
 - [x] Version the API under `/api/v1/` prefix.
-- [ ] Consistent JSON response envelope: `{data, pagination, meta}`.
-- [ ] Pagination via cursor or offset/limit.
-- [ ] OpenAPI 3.1 spec auto-generated from route definitions.
+- [x] Consistent JSON response envelope: `{data, pagination, meta}`.
+- [x] Pagination via cursor or offset/limit.
+- [x] OpenAPI 3.1 spec auto-generated from route definitions.
 
 #### 13.3 Authentication
 
@@ -933,23 +935,23 @@ Items within a phase can be parallelised. The enrichment pipeline (11)
 is listed in Phase 1 because it is the foundation for vulnerability
 enrichment (1), licence enrichment (2), scorecard (8), and EOL (9).
 
+### 16 Threat Model Findings
 
-2 findings
-The mitigation status is marked as 'ACCEPTED' but the risk severity is 'Critical'. This indicates a critical security risk (brute force attacks on login) that has been accepted without application-level rate limiting. While network-level rate limiting is mentioned, relying solely on external controls for a critical risk creates a significant vulnerability if those controls fail or are misconfigured. Consider implementing basic application-level rate limiting using in-memory storage for single-worker deployments or documenting this as a deployment blocker until network controls are verified.
+At line 72 of sbom-graph-api/threat-model.md, the mitigation status is marked as 'ACCEPTED' but the risk severity is 'Critical'. This indicates a critical security risk (brute force attacks on login) that has been accepted without application-level rate limiting. While network-level rate limiting is mentioned, relying solely on external controls for a critical risk creates a significant vulnerability if those controls fail or are misconfigured. Consider implementing basic application-level rate limiting using in-memory storage for single-worker deployments or documenting this as a deployment blocker until network controls are verified.
 
 | 2 | Brute force on `/auth/login` | S | User credentials | High | High | **Critical** | **ACCEPTED** | SameSite=Lax cookies and session-based auth reduce automated attack surface. Network-level rate limiting expected at ingress controller / WAF. Application-level rate limiting deferred to future sprint (requires Redis or shared state for multi-worker). |
 
-line 72 of sbom-graph-api/threat-model.md
+#### 16.1 Threat Model Update
 
-| 2 | Brute force on `/auth/login` | S | User credentials | High | High | **Critical** | **MITIGATION REQUIRED** | SameSite=Lax cookies and session-based auth reduce automated attack surface. Network-level rate limiting at the ingress controller / WAF is a documented deployment requirement and must be verified before production. Application-level rate limiting will be added in a future sprint for defense in depth (requires Redis or shared state for multi-worker). |
+- [x] The above should be changed to:
 
+> | 2 | Brute force on `/auth/login` | S | User credentials | High | High | **Critical** | **MITIGATION REQUIRED** | SameSite=Lax cookies and session-based auth reduce automated attack surface. Network-level rate limiting at the ingress controller / WAF is a documented deployment requirement and must be verified before production. Application-level rate limiting will be added in a future sprint for defense in depth (requires Redis or shared state for multi-worker). |
 
 The residual risk section lists 'No application-level rate limiting on login' as Critical severity but accepts it as a residual risk. This is inconsistent with security best practices. Even basic in-memory rate limiting (per worker) would provide defense-in-depth against brute force attacks. The justification mentions monitoring/alerting but detection after compromise is less effective than prevention. Consider implementing at least basic per-IP rate limiting in-memory as an interim measure until distributed rate limiting is available.
 
-
-
+line 149 of sbom-graph-api/threat-model.md
 | No application-level rate limiting on login | Critical | Network-level rate limiting at ingress/WAF is the expected control. Application-level limiting requires shared state (Redis) across Gunicorn workers and is deferred. Monitoring/alerting on failed login attempts provides detection. |
 
-line 149 of sbom-graph-api/threat-model.md
+#### 16.2 Rate Limiting
 
-| Brute-force login attempts | Medium | Mitigated by basic in-memory per-IP login rate limiting in each Gunicorn worker (defense-in-depth) and network-level rate limiting at ingress/WAF. Monitoring/alerting on failed login attempts provides additional detection coverage. |
+- [x] Implement according to Guideline above, so that the "No application-level rate limiting on login" it is mitigated by basic in-memory per-IP login rate limiting in each Gunicorn worker (defense-in-depth) and network-level rate limiting at ingress/WAF. Retain the monitoring/alerting on failed login attempts which provide additional detection coverage.

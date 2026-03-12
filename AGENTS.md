@@ -43,7 +43,7 @@ All sub-projects (except cli) ──► FalkorDB (shared graph database)
 
 These agreements apply to **all** sub-projects without exception.
 
-1. All agents must operate in Privacy mode and use only approved models.
+1. All agents must operate in Privacy mode and use only approved models. **Never use fast/cheap models (e.g. `fast`) for code-generating, testing, or security subagents.** Fast models may only be used for trivial file searches.
 2. Each code-generating agent must use a different model and focus area.
 3. **Each code-generating agent must generate a complete design to be threat modelled before implementation, correct design flaws, and then implement the solution to be evaluated against the others.** This is non-negotiable for all new features and architectural changes.
 4. All code must be well-architected, elegant, maintainable, and thoroughly documented.
@@ -159,7 +159,7 @@ No solution may progress past a gate until its criteria are met.
 
 ### Testing
 
-- All existing tests must pass. New code must include tests.
+- **All tests must pass.** Failing tests must be investigated and fixed — never dismissed as "pre-existing" or excluded.
 - Code coverage must not decrease.
 - Integration tests required for new database queries or external API interactions.
 

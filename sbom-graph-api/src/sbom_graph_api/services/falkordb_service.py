@@ -646,6 +646,75 @@ class FalkorDBService:
         )
         return dependencies
 
+    def get_transitive_dependency_purls(
+        self, purl: str, max_depth: int | None = None
+    ) -> list[str]:
+        """Get transitive dependency purls for a package identified by purl.
+
+        Resolves purl to project/version, runs BFS, returns list of dependency
+        purls (excluding the root). Returns empty list if purl not found.
+
+        Args:
+            purl: Package URL of the root package
+            max_depth: Maximum traversal depth (defaults to DEFAULT_MAX_DEPTH)
+
+        Returns:
+            List of dependency purls
+        """
+        resolved = self.find_version_by_purl(purl)
+        if not resolved:
+            return []
+        nodes, _ = self.get_transitive_dependencies(
+            resolved["project_name"],
+            resolved["version_name"],
+            max_depth=max_depth,
+            project_group=resolved.get("project_group"),
+        )
+        root_id = f"{resolved['project_name']}:{resolved['version_name']}"
+        purls: list[str] = []
+        for node in nodes:
+            if node["id"] == root_id:
+                continue
+            p = node.get("properties", {}).get("package_url")
+            if p and p not in purls:
+                purls.append(p)
+        return purls
+
+    def get_transitive_dependant_purls(
+        self, purl: str, max_depth: int | None = None
+    ) -> list[str]:
+        """Get transitive dependant purls (packages that depend on this one).
+
+        Resolves purl to project/version, runs reverse BFS, returns list of
+        dependant purls (excluding the root). Returns empty list if purl not found.
+
+        Args:
+            purl: Package URL of the root package
+            max_depth: Maximum traversal depth (defaults to DEFAULT_MAX_DEPTH)
+
+        Returns:
+            List of dependant purls
+        """
+        resolved = self.find_version_by_purl(purl)
+        if not resolved:
+            return []
+        nodes, _ = self.get_transitive_dependants(
+            resolved["project_name"],
+            resolved["version_name"],
+            max_depth=max_depth,
+            skip_scan_filter=True,
+            project_group=resolved.get("project_group"),
+        )
+        root_id = f"{resolved['project_name']}:{resolved['version_name']}"
+        purls: list[str] = []
+        for node in nodes:
+            if node["id"] == root_id:
+                continue
+            p = node.get("properties", {}).get("package_url")
+            if p and p not in purls:
+                purls.append(p)
+        return purls
+
     def _get_node_id(self, node: Any) -> str:
         """Generate a unique string ID for a node."""
         project_name = node.properties.get("project_name", "unknown")
@@ -4432,6 +4501,27 @@ class FalkorDBService:
             distribution[row[0]] = row[1]
         return distribution
 
+    def get_most_depended_packages(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Return packages with the most dependants (highest fan-in).
+
+        Args:
+            limit: Maximum packages to return.
+
+        Returns:
+            List of dicts with purl and fan_in (number of dependants).
+        """
+        query = """
+            MATCH (v:Version)<-[:DEPENDENCY_VERSION]-(d:Version)
+            WHERE v.package_url IS NOT NULL
+            WITH v.package_url AS purl, count(DISTINCT d) AS fan_in
+            RETURN purl, fan_in ORDER BY fan_in DESC LIMIT $limit
+        """
+        result = self.execute_query(query, {"limit": limit})
+        return [
+            {"purl": row[0] or "", "fan_in": row[1] or 0}
+            for row in result
+        ]
+
     def get_remediation_priorities(self, limit: int = 20) -> list[dict[str, Any]]:
         """Return packages ranked by remediation priority.
 
@@ -4570,6 +4660,149 @@ class FalkorDBService:
                 "effective_score": row[4],
                 "confidence": row[5],
                 "sources_used": row[6] or [],
+            }
+            for row in result
+        ]
+
+    def get_trust_scores_heatmap(
+        self,
+        internal_only: bool = False,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Return trust scores with category breakdowns for heatmap visualization.
+
+        Args:
+            internal_only: If True, restrict to INTERNAL-labeled versions.
+            limit: Maximum packages to return.
+
+        Returns:
+            List of dicts with purl, project_name, version, effective_score,
+            security_practices_score, vulnerability_profile_score,
+            maintenance_health_score, supply_chain_hygiene_score.
+        """
+        label_filter = f":{self.internal_label}" if internal_only else ""
+        query = f"""
+            MATCH (v:Version{label_filter})-[:HAS_TRUST_SCORE]->(t:TrustScore)
+            WHERE t.effective_score IS NOT NULL
+            RETURN t.purl AS purl,
+                   v.project_name AS project_name,
+                   v.name AS version,
+                   t.effective_score AS effective_score,
+                   t.security_practices_score AS security_practices_score,
+                   t.vulnerability_profile_score AS vulnerability_profile_score,
+                   t.maintenance_health_score AS maintenance_health_score,
+                   t.supply_chain_hygiene_score AS supply_chain_hygiene_score
+            ORDER BY t.effective_score ASC
+            LIMIT $limit
+        """
+        result = self.execute_query(query, {"limit": limit})
+        return [
+            {
+                "purl": row[0],
+                "project_name": row[1],
+                "version": row[2],
+                "effective_score": row[3],
+                "security_practices_score": row[4],
+                "vulnerability_profile_score": row[5],
+                "maintenance_health_score": row[6],
+                "supply_chain_hygiene_score": row[7],
+            }
+            for row in result
+        ]
+
+    def get_application_risk_dashboard(
+        self,
+        internal_only: bool = False,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return applications with aggregate supply-chain risk for dashboard.
+
+        Args:
+            internal_only: If True, restrict to INTERNAL-labeled applications.
+            limit: Maximum applications to return.
+
+        Returns:
+            List of dicts with purl, project_name, version, effective_score,
+            direct_dep_count, transitive_dep_count (from dep_count).
+        """
+        label_filter = f":{self.internal_label}" if internal_only else ""
+        query = f"""
+            MATCH (app:Application{label_filter})
+            OPTIONAL MATCH (app)-[:HAS_TRUST_SCORE]->(t:TrustScore)
+            OPTIONAL MATCH (app)-[:DEPENDENCY_VERSION]->(direct:Version)
+            WITH app, t,
+                 t.effective_score AS effective_score,
+                 t.dep_count AS dep_count,
+                 t.purl AS t_purl,
+                 count(DISTINCT direct) AS direct_count
+            WHERE app.package_url IS NOT NULL OR t_purl IS NOT NULL
+            RETURN coalesce(t_purl, app.package_url) AS purl,
+                   app.project_name AS project_name,
+                   app.name AS version,
+                   effective_score,
+                   direct_count AS direct_dep_count,
+                   coalesce(dep_count, direct_count) AS transitive_dep_count
+            ORDER BY coalesce(effective_score, 10) ASC
+            LIMIT $limit
+        """
+        result = self.execute_query(query, {"limit": limit})
+        return [
+            {
+                "purl": row[0],
+                "project_name": row[1],
+                "version": row[2],
+                "effective_score": row[3],
+                "direct_dep_count": row[4] or 0,
+                "transitive_dep_count": row[5] or row[4] or 0,
+            }
+            for row in result
+        ]
+
+    def get_risk_outliers(
+        self,
+        min_dependents: int = 3,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return packages with low effective_score and high fan-in (risk outliers).
+
+        Packages with effective_score < 4 that are dependencies of >= min_dependents
+        applications/packages.
+
+        Args:
+            min_dependents: Minimum number of dependants (default 3).
+            limit: Maximum packages to return.
+
+        Returns:
+            List of dicts with purl, project_name, version, effective_score,
+            dependents_count.
+        """
+        query = """
+            MATCH (t:TrustScore)
+            WHERE t.effective_score IS NOT NULL AND t.effective_score < 4
+            OPTIONAL MATCH (parent:Version)-[:DEPENDENCY_VERSION]->(v:Version)
+            WHERE v.package_url = t.purl
+            WITH t, count(DISTINCT parent) AS dependents_count
+            WHERE dependents_count >= $min_dependents
+            OPTIONAL MATCH (v2:Version {package_url: t.purl})
+            WITH t, dependents_count,
+                 head(collect(DISTINCT v2.project_name)) AS project_name,
+                 head(collect(DISTINCT v2.name)) AS version
+            RETURN t.purl AS purl,
+                   project_name,
+                   version,
+                   t.effective_score AS effective_score,
+                   dependents_count
+            ORDER BY t.effective_score ASC, dependents_count DESC
+            LIMIT $limit
+        """
+        result = self.execute_query(query, {"min_dependents": min_dependents, "limit": limit})
+        return [
+            {
+                "purl": row[0],
+                "project_name": row[1] or "",
+                "version": row[2] or "",
+                "effective_score": row[3],
+                "dependents_count": row[4],
             }
             for row in result
         ]

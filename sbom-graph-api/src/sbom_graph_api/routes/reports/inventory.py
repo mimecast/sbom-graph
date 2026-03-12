@@ -39,6 +39,8 @@ from sbom_graph_api.utils.validation import (
     validate_format,
     validate_limit,
     validate_max_depth,
+    validate_sort_order,
+    validate_sort_param,
     validate_url,
 )
 
@@ -385,23 +387,18 @@ def internal_centrality() -> Response:
         or JSON
     """
     output_format = validate_format(request.args.get("format"))
-    sort_by = request.args.get("sort_by", "inDegree")
-    sort_order = request.args.get("sort_order", "desc")
+    sort_by = validate_sort_param(
+        request.args.get("sort_by"),
+        allowed=frozenset({"indegree", "outdegree", "project_name", "version_name"}),
+        default="indegree",
+    )
+    _CENTRALITY_FIELD_MAP = {"indegree": "inDegree", "outdegree": "outDegree"}
+    sort_by = _CENTRALITY_FIELD_MAP.get(sort_by, sort_by)
+    sort_order = validate_sort_order(request.args.get("sort_order"))
     limit = validate_limit(
         request.args.get("limit", type=int),
         1000,
     )
-
-    valid_sort_fields = {
-        "inDegree",
-        "outDegree",
-        "project_name",
-        "version_name",
-    }
-    if sort_by not in valid_sort_fields:
-        sort_by = "inDegree"
-    if sort_order.lower() not in ("asc", "desc"):
-        sort_order = "desc"
 
     service = get_falkordb_service()
     cd = service.get_internal_centrality(

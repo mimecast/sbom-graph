@@ -175,6 +175,8 @@ Deployments.  Include via: {{- include "sbom-graph.enrichment.env" . | nindent N
   value: {{ .Values.enrichment.celeryResultDb | quote }}
 - name: ENRICHMENT_INTERVAL
   value: {{ .Values.enrichment.interval | quote }}
+- name: ENRICHMENT_SOURCES
+  value: {{ .Values.enrichment.sources | quote }}
 {{- if .Values.global.internalPrefixes }}
 - name: INTERNAL_PREFIXES
   value: {{ .Values.global.internalPrefixes | quote }}
@@ -198,6 +200,8 @@ Deployments.  Include via: {{- include "sbom-graph.enrichment.env" . | nindent N
   value: {{ .Values.enrichment.trustScore.decay | quote }}
 - name: TRUST_SCORE_MAX_DEPTH
   value: {{ .Values.enrichment.trustScore.maxDepth | quote }}
+- name: TRUST_SCORE_ALERT_THRESHOLD
+  value: {{ .Values.enrichment.trustScore.alertThreshold | default "4.0" | quote }}
 - name: TRUST_SCORE_WEIGHT_SECURITY_PRACTICES
   value: {{ .Values.enrichment.trustScore.weights.securityPractices | quote }}
 - name: TRUST_SCORE_WEIGHT_VULNERABILITY_PROFILE

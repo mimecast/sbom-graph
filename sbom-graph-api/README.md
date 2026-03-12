@@ -222,6 +222,12 @@ All report endpoints support multiple output formats via the `format` query para
 | `GET /reports/dependants/purl/<path:purl>` | Same as above, using purl |
 | `GET /reports/multi-version-deps/purl/<path:purl>` | Library version adoption, using purl |
 | `GET /reports/multi-version-sources/purl/<path:purl>` | Diamond dependency conflicts, using purl |
+| `GET /reports/trust-score-heatmap` | Color-coded trust score grid |
+| `GET /reports/risk-propagation-graph` | vis.js network graph showing risk propagation |
+| `GET /reports/application-risk-dashboard` | Per-application risk summaries |
+| `GET /reports/risk-path-explorer/<path:purl>` | Drill-down into dependency chains contributing to risk |
+| `GET /reports/risk-outliers` | Packages with low effective scores and many dependants |
+| `GET /reports/whatif-simulator` | Interactive form to simulate risk propagation changes |
 
 #### Special Version Values
 
@@ -379,6 +385,41 @@ curl -X POST http://localhost:8080/ingest/cyclonedx \
   -d '{"sbom": <cyclonedx-json>}'
 ```
 
+#### Programmatic API v1 Endpoints
+
+All programmatic API v1 endpoints require JWT authentication and return a consistent JSON envelope: `{data, pagination?, meta}`. Paginated endpoints include `pagination` with `offset`, `limit`, and `total`.
+
+| Endpoint | Description |
+|----------|-------------|
+| **Package metadata** | |
+| `GET /api/v1/package/<path:purl>` | Comprehensive package metadata (vulnerabilities, licenses, trust score, policy, VEX) |
+| `GET /api/v1/package/<path:purl>/vulns` | Vulnerabilities for a package (optional `include_dependencies`) |
+| `GET /api/v1/package/<path:purl>/licenses` | Licenses for a package |
+| `GET /api/v1/package/<path:purl>/vex` | VEX statements for a package |
+| `GET /api/v1/package/<path:purl>/dependencies` | Paginated dependency tree (`max_depth`, `offset`, `limit`) |
+| `GET /api/v1/package/<path:purl>/dependants` | Paginated reverse dependency tree (`max_depth`, `offset`, `limit`) |
+| `GET /api/v1/package/<path:purl>/policy` | Policy check result for CI/CD gate |
+| **Trust score** | |
+| `GET /api/v1/package/<path:purl>/trust-score` | Trust score breakdown for a package |
+| `GET /api/v1/package/<path:purl>/trust-score/risk-path` | Risk propagation path for a package |
+| `GET /api/v1/package/<path:purl>/trust-check` | CI/CD gate: pass/fail against minimum effective score and confidence thresholds |
+| `GET /api/v1/application/<path:purl>/supply-chain-risk` | Supply-chain risk summary for an application |
+| **Analysis** | |
+| `GET /api/v1/analysis/critical-dependencies` | Critical dependencies sorted by `fan_in` or `trust_score` |
+| `GET /api/v1/analysis/risk-summary` | Aggregate risk metrics (vuln counts by severity, license risk, policy violations) |
+| `GET /api/v1/analysis/trust-score-distribution` | Trust score histogram across all packages |
+| `GET /api/v1/analysis/remediation-priorities` | Packages ranked by remediation leverage (applications improved per upgrade) |
+| `GET /api/v1/analysis/risk-propagation-impact` | What-if simulation: impact of a score change on downstream apps |
+| **Source repository** | |
+| `GET /api/v1/source/packages` | Packages from a source repository URL |
+| `GET /api/v1/source/vulnerabilities` | Vulnerabilities from a source repository URL |
+| **Incident response** | |
+| `GET /api/v1/blast-radius/<path:purl>` | Blast radius visualization for a compromised package |
+| `GET /api/v1/patch-plan/<path:defect_id>` | Patch plan for a vulnerability |
+| `GET /api/v1/sbom/<record_id>` | SBOM record metadata by ingestion ID |
+| **Specification** | |
+| `GET /api/v1/openapi.json` | OpenAPI 3.1 specification |
+
 #### Programmatic API Endpoints with JSON Schema Validation
 
 The following `POST` endpoints also validate request bodies against JSON Schema:
@@ -502,6 +543,10 @@ export LDAP_USER_GROUPS="appsec-users,developers,security-team"
 ## Authentication
 
 When `AUTH_ENABLED=true`, all endpoints (except `/health` and `/ready`) require authentication.
+
+### Login Rate Limiting
+
+The `/auth/login` endpoint is protected by in-memory per-IP rate limiting: 10 attempts per 15 minutes per Gunicorn worker. When exceeded, the server returns `429 Too Many Requests` with a `Retry-After` header. Note: limits are per-worker (not shared across workers).
 
 ### Authentication Methods
 

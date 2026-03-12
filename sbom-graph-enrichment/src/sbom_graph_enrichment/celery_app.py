@@ -64,11 +64,18 @@ _ENRICHMENT_INTERVAL = int(os.environ.get("ENRICHMENT_INTERVAL", "3600"))
 _TRUST_SCORE_INTERVAL = int(os.environ.get("TRUST_SCORE_INTERVAL", "7200"))
 _TRUST_SCORE_ENABLED = os.environ.get("TRUST_SCORE_ENABLED", "true").lower() == "true"
 
+_ENRICHMENT_SOURCES_RAW = os.environ.get("ENRICHMENT_SOURCES", "")
+try:
+    import json as _json
+    _ENRICHMENT_SOURCES: list[str] | None = _json.loads(_ENRICHMENT_SOURCES_RAW) if _ENRICHMENT_SOURCES_RAW else None
+except (ValueError, TypeError):
+    _ENRICHMENT_SOURCES = None
+
 app.conf.beat_schedule = {
     "scheduled-enrichment": {
         "task": "sbom_graph_enrichment.tasks.enrich_all_packages",
         "schedule": _ENRICHMENT_INTERVAL,
-        "args": (),
+        "args": (_ENRICHMENT_SOURCES,),
     },
 }
 

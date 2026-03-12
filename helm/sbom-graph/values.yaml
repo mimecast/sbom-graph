@@ -93,6 +93,7 @@ enrichment:
     alpha: "0.4"
     decay: "0.8"
     maxDepth: "20"
+    alertThreshold: "4.0"
     weights:
       securityPractices: "0.3"
       vulnerabilityProfile: "0.35"

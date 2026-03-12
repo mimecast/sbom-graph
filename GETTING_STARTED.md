@@ -293,8 +293,10 @@ configuration values and their defaults.
 | Value | Default | Description |
 |-------|---------|-------------|
 | `enrichment.enabled` | `true` | Enable enrichment pipeline |
+| `enrichment.sources` | (varies) | JSON string list of certifier names to enable (e.g. osv, clearlydefined, scorecard, ossindex, depsdev, eol, source_repo) |
 | `enrichment.trustScore.enabled` | `true` | Enable trust score computation |
 | `enrichment.trustScore.interval` | `"7200"` | Trust score propagation interval (seconds) |
+| `enrichment.trustScore.alertThreshold` | `"4.0"` | Effective score below which WARNING-level logs are emitted |
 | `enrichment.trustScore.alpha` | `"0.4"` | Blend weight for own vs inherited score |
 | `enrichment.trustScore.decay` | `"0.8"` | Depth attenuation factor for propagation |
 | `enrichment.trustScore.maxDepth` | `"20"` | Maximum traversal depth for propagation |
@@ -521,6 +523,8 @@ kubectl get secret sbom-graph-sbom-graph-api \
 
 With the API port-forwarded (e.g. `kubectl port-forward svc/sbom-graph-sbom-graph-api 8080:80`), verify trust score endpoints. When `AUTH_ENABLED=true`, include `Authorization: Bearer <token>` in requests.
 
+**Trust score alerting:** When a package's effective trust score falls below `TRUST_SCORE_ALERT_THRESHOLD` (default 4.0), the enrichment pipeline emits WARNING-level logs. Configure this threshold via `enrichment.trustScore.alertThreshold` in Helm values.
+
 ```bash
 # Package trust score (replace PURL with a known package, e.g. pkg:maven/org.apache.logging.log4j/log4j-core@2.17.1)
 curl "http://localhost:8080/api/v1/package/pkg:maven/org.apache.logging.log4j/log4j-core@2.17.1/trust-score"
@@ -530,6 +534,9 @@ curl "http://localhost:8080/api/v1/analysis/trust-score-distribution"
 
 # CI/CD gate: check if package meets minimum score (min_score defaults to 5.0)
 curl "http://localhost:8080/api/v1/package/pkg:maven/org.apache.logging.log4j/log4j-core@2.17.1/trust-check?min_score=5.0"
+
+# Remediation priorities: packages ranked by remediation leverage
+curl "http://localhost:8080/api/v1/analysis/remediation-priorities?limit=10"
 ```
 
 ---
