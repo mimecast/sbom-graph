@@ -1,6 +1,5 @@
 global:
   internalPrefixes: "group:com.acme,name:acme-"
-
 falkordb:
   image:
     repository: falkordb/falkordb-server
@@ -23,12 +22,11 @@ falkordb:
     requests:
       cpu: 250m
       memory: 512Mi
-
 sbomGraphApi:
   image:
     repository: sbom-graph-api
-    tag: 0.1.0-alpha.13
-    pullPolicy: IfNotPresent
+    tag: 0.2.0-alpha
+    pullPolicy: Never
   replicas: 1
   gunicornWorkers: "2"
   # Auth: enabled by default with local users (LDAP disabled)
@@ -54,12 +52,11 @@ sbomGraphApi:
     requests:
       cpu: 100m
       memory: 128Mi
-
 releaseListener:
   image:
     repository: sonatype-lifecycle-release-listener
-    tag: 0.1.0-alpha.3
-    pullPolicy: IfNotPresent
+    tag: 0.2.0-alpha
+    pullPolicy: Never
   replicas: 1
   # Leave empty to auto-generate. Retrieve after install -- see NOTES.
   webhookSecret: ""
@@ -74,13 +71,12 @@ releaseListener:
     requests:
       cpu: 100m
       memory: 128Mi
-
 enrichment:
   enabled: true
   image:
     repository: sbom-graph-enrichment
-    tag: 0.1.0-alpha.2
-    pullPolicy: IfNotPresent
+    tag: 0.2.0-alpha
+    pullPolicy: Never
   replicas: 1
   interval: "3600"
   sources: '["osv","clearlydefined"]'
@@ -114,8 +110,6 @@ enrichment:
     # external HTTPS (port 443) only.  Requires a CNI that supports
     # NetworkPolicy (e.g. Calico, Cilium).
     enabled: false
-
 initData:
   enabled: true
-
 graphName: "acme-corp"

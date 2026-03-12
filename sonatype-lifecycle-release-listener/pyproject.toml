@@ -1,6 +1,6 @@
 [project]
 name = "sonatype-lifecycle-release-listener"
-version = "0.1.0"
+version = "0.2.0-alpha"
 description = "Flask microservice to listen for SonaType release scan webhooks"
 authors = [
     {name = "Brett Crawley"}
