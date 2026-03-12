@@ -583,7 +583,7 @@ def create_multi_layout_visualization(
 def create_dependants_multi_layout_visualization(
     project_name: str,
     version_name: str,
-    layout: str = "radial",
+    layout: str = "spring",
     max_depth: int | None = None,
     internal_only: bool = False,
     height: str = "100vh",
@@ -612,7 +612,7 @@ def create_dependants_multi_layout_visualization(
 
     # Validate layout
     if layout not in LAYOUT_TYPES:
-        layout = "radial"
+        layout = "spring"
 
     # Verify root node exists
     root = service.find_version(project_name, version_name, project_group)

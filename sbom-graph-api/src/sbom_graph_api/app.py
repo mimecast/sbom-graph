@@ -8,7 +8,7 @@ import logging
 import os
 from datetime import timedelta
 
-from flask import Flask, Response, jsonify, redirect, render_template, session, url_for
+from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
 from flask_jwt_extended import JWTManager
 from flask_wtf.csrf import CSRFError, CSRFProtect
 
@@ -153,6 +153,46 @@ def create_app() -> Flask:
             "Permissions-Policy",
             "geolocation=(), microphone=(), camera=()",
         )
+        return response
+
+    @app.after_request
+    def _inject_home_button(response: Response) -> Response:
+        """Inject a floating home button into HTML pages for session-authenticated users.
+
+        Only visible when the user is browsing via the UI (active Flask session),
+        not when the response is served to a programmatic API client. Skips the
+        home page itself, login/auth pages, and non-HTML responses.
+        """
+        if (
+            response.content_type
+            and "text/html" in response.content_type
+            and session.get("authenticated")
+            and response.status_code == 200
+            and request.path != "/"
+            and not request.path.startswith("/auth/")
+            and not request.path.startswith("/health")
+            and not request.path.startswith("/ready")
+        ):
+            home_btn = (
+                '<a id="sbom-home-btn" href="/" title="Back to Home" style="'
+                "position:fixed;top:14px;left:14px;z-index:10000;"
+                "width:40px;height:40px;border-radius:50%;"
+                "background:#2c3e50;color:#fff;display:flex;"
+                "align-items:center;justify-content:center;"
+                "text-decoration:none;font-size:20px;"
+                "box-shadow:0 2px 8px rgba(0,0,0,0.25);"
+                "transition:background 0.2s,transform 0.2s;"
+                '"'
+                ' onmouseenter="this.style.background=\'#3498db\';this.style.transform=\'scale(1.1)\'"'
+                ' onmouseleave="this.style.background=\'#2c3e50\';this.style.transform=\'scale(1)\'"'
+                ">"
+                "&#8962;"
+                "</a>"
+            )
+            data = response.get_data(as_text=True)
+            if "</body>" in data:
+                data = data.replace("</body>", f"{home_btn}</body>", 1)
+                response.set_data(data)
         return response
 
     # Health check endpoint (no auth, no CSRF)

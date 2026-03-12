@@ -269,7 +269,7 @@ def _dependants_multi_impl(
     version: str,
     project_group: str | None = None,
 ) -> Response | tuple[str, int]:
-    layout = validate_layout(request.args.get("layout"), "radial")
+    layout = validate_layout(request.args.get("layout"), "spring")
     max_depth = validate_max_depth(request.args.get("max_depth", type=int))
     internal_only = validate_boolean(request.args.get("internal_only"))
     height = validate_css_dimension(request.args.get("height", "100vh"), "100vh")

@@ -148,9 +148,9 @@
                             {% if item.inDegree > 0 %}
                             <div class="bar bar-in" style="width: {{ (item.inDegree / stats['Max inDegree'] * 100) | int }}px;"></div>
                             <div class="degree-links">
-                                <a href="/visualizations/dependants-multi/{{ item.project_name }}/{{ item.version_name }}?layout=radial" 
+                                <a href="/visualizations/dependants-multi/{{ item.project_name }}/{{ item.version_name }}" 
                                    class="drill-link drill-dependants" 
-                                   title="View dependants using radial tree layout">
+                                   title="View dependants graph">
                                     View Dependants
                                 </a>
                             </div>
