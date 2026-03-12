@@ -302,6 +302,94 @@ Before deploying to production, verify:
 
 All primary dependencies are actively maintained with no unpatched critical vulnerabilities. The main supply chain risk is the unpinned Alpine init container image and the FalkorDB `latest` tag. BusyBox was removed as a dependency; the init-data job now reuses the application image.
 
+## Full License Assessment
+
+This section provides a comprehensive licence analysis of all runtime and development dependencies across the monorepo. The `sbom-graph` project itself is licensed under **MIT**.
+
+### Licence Categories
+
+#### Permissive Licences (No Copyleft Obligations)
+
+These licences impose minimal restrictions: attribution in documentation/notices and inclusion of the licence text in redistributed copies. No source-disclosure or share-alike requirements.
+
+| Licence | Production Dependencies | Dev-Only Dependencies |
+|---------|------------------------|----------------------|
+| **MIT** | FalkorDB (client), Flask-JWT-Extended, Flask-Login, gunicorn, openpyxl, cryptography (dual), jsonschema, redis, SQLAlchemy, httpx (BSD-3), httpcore, h11, celery (BSD-3), kombu (BSD-3), amqp, billiard, vine, click-repl, click-didyoumean, anyio, urllib3, charset-normalizer, PyJWT, PyYAML, six, tzlocal | mypy, ruff, pytest, pytest-cov, isort, tomlkit, pluggy, iniconfig, rich, jedi, parso, pure_eval, executing, stack-data, platformdirs, wcwidth |
+| **BSD-2-Clause** | pyasn1, decorator | Pygments |
+| **BSD-3-Clause** | Flask, Werkzeug, Jinja2, MarkupSafe, itsdangerous, click, blinker, Flask-WTF, WTForms, networkx, pandas, pyvis, idna, numpy | ipython, jsonpickle, pandas-stubs, traitlets, dill |
+| **Apache-2.0** | cryptography (dual), requests, packaging (dual), python-dateutil (dual) | bandit, coverage, stevedore, asttokens, types-* stubs, celery-types, tzdata |
+| **ISC** | — | pexpect, ptyprocess |
+| **PSF-2.0** | typing_extensions | — |
+
+**Compliance obligations**: Include licence notices and copyright statements in documentation or NOTICES file when distributing. No source-disclosure required. All permissive licences are mutually compatible and compatible with the project's MIT licence.
+
+#### Weak Copyleft Licences (File-Level or Library-Level Obligations)
+
+| Licence | Dependencies | Scope | Compliance Obligations | Risk |
+|---------|-------------|-------|----------------------|------|
+| **LGPL-3.0** | `ldap3` | **Production** (sbom-graph-api) | Users must be able to replace the LGPL library with a modified version. For Python packages imported as unmodified modules, this is inherently satisfied (users can `pip install` a replacement). Must include LGPL-3 licence text and copyright notice. Must not statically link or modify the library source without offering the modifications under LGPL-3. | **Accepted** — pure-Python import; no static linking. Distroless container constraint makes MIT alternatives impractical (see Third-Party Component Assessment above). Review with legal if organisation prohibits all copyleft. |
+| **MPL-2.0** | `certifi`, `pathspec` | **Production** (transitive via httpx/requests and ruff) | File-level copyleft: modifications to MPL-licensed **files** must be shared under MPL-2.0. Using the library unmodified (as we do) requires no source disclosure. MPL-2.0 is explicitly compatible with Apache-2.0 and GPL. Must include MPL-2.0 licence text. | **Low** — used unmodified as transitive dependencies. No files modified. |
+| **MPL-2.0** | `pytest-html`, `pytest-metadata` | **Dev-only** (sonatype-lifecycle-release-listener) | Same as above. | **None** — dev-only, not distributed. |
+
+#### Strong Copyleft Licences
+
+| Licence | Dependencies | Scope | Compliance Obligations | Risk |
+|---------|-------------|-------|----------------------|------|
+| **SSPLv1** | FalkorDB (server) | **Infrastructure** (not linked, not distributed) | If FalkorDB is offered as part of a **service to third parties**, the entire service stack (including all management, monitoring, and automation software) must be open-sourced under SSPL. Internal-only deployment is unrestricted. | **High** — internal use is safe; external-facing deployment requires a commercial FalkorDB licence. Deployers must evaluate their deployment model. See README "Licensing" section. |
+| **GPL-2.0-or-later** | `pylint`, `astroid` | **Dev-only** (linting tools) | GPL-2.0+ requires derivative works to be distributed under GPL. | **None** — dev-only tools, never distributed or deployed. Not included in Docker images or Helm charts. |
+| **LGPL-2.1-or-later** | `astroid` (transitive via pylint) | **Dev-only** | Weak copyleft, same category as LGPL-3 but for dev tooling only. | **None** — dev-only, not distributed. |
+
+### Licence Compatibility Matrix
+
+The following matrix confirms compatibility between the project licence (MIT) and all production dependency licences:
+
+| Dependency Licence | Compatible with MIT project? | Can distribute together? | Notes |
+|-------------------|------------------------------|-------------------------|-------|
+| MIT | Yes | Yes | Identical terms |
+| BSD-2-Clause | Yes | Yes | Subset of MIT |
+| BSD-3-Clause | Yes | Yes | Non-endorsement clause only difference |
+| Apache-2.0 | Yes | Yes | Patent grant is additive |
+| ISC | Yes | Yes | Functionally equivalent to MIT |
+| PSF-2.0 | Yes | Yes | Python-specific permissive |
+| MPL-2.0 | Yes | Yes | File-level copyleft; unmodified use has no impact |
+| LGPL-3.0 | Yes (with conditions) | Yes | Must allow library replacement; satisfied by Python import model |
+| SSPLv1 | N/A | N/A | Separate service, not linked or distributed with this project |
+| GPL-2.0+ | N/A | N/A | Dev-only; not distributed |
+
+### Production Dependency Licence Summary
+
+| Sub-Project | Total Prod Deps | Permissive (MIT/BSD/Apache/ISC/PSF) | Weak Copyleft (LGPL/MPL) | Strong Copyleft (GPL/SSPL) |
+|-------------|----------------|--------------------------------------|--------------------------|---------------------------|
+| sbom-graph-model | 1 | 1 (FalkorDB client — MIT) | 0 | 0 |
+| sbom-graph-api | 15 + transitive | All except ldap3 | 1 (ldap3 — LGPL-3) | 0 |
+| sbom-graph-enrichment | 4 + transitive | All | 0 | 0 |
+| sonatype-lifecycle-release-listener | 5 + transitive | All | 0 | 0 |
+| Infrastructure | 1 | 0 | 0 | 1 (FalkorDB server — SSPLv1) |
+
+### Compliance Actions Required
+
+| # | Action | Priority | Status |
+|---|--------|----------|--------|
+| L1 | Include LGPL-3.0 licence text and ldap3 copyright notice in distribution (Docker image `/licences/` or NOTICES file) | **Medium** | **OPEN** |
+| L2 | Include MPL-2.0 licence text for certifi and pathspec in distribution | **Low** | **OPEN** |
+| L3 | Include BSD/MIT/Apache licence notices for all production dependencies in a NOTICES or THIRD-PARTY-LICENCES file | **Low** | **OPEN** |
+| L4 | Document FalkorDB SSPLv1 deployment constraint in operator documentation and Helm chart README | **High** | **DONE** (README "Licensing" section) |
+| L5 | Ensure ldap3 is importable as a replaceable module (LGPL-3 compliance) | **Low** | **DONE** (standard Python import; pip-replaceable) |
+| L6 | Verify GPL-2.0+ tools (pylint, astroid) are excluded from Docker images and production artefacts | **Medium** | **DONE** (dev dependency group only; multi-stage Docker builds exclude dev deps) |
+| L7 | Review with legal counsel if organisation has a blanket copyleft prohibition affecting ldap3 (LGPL-3) or FalkorDB server (SSPLv1) | **Medium** | **OPEN** — organisation-specific |
+
+### Risks and Recommendations
+
+1. **FalkorDB SSPLv1 remains the highest licence risk.** Internal deployment is safe, but any external-facing or SaaS deployment model triggers SSPL's service-provision clause. Recommendation: maintain the documented constraint; obtain commercial FalkorDB licence before any external deployment.
+
+2. **ldap3 LGPL-3 is the only copyleft production library.** Current use (unmodified Python import) satisfies LGPL-3 requirements. If ldap3 source is ever modified and distributed, modifications must be released under LGPL-3. Recommendation: do not fork or modify ldap3; if LDAP support is dropped, remove the dependency entirely.
+
+3. **MPL-2.0 transitive dependencies (certifi, pathspec)** are used unmodified and pose no practical risk. Recommendation: include licence notices in a THIRD-PARTY-LICENCES file for completeness.
+
+4. **All dev-only copyleft tools (pylint, astroid)** are confined to development and CI environments. They are excluded from Docker images by multi-stage builds and from wheel packages by `[dependency-groups] dev`. No distribution risk.
+
+5. **No licence-incompatible combinations detected.** All production dependency licences are compatible with each other and with the project's MIT licence.
+
 ## Risk Heat Map
 
 ```
@@ -339,6 +427,7 @@ All primary dependencies are actively maintained with no unpatched critical vuln
 
 | Date | Author | Changes |
 |------|--------|---------|
+| 2026-03-12 | AI-assisted threat model | Added Full License Assessment section: comprehensive licence analysis of all runtime and development dependencies across all sub-projects, licence compatibility matrix, compliance actions (L1-L7), production dependency licence summary per sub-project, and risk recommendations. Covers SSPLv1, LGPL-3, LGPL-2.1, GPL-2.0+, MPL-2.0, MIT, BSD, Apache-2.0, ISC, and PSF-2.0 licences. |
 | 2026-03-12 | AI-assisted threat model | Added EOL certifier (endoflife.date API) and Source Repository certifier (deps.dev API). Added S31 (endoflife.date API integrity/availability). Documented source_repo SSRF mitigation (host allowlist) in S15 and Controls Present. Added login rate limiting (10 attempts / 15 min per IP on /auth/login) to Controls Present. Updated Trust Boundaries and Third-Party Component Assessment. |
 | 2026-02-28 | AI-assisted threat model | Added trust score threats S27-S30 (data poisoning, rate exhaustion, dependency graph manipulation, OSS Index credential leakage). Updated Summary, Assets, Trust Boundaries, Security Controls, Risk Heat Map, Residual Risk, Deployment Checklist, Third-Party Assessment. |
 | 2026-03-01 | AI-assisted threat model | Initial system-level STRIPED analysis |
