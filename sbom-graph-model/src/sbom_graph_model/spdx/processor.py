@@ -10,7 +10,7 @@ import logging
 from typing import Optional
 from urllib.parse import urlparse
 
-from ..model import Defect, License, Project, Version, VersionDefect
+from ..model import Defect, License, Project, ProjectType, Version, VersionDefect
 from ..persistence import Persistence
 from ..vcs import is_known_git_host, parse_repo_url
 
@@ -78,7 +78,11 @@ class SPDXProcessor:
             ("packages", list),
             ("relationships", list),
         ]:
-            if section in json_data and not isinstance(json_data[section], expected_type):
+            present = section in json_data
+            wrong_type = present and not isinstance(
+                json_data[section], expected_type
+            )
+            if wrong_type:
                 raise SPDXValidationError(
                     f"'{section}' must be a {expected_type.__name__}"
                 )
@@ -233,7 +237,7 @@ class SPDXProcessor:
             if group:
                 project.group = group
 
-        project.type = "application" if is_root else "library"
+        project.type = ProjectType.Application if is_root else ProjectType.Library
         project.licenses = self._extract_licenses_from_package(package)
 
         vcs_url = self._extract_vcs_url_from_package(package)
@@ -430,7 +434,10 @@ class SPDXProcessor:
         packages: dict[str, tuple[Project, Version]],
     ) -> None:
         """Persist DEPENDENCY_VERSION edges."""
-        logger.info("Persisting dependency edges for %d parent refs", len(dependency_versions))
+        logger.info(
+            "Persisting dependency edges for %d parent refs",
+            len(dependency_versions),
+        )
         for ref, dep_refs in dependency_versions.items():
             if ref not in packages:
                 continue

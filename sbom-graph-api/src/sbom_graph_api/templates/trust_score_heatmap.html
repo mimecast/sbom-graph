@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/report.css') }}">
+    <style>
+        .heatmap-table { font-size: 12px; }
+        .heatmap-table th, .heatmap-table td { padding: 6px 10px; }
+        .heatmap-cell { min-width: 40px; text-align: center; font-weight: bold; color: #333; }
+        .heatmap-cell.heat-low { background-color: #d32f2f; color: white; }
+        .heatmap-cell.heat-medium { background-color: #fbc02d; color: #333; }
+        .heatmap-cell.heat-high { background-color: #388e3c; color: white; }
+        .heatmap-cell.heat-na { background-color: #e0e0e0; color: #666; }
+    </style>
+</head>
+<body>
+    <h1>{{ title }}</h1>
+
+    <div class="controls">
+        <div class="toggle-container">
+            <span class="toggle-label">Filter:</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="internalOnlyToggle" {{ 'checked' if internal_only else '' }}>
+                <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-status" id="toggleStatus">{{ 'Internal Only' if internal_only else 'All projects' }}</span>
+        </div>
+        <div class="download-links">
+            {% if json_url %}
+            <a href="{{ json_url }}" class="download-link">Download as JSON</a>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if stats %}
+    <div class="stats">
+        {% for key, value in stats.items() %}
+        <span>{{ key }}: {{ value }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if data %}
+    <div class="table-container">
+        <table class="heatmap-table">
+            <thead>
+                <tr>
+                    <th>Package</th>
+                    <th>Version</th>
+                    <th>Security Practices</th>
+                    <th>Vulnerability Profile</th>
+                    <th>Maintenance Health</th>
+                    <th>Supply Chain Hygiene</th>
+                    <th>Effective Score</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in data %}
+                <tr>
+                    <td>{{ row.package }}</td>
+                    <td>{{ row.version }}</td>
+                    {% for cell in row.cells %}
+                    <td class="heatmap-cell {{ cell.css }}">{{ cell.value }}</td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-message">No trust scores found</div>
+    {% endif %}
+
+    <script>
+        document.getElementById('internalOnlyToggle').addEventListener('change', function() {
+            const isChecked = this.checked;
+            const currentUrl = new URL(window.location.href);
+            if (isChecked) {
+                currentUrl.searchParams.set('internal_only', 'true');
+            } else {
+                currentUrl.searchParams.delete('internal_only');
+            }
+            window.location.href = currentUrl.toString();
+        });
+    </script>
+</body>
+</html>

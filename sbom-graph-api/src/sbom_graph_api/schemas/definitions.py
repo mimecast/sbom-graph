@@ -1379,6 +1379,81 @@ LICENSE_CONFLICTS_SCHEMA: dict[str, Any] = {
 }
 
 # ============================================================================
+# License Dashboard Report Schema
+# ============================================================================
+LICENSE_DASHBOARD_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/license-dashboard",
+    "title": "License Compliance Dashboard",
+    "description": (
+        "Licence compliance dashboard with counts by risk category and "
+        "drill-down to affected packages"
+    ),
+    "type": "object",
+    "required": ["report_type", "generated_at", "stats", "categories"],
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "license-dashboard",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "filter": {
+            "type": "string",
+            "enum": ["all", "internal_only"],
+            "description": "Filter applied to the data",
+        },
+        "stats": {
+            "type": "object",
+            "properties": {
+                "total_packages": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Total count of packages",
+                },
+                "categories": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                            "count": {"type": "integer"},
+                            "pct": {"type": "number"},
+                        },
+                    },
+                },
+            },
+        },
+        "categories": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "properties": {
+                    "count": {"type": "integer"},
+                    "pct": {"type": "number"},
+                    "packages": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "purl": {"type": "string"},
+                                "project_name": {"type": "string"},
+                                "version_name": {"type": "string"},
+                                "spdx_id": {"type": "string"},
+                                "license_name": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
+
+# ============================================================================
 # Vulnerability Freshness Report Schema
 # ============================================================================
 VULNERABILITY_FRESHNESS_SCHEMA: dict[str, Any] = {
@@ -1689,6 +1764,392 @@ SOURCE_REPOS_SCHEMA: dict[str, Any] = {
     },
 }
 
+# ============================================================================
+# Enrichment Coverage Report Schema
+# ============================================================================
+ENRICHMENT_COVERAGE_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/enrichment-coverage",
+    "title": "Enrichment Coverage Report",
+    "description": (
+        "Enrichment coverage: recent vs stale vs never-scanned packages"
+    ),
+    "type": "object",
+    "required": ["report_type", "generated_at", "stats", "packages"],
+    "additionalProperties": False,
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "enrichment-coverage",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "filter": {
+            "type": "string",
+            "enum": ["all", "internal_only"],
+            "description": "Filter applied to the data",
+        },
+        "stats": {
+            "type": "object",
+            "properties": {
+                "total": {"type": "integer", "minimum": 0},
+                "recent": {"type": "integer", "minimum": 0},
+                "stale": {"type": "integer", "minimum": 0},
+                "never": {"type": "integer", "minimum": 0},
+                "recent_pct": {"type": "number"},
+                "stale_pct": {"type": "number"},
+                "never_pct": {"type": "number"},
+            },
+            "required": ["total", "recent", "stale", "never"],
+        },
+        "packages": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "purl": {"type": ["string", "null"]},
+                    "project_name": {"type": "string"},
+                    "version_name": {"type": "string"},
+                    "last_enriched_at": {"type": ["string", "null"]},
+                    "status": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
+# ============================================================================
+# Incident Response Report Schema
+# ============================================================================
+INCIDENT_RESPONSE_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/incident-response",
+    "title": "Incident Response Report",
+    "description": (
+        "Incident response with blast radius and patch plan for a vulnerability"
+    ),
+    "type": "object",
+    "required": [
+        "report_type",
+        "generated_at",
+        "defect_id",
+        "blast_radius",
+        "patch_plan",
+        "stats",
+    ],
+    "additionalProperties": False,
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "incident-response",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "filter": {
+            "type": "string",
+            "enum": ["all", "internal_only"],
+            "description": "Filter applied to the data",
+        },
+        "defect_id": {"type": "string", "description": "Vulnerability ID"},
+        "blast_radius": {
+            "type": "object",
+            "properties": {
+                "affected_versions": {"type": "array"},
+                "affected_applications": {"type": "array"},
+                "graph_nodes": {"type": "array"},
+                "graph_edges": {"type": "array"},
+                "max_partition": {"type": "integer"},
+            },
+        },
+        "patch_plan": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "purl": {"type": ["string", "null"]},
+                    "project_name": {"type": "string"},
+                    "version_name": {"type": "string"},
+                    "is_direct": {"type": "boolean"},
+                    "dependant_count": {"type": "integer"},
+                    "priority": {"type": "string"},
+                    "recommended_action": {"type": "string"},
+                },
+            },
+        },
+        "stats": {
+            "type": "object",
+            "properties": {
+                "affected_versions": {"type": "integer"},
+                "affected_applications": {"type": "integer"},
+                "patch_plan_items": {"type": "integer"},
+            },
+            "required": [
+                "affected_versions",
+                "affected_applications",
+                "patch_plan_items",
+            ],
+        },
+    },
+}
+
+# ============================================================================
+# Source Impact Report Schema
+# ============================================================================
+SOURCE_IMPACT_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/source-impact",
+    "title": "Source Impact Report",
+    "description": (
+        "Packages from a source repo and downstream consumers"
+    ),
+    "type": "object",
+    "required": [
+        "report_type",
+        "generated_at",
+        "repo_url",
+        "stats",
+        "packages",
+        "dependants",
+        "affected_applications",
+        "graph_nodes",
+        "graph_edges",
+    ],
+    "additionalProperties": False,
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "source-impact",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "repo_url": {"type": "string", "description": "Source repository URL"},
+        "stats": {
+            "type": "object",
+            "properties": {
+                "packages_from_repo": {"type": "integer"},
+                "total_downstream_consumers": {"type": "integer"},
+                "affected_applications": {"type": "integer"},
+            },
+        },
+        "packages": {"type": "array"},
+        "dependants": {"type": "array"},
+        "affected_applications": {"type": "array"},
+        "graph_nodes": {"type": "array"},
+        "graph_edges": {"type": "array"},
+    },
+}
+
+# ============================================================================
+# Trust Scores Report Schema
+# ============================================================================
+TRUST_SCORES_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/trust-scores",
+    "title": "Trust Scores Report",
+    "description": "All packages with trust score columns",
+    "type": "object",
+    "required": ["report_type", "generated_at", "trust_scores", "count"],
+    "additionalProperties": False,
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "trust-scores",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "trust_scores": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "purl": {"type": "string"},
+                    "project_name": {"type": ["string", "null"]},
+                    "version": {"type": ["string", "null"]},
+                    "direct_score": {"type": ["number", "null"]},
+                    "effective_score": {"type": ["number", "null"]},
+                    "confidence": {"type": ["number", "null"]},
+                    "sources_used": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+            },
+        },
+        "count": {"type": "integer", "minimum": 0},
+        "internal_only": {"type": "boolean"},
+        "min_score": {"type": "number"},
+        "sort_by": {"type": "string"},
+    },
+}
+
+# ============================================================================
+# Trust Score Gaps Report Schema
+# ============================================================================
+TRUST_SCORE_GAPS_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/trust-score-gaps",
+    "title": "Trust Score Gaps Report",
+    "description": "Packages with low confidence (gaps in trust score data)",
+    "type": "object",
+    "required": ["report_type", "generated_at", "gaps", "count"],
+    "additionalProperties": False,
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "trust-score-gaps",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "gaps": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "purl": {"type": "string"},
+                    "project_name": {"type": ["string", "null"]},
+                    "version": {"type": ["string", "null"]},
+                    "confidence": {"type": ["number", "null"]},
+                    "sources_used": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "direct_score": {"type": ["number", "null"]},
+                    "dependents_count": {"type": "integer"},
+                },
+            },
+        },
+        "count": {"type": "integer", "minimum": 0},
+        "limit": {"type": "integer", "minimum": 1},
+    },
+}
+
+# ============================================================================
+# SBOM Inventory Report Schema
+# ============================================================================
+SBOM_INVENTORY_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/sbom-inventory",
+    "title": "SBOM Inventory Report",
+    "description": "All ingested SBOM records with metadata",
+    "type": "object",
+    "required": ["report_type", "generated_at", "inventory", "count"],
+    "additionalProperties": False,
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "sbom-inventory",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "inventory": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "record_id": {"type": "string"},
+                    "format": {"type": "string"},
+                    "ingested_at": {"type": ["string", "null"]},
+                    "source": {"type": ["string", "null"]},
+                    "tool_name": {"type": ["string", "null"]},
+                    "tool_version": {"type": ["string", "null"]},
+                    "serial_number": {"type": ["string", "null"]},
+                    "document_hash": {"type": ["string", "null"]},
+                    "version_count": {"type": "integer"},
+                },
+            },
+        },
+        "count": {"type": "integer", "minimum": 0},
+    },
+}
+
+# ============================================================================
+# SBOM Coverage Report Schema
+# ============================================================================
+SBOM_COVERAGE_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/sbom-coverage",
+    "title": "SBOM Coverage Report",
+    "description": "SBOM coverage statistics and per-project details",
+    "type": "object",
+    "required": [
+        "report_type",
+        "generated_at",
+        "coverage",
+        "recent_days",
+        "internal_only",
+    ],
+    "additionalProperties": False,
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "sbom-coverage",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "coverage": {
+            "type": "object",
+            "properties": {
+                "stats": {
+                    "type": "object",
+                    "properties": {
+                        "total_projects": {"type": "integer"},
+                        "fresh": {"type": "integer"},
+                        "stale": {"type": "integer"},
+                        "never": {"type": "integer"},
+                        "fresh_pct": {"type": "number"},
+                        "stale_pct": {"type": "number"},
+                        "never_pct": {"type": "number"},
+                    },
+                },
+                "projects": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "project_name": {"type": "string"},
+                            "version_name": {"type": "string"},
+                            "project_group": {"type": "string"},
+                            "status": {"type": "string"},
+                            "last_ingested": {"type": "string"},
+                            "tool_name": {"type": "string"},
+                        },
+                    },
+                },
+                "recent_days": {"type": "integer"},
+            },
+        },
+        "recent_days": {"type": "integer"},
+        "internal_only": {"type": "boolean"},
+    },
+}
 
 # ============================================================================
 # Schema Index - list of all available schemas
@@ -1771,6 +2232,11 @@ SCHEMA_INDEX: dict[str, dict[str, Any]] = {
         "endpoint": "/reports/license-conflicts",
         "description": "Projects mixing incompatible license categories",
     },
+    "license-dashboard": {
+        "schema": LICENSE_DASHBOARD_SCHEMA,
+        "endpoint": "/reports/license-dashboard",
+        "description": "Licence compliance dashboard by risk category with drill-down",
+    },
     "vulnerability-freshness": {
         "schema": VULNERABILITY_FRESHNESS_SCHEMA,
         "endpoint": "/reports/vulnerability-freshness",
@@ -1790,6 +2256,41 @@ SCHEMA_INDEX: dict[str, dict[str, Any]] = {
         "schema": SOURCE_REPOS_SCHEMA,
         "endpoint": "/reports/source-repos",
         "description": "Tracked source repositories with package counts",
+    },
+    "enrichment-coverage": {
+        "schema": ENRICHMENT_COVERAGE_SCHEMA,
+        "endpoint": "/reports/enrichment-coverage",
+        "description": "Enrichment coverage: recent vs stale vs never-scanned",
+    },
+    "incident-response": {
+        "schema": INCIDENT_RESPONSE_SCHEMA,
+        "endpoint": "/reports/incident-response/{defect_id}",
+        "description": "Incident response with blast radius and patch plan",
+    },
+    "source-impact": {
+        "schema": SOURCE_IMPACT_SCHEMA,
+        "endpoint": "/reports/source-impact",
+        "description": "Packages from a source repo and downstream consumers",
+    },
+    "trust-scores": {
+        "schema": TRUST_SCORES_SCHEMA,
+        "endpoint": "/reports/trust-scores",
+        "description": "All packages with trust score columns",
+    },
+    "trust-score-gaps": {
+        "schema": TRUST_SCORE_GAPS_SCHEMA,
+        "endpoint": "/reports/trust-score-gaps",
+        "description": "Packages with low confidence (trust score gaps)",
+    },
+    "sbom-inventory": {
+        "schema": SBOM_INVENTORY_SCHEMA,
+        "endpoint": "/reports/sbom-inventory",
+        "description": "All ingested SBOM records with metadata",
+    },
+    "sbom-coverage": {
+        "schema": SBOM_COVERAGE_SCHEMA,
+        "endpoint": "/reports/coverage",
+        "description": "SBOM coverage statistics and per-project details",
     },
 }
 

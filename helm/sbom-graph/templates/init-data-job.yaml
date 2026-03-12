@@ -7,7 +7,7 @@ metadata:
     {{- include "sbom-graph.labels" . | nindent 4 }}
     app.kubernetes.io/component: init-data
   annotations:
-    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook": post-install
     "helm.sh/hook-weight": "10"
     "helm.sh/hook-delete-policy": before-hook-creation
 spec:
@@ -56,6 +56,10 @@ spec:
               value: "true"
             - name: FALKORDB_CA_FILE
               value: /tls/ca.crt
+            - name: FALKORDB_CLIENT_CERT
+              value: /tls/client.crt
+            - name: FALKORDB_CLIENT_KEY
+              value: /tls/client.key
             {{- end }}
           resources:
             limits:
@@ -90,5 +94,9 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
+              - key: client.crt
+                path: client.crt
+              - key: client.key
+                path: client.key
         {{- end }}
 {{- end }}

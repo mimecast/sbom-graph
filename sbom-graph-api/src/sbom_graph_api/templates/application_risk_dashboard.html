@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/report.css') }}">
+    <style>
+        .app-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 15px; }
+        .app-card {
+            background: white;
+            border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            padding: 15px;
+            border-left: 4px solid #366092;
+        }
+        .app-card.score-low { border-left-color: #d32f2f; }
+        .app-card.score-medium { border-left-color: #f57c00; }
+        .app-card.score-high { border-left-color: #388e3c; }
+        .app-card h3 { margin: 0 0 10px 0; font-size: 16px; }
+        .app-card .meta { font-size: 12px; color: #666; margin-bottom: 10px; }
+        .score-bar {
+            height: 8px;
+            border-radius: 4px;
+            background: #e0e0e0;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+        .score-bar .fill { height: 100%; transition: width 0.3s; }
+    </style>
+</head>
+<body>
+    <h1>{{ title }}</h1>
+
+    <div class="controls">
+        <div class="toggle-container">
+            <span class="toggle-label">Filter:</span>
+            <label class="toggle-switch">
+                <input type="checkbox" id="internalOnlyToggle" {{ 'checked' if internal_only else '' }}>
+                <span class="toggle-slider"></span>
+            </label>
+            <span class="toggle-status" id="toggleStatus">{{ 'Internal Only' if internal_only else 'All projects' }}</span>
+        </div>
+        <div class="download-links">
+            {% if json_url %}
+            <a href="{{ json_url }}" class="download-link">Download as JSON</a>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if stats %}
+    <div class="stats">
+        {% for key, value in stats.items() %}
+        <span>{{ key }}: {{ value }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if applications %}
+    <div class="app-cards">
+        {% for app in applications %}
+        <div class="app-card {{ app.score_css }}">
+            <h3>{{ app.name }}</h3>
+            <div class="meta">
+                Effective: <span class="trust-score {{ app.score_badge }}">{{ app.effective_score }}</span>
+                &bull; Direct deps: {{ app.direct_dep_count }} &bull; Transitive: {{ app.transitive_dep_count }}
+            </div>
+            <div class="score-bar">
+                <div class="fill" style="width:{{ app.score_pct }}%; background-color:{{ app.score_color }};"></div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-message">No applications with trust scores found</div>
+    {% endif %}
+
+    <script>
+        document.getElementById('internalOnlyToggle').addEventListener('change', function() {
+            const url = new URL(window.location.href);
+            if (this.checked) url.searchParams.set('internal_only', 'true');
+            else url.searchParams.delete('internal_only');
+            window.location.href = url.toString();
+        });
+    </script>
+</body>
+</html>

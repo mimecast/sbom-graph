@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from sbom_graph_enrichment.certifiers.base import Finding, FindingKind
 from sbom_graph_enrichment.certifiers.trust_score import (
     TrustScoreCalculator,
@@ -97,6 +99,17 @@ class TestTrustScoreCalculator:
         expected = 5.0 * 0.5 + 10.0 * 0.2 + 5.0 * 0.2 + 5.0 * 0.1
         assert abs(result.direct_score - expected) < 0.01
 
+    @patch.dict(
+        "os.environ",
+        {"TRUST_SCORE_WEIGHT_SECURITY_PRACTICES": "not-a-float"},
+        clear=False,
+    )
+    def test_invalid_weight_env_uses_default(self) -> None:
+        calc = TrustScoreCalculator()
+        result = calc.compute("pkg:npm/test@1.0", [])
+
+        assert result.security_practices_score == 5.0
+
     def test_depsdev_fallback_for_scorecard_checks(self) -> None:
         findings = [
             _make_finding(FindingKind.DEPSDEV, "depsdev", {
@@ -109,6 +122,18 @@ class TestTrustScoreCalculator:
 
         assert result.security_practices_score == 7.5
         assert "depsdev" in result.sources_used
+
+    def test_depsdev_scorecard_fallback_when_v2_missing(self) -> None:
+        findings = [
+            _make_finding(FindingKind.DEPSDEV, "depsdev", {
+                "scorecard_checks": {"Maintained": 9},
+                "advisory_count": 0,
+            }),
+        ]
+        calc = TrustScoreCalculator()
+        result = calc.compute("pkg:npm/test@1.0", findings)
+
+        assert result.maintenance_health_score == 9.0
 
     def test_many_critical_vulns_floor_at_zero(self) -> None:
         findings = [

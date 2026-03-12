@@ -81,14 +81,14 @@ class TestDependantsMultiLayoutRoute:
         response = client.get("/visualizations/dependants-multi/proj/.hidden")
         assert response.status_code == 400
 
-    def test_default_layout_is_radial(self, client):
+    def test_default_layout_is_spring(self, client):
         with patch(
             "sbom_graph_api.routes.visualizations.create_dependants_multi_layout_visualization"
         ) as m:
             m.return_value = "<html></html>"
             client.get("/visualizations/dependants-multi/proj/1.0")
             call_kwargs = m.call_args.kwargs
-            assert call_kwargs["layout"] == "radial"
+            assert call_kwargs["layout"] == "spring"
 
     def test_custom_layout(self, client):
         with patch(

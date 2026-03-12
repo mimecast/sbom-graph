@@ -141,6 +141,8 @@ SBOM Graph API is a Flask application that provides data visualizations of graph
 - Reports support HTML, Excel, and JSON output formats
 - JSON Schema definitions available for all report/export types
 - Health/ready endpoints for Kubernetes probes
+- **JSON response standardization**: Programmatic API v1 endpoints use `utils/api_helpers.py` (`api_response()`, `paginate_params()`, `make_pagination()`) for consistent envelope `{data, pagination?, meta}`
+- **SBOM provenance tracking**: Ingestion endpoints (`/ingest/cyclonedx`, `/ingest/spdx`, `/ingest/sbom`) create SBOM records (document hash, tool info, ingested_at) linked to all ingested versions; responses include `record_id` for audit trails and provenance lookups
 
 ### UI Features
 
@@ -161,7 +163,7 @@ SBOM Graph API is a Flask application that provides data visualizations of graph
 - Boolean parameters use strict validation
 - URL parameters are properly encoded
 
-**Validation utilities** (`utils/validation.py`): `validate_project_name`, `validate_version_name`, `validate_defect_id`, `validate_annotation_id` (UUID v4), `validate_schema_name` (lowercase alphanumeric + hyphens), `validate_username` (alphanumeric, hyphens, underscores, dots, @), `validate_url` (http/https with valid host), `validate_float_param` (safe float parsing with NaN/Inf/bounds), `validate_int_param` (safe integer parsing with bounds), `validate_max_depth`, `validate_limit`, `validate_boolean`, `validate_format`, `validate_layout`, `validate_css_dimension`, `validate_project_group`, `validate_json_body`, `sanitize_content_disposition` (prevents header injection in Content-Disposition). All path parameters, query parameters, and headers that accept user input are validated before use; raw `int()`/`float()` casts have been replaced with bounded validators to prevent crashes and NaN/Inf acceptance.
+**Validation utilities** (`utils/validation.py`): `validate_project_name`, `validate_version_name`, `validate_defect_id`, `validate_annotation_id` (UUID v4), `validate_schema_name` (lowercase alphanumeric + hyphens), `validate_username` (alphanumeric, hyphens, underscores, dots, @), `validate_url` (http/https with valid host), `validate_float_param` (safe float parsing with NaN/Inf/bounds), `validate_int_param` (safe integer parsing with bounds), `validate_max_depth`, `validate_limit`, `validate_boolean`, `validate_format`, `validate_layout`, `validate_css_dimension`, `validate_project_group`, `validate_json_body`, `validate_sort_param`, `validate_sort_order` (centralized sort validation used across routes), `sanitize_content_disposition` (prevents header injection in Content-Disposition). All path parameters, query parameters, and headers that accept user input are validated before use; raw `int()`/`float()` casts have been replaced with bounded validators to prevent crashes and NaN/Inf acceptance.
 
 ### HTML Templates
 
@@ -170,6 +172,22 @@ SBOM Graph API is a Flask application that provides data visualizations of graph
 - `dependants.html` - Specialized template for dependants report with expandable paths
 - `export.html` - Export landing page template with preview table
 - `api_docs.html` - Interactive API documentation page
+- `enrichment_coverage.html` - Enrichment coverage dashboard with progress bars
+- `license_dashboard.html` - License compliance dashboard with risk distribution
+- `vulnerabilities.html` - Vulnerability report with VEX status column and filter
+- `trust_scores.html` - Trust score report with colour-coded scores
+- `trust_score_gaps.html` - Trust score gaps report with recommendations
+- `trust_score_heatmap.html` - Trust score heatmap grid by category
+- `risk_propagation_graph.html` - Risk propagation network (vis.js)
+- `application_risk_dashboard.html` - Per-application supply-chain risk
+- `risk_path_explorer.html` - Dependency risk path drill-down
+- `risk_outliers.html` - Low-score, high-fan-in packages
+- `whatif_simulator.html` - What-if risk propagation simulator
+- `sbom_inventory.html` - SBOM inventory table with search and filters
+- `sbom_coverage.html` - SBOM coverage dashboard with status distribution
+- `source_impact.html` - Source repository impact report with graph
+- `policy_admin.html` - Policy annotation admin page
+- `incident_response.html` - Incident response with blast radius and patch plan
 - Templates use Jinja2 syntax and are loaded via Flask's `render_template()`
 
 ## Code Organization
@@ -180,11 +198,21 @@ src/sbom_graph_api/
 ├── config.py                 # Environment-based configuration
 ├── wsgi.py                   # WSGI entry for gunicorn
 ├── routes/                   # Flask blueprints
-│   ├── auth.py               # Authentication & admin endpoints
+│   ├── admin.py              # Policy annotation admin endpoints
+│   ├── api_v1.py             # Programmatic JSON API (v1)
+│   ├── auth.py               # Authentication & user management
+│   ├── ingest.py             # SBOM ingestion (CycloneDX, SPDX)
 │   ├── visualizations.py     # Graph visualization endpoints
 │   ├── exports.py            # Excel/JSON download endpoints
-│   ├── reports.py            # HTML/Excel/JSON report endpoints
-│   └── schemas.py            # JSON Schema endpoints
+│   ├── schemas.py            # JSON Schema endpoints
+│   └── reports/              # Report sub-package
+│       ├── __init__.py       # Report blueprint registration
+│       ├── _common.py        # Shared report helpers
+│       ├── compliance.py     # License compliance & dashboard
+│       ├── inventory.py      # Project/app/source repo reports
+│       ├── sbom_provenance.py # SBOM inventory & coverage
+│       ├── trust_scores.py   # Trust scores, gaps, heatmap, risk dashboards
+│       └── vulnerabilities.py # Vulnerability & incident reports
 ├── services/                 # Business logic layer
 │   ├── falkordb_service.py   # Database operations
 │   ├── ldap_service.py       # LDAP authentication
@@ -193,30 +221,22 @@ src/sbom_graph_api/
 ├── schemas/                  # JSON Schema definitions
 │   ├── __init__.py
 │   ├── definitions.py        # Output report schema definitions & SCHEMA_INDEX
-│   └── inbound.py            # Inbound request body schemas (SBOM upload, VEX, enrichment, policy, contacts)
+│   └── inbound.py            # Inbound request body schemas
 ├── visualizations/           # Visualization generators
 │   ├── kpartite.py           # K-partite dependency graphs
 │   ├── bipartite.py          # Bi-partite version/dependant graphs
-│   └── dependants_graph.py   # Reverse dependency graphs
+│   ├── dependencies_graph.py # Spring-layout dependency graphs
+│   ├── dependants_graph.py   # Reverse dependency graphs
+│   └── source_impact.py      # Source repo impact graphs
 ├── exports/                  # Export generators
-│   └── excel.py              # Excel file generation
-├── templates/                # Jinja2 HTML templates
-│   ├── api_docs.html         # API documentation template
-│   ├── login.html            # Login page
-│   ├── tokens.html           # Token management page
-│   ├── create_token.html     # Token creation page
-│   ├── change_password.html  # Password change page
-│   ├── change_password_required.html  # Forced password change
-│   ├── admin_users.html      # Admin user management
-│   ├── admin_create_user.html # Create user form
-│   ├── admin_user_created.html # Show temp password
-│   ├── admin_password_reset.html # Show reset password
-│   ├── error.html            # Generic error page
-│   ├── table.html            # Generic table report template
-│   ├── dependants.html       # Dependants report template
-│   └── export.html           # Export landing page template
+│   ├── excel.py              # Excel file generation
+│   └── json_format.py        # JSON export formatters
+├── templates/                # Jinja2 HTML templates (20+ files)
+├── static/css/               # Stylesheets
+│   └── report.css            # Shared report styles
 └── utils/                    # Utility modules
-    └── validation.py         # Input validation & sanitization
+    ├── api_helpers.py        # api_response(), paginate_params(), make_pagination() for consistent JSON envelope
+    └── validation.py         # Input validation & sanitisation
 
 # Project root
 gunicorn.conf.py              # Gunicorn config (TLS, workers, timeouts)
@@ -277,6 +297,10 @@ Authentication is controlled by the `AUTH_ENABLED` environment variable. When en
 - Users can authenticate via LDAP (when `LDAP_ENABLED=true`) or local users (when LDAP disabled)
 - Configuration classes in `config.py`: `TLSConfig`, `JWTConfig`, `LDAPConfig`, `DatabaseConfig`
 
+### Login Rate Limiting
+
+`POST /auth/login` is protected by in-memory per-IP rate limiting: 10 attempts per 15 minutes per Gunicorn worker. When exceeded, returns `429 Too Many Requests` with `Retry-After` header. Limits are per-worker (not shared across workers).
+
 ### Authentication Endpoints (`routes/auth.py`)
 
 | Endpoint | Method | Description |
@@ -296,6 +320,9 @@ Authentication is controlled by the `AUTH_ENABLED` environment variable. When en
 
 | Endpoint | Method | Description |
 | -------- | ------ | ----------- |
+| `/admin/policies` | GET | Policy annotation admin page (search, filter, add/remove) |
+| `/admin/policies` | POST | Add policy annotation (admin only, CSRF protected) |
+| `/admin/policies/<purl>` | DELETE | Remove policy annotation (admin only, AJAX) |
 | `/auth/admin/users` | GET | User management page |
 | `/auth/admin/users/create` | GET/POST | Create new user |
 | `/auth/admin/users/{username}/toggle-admin` | POST | Toggle admin status |
@@ -627,6 +654,7 @@ These visualizations include an interactive layout switcher UI, allowing users t
 - `/reports/applications` - All applications with versions (supports `latest_only` parameter)
 - `/reports/vulnerabilities` - All vulnerabilities ordered by severity with affected versions
 - `/reports/vulnerability-dependants/{defect_id}` - Dependants affected by a specific vulnerability, ordered by partition
+- `/reports/incident-response/{defect_id}` - Incident response page with blast radius graph and patch plan table
 - `/reports/centrality` - Centrality metrics (inDegree/outDegree) for internal libraries with drill-down links
 - `/reports/snapshots` - SNAPSHOT dependencies
 - `/reports/self-dependencies` - Self-referential dependencies
@@ -639,6 +667,14 @@ These visualizations include an interactive layout switcher UI, allowing users t
 - `/reports/dependants/purl/<path:purl>` - Same, using purl
 - `/reports/multi-version-deps/purl/<path:purl>` - Library version adoption, using purl
 - `/reports/multi-version-sources/purl/<path:purl>` - Diamond dependency conflicts, using purl
+- `/reports/trust-scores` - Trust score report
+- `/reports/trust-score-gaps` - Trust score gaps (low confidence)
+- `/reports/trust-score-heatmap` - Trust score heatmap by category
+- `/reports/risk-propagation-graph` - Risk propagation network (vis.js)
+- `/reports/application-risk-dashboard` - Per-application supply-chain risk
+- `/reports/risk-path-explorer/<path:purl>` - Dependency risk path explorer
+- `/reports/risk-outliers` - Low-score, high-fan-in packages
+- `/reports/whatif-simulator` - What-if risk propagation simulator
 
 #### Centrality Report
 
@@ -650,6 +686,52 @@ The `/reports/centrality` endpoint shows inDegree and outDegree for all internal
 - Each row has drill-down links:
   - inDegree links to dependants-multi visualization (radial layout)
   - outDegree has two links: internal-only dependencies and all dependencies
+
+### Programmatic API v1 (JWT required)
+
+All return JSON envelope `{data, pagination?, meta}`:
+
+**Package metadata:**
+- `GET /api/v1/package/<path:purl>` - Comprehensive package metadata (vulns, licenses, trust score, policy, VEX)
+- `GET /api/v1/package/<path:purl>/vulns` - Vulnerabilities (optional `include_dependencies`)
+- `GET /api/v1/package/<path:purl>/licenses` - Licenses
+- `GET /api/v1/package/<path:purl>/vex` - VEX statements
+- `GET /api/v1/package/<path:purl>/dependencies` - Paginated dependency tree (max_depth, offset, limit)
+- `GET /api/v1/package/<path:purl>/dependants` - Paginated reverse dependency tree (max_depth, offset, limit)
+- `GET /api/v1/package/<path:purl>/policy` - Policy check for CI/CD gate
+
+**Trust score:**
+- `GET /api/v1/package/<path:purl>/trust-score` - Trust score breakdown
+- `GET /api/v1/package/<path:purl>/trust-score/risk-path` - Risk propagation path
+- `GET /api/v1/package/<path:purl>/trust-check` - CI/CD gate: pass/fail against min effective score and confidence
+- `GET /api/v1/application/<path:purl>/supply-chain-risk` - Application supply-chain risk summary
+
+**Analysis:**
+- `GET /api/v1/analysis/critical-dependencies` - Critical dependencies sorted by fan_in or trust_score
+- `GET /api/v1/analysis/risk-summary` - Aggregate risk metrics (vuln counts by severity, license risk, policy violations)
+- `GET /api/v1/analysis/trust-score-distribution` - Trust score histogram
+- `GET /api/v1/analysis/remediation-priorities` - Packages ranked by remediation leverage
+- `GET /api/v1/analysis/risk-propagation-impact` - What-if simulation for score change propagation
+
+**Source repository:**
+- `GET /api/v1/source/packages` - Packages from a source repository URL
+- `GET /api/v1/source/vulnerabilities` - Vulnerabilities from a source repository URL
+
+**Incident response:**
+- `GET /api/v1/blast-radius/<path:purl>` - Blast radius for compromised package
+- `GET /api/v1/patch-plan/<path:defect_id>` - Patch plan for a vulnerability
+- `GET /api/v1/sbom/<record_id>` - SBOM record metadata
+
+**POST endpoints (JSON Schema validated):**
+- `POST /api/v1/enrich/vulnerabilities` - Trigger enrichment (`enrichment-request` schema)
+- `POST /api/v1/policy/annotate` - Create policy annotation (`policy-annotation` schema)
+- `DELETE /api/v1/policy/annotate/<id>` - Delete policy annotation
+- `POST /api/v1/contacts` - Create point of contact (`contact-create` schema)
+- `POST /api/v1/patch-plan/evaluate` - Evaluate patch plan (`patch-plan-evaluate` schema)
+- `POST /api/v1/vex/auto-stub` - Auto-generate VEX stubs (`vex-auto-stub` schema)
+
+**Specification:**
+- `GET /api/v1/openapi.json` - OpenAPI 3.1 specification
 
 ### Exports (Deprecated)
 

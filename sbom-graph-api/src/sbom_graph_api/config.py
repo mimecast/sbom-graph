@@ -22,6 +22,8 @@ class FalkorDBConfig:
     internal_label: str
     ssl: bool
     ssl_ca_certs: str | None
+    ssl_certfile: str | None
+    ssl_keyfile: str | None
 
     @classmethod
     def from_env(cls) -> "FalkorDBConfig":
@@ -38,6 +40,8 @@ class FalkorDBConfig:
           This label is used to filter internal-only views in reports and visualizations.
         - FALKORDB_SSL: Enable SSL for the FalkorDB connection (default: false)
         - FALKORDB_CA_FILE: Path to CA certificate file for SSL verification
+        - FALKORDB_CLIENT_CERT: Path to client certificate for mTLS (optional)
+        - FALKORDB_CLIENT_KEY: Path to client private key for mTLS (optional)
         """
         return cls(
             host=os.environ.get("FALKORDB_HOST", "localhost"),
@@ -49,6 +53,8 @@ class FalkorDBConfig:
             internal_label=os.environ.get("FALKORDB_INTERNAL_LABEL", "INTERNAL"),
             ssl=os.environ.get("FALKORDB_SSL", "false").lower() == "true",
             ssl_ca_certs=os.environ.get("FALKORDB_CA_FILE"),
+            ssl_certfile=os.environ.get("FALKORDB_CLIENT_CERT"),
+            ssl_keyfile=os.environ.get("FALKORDB_CLIENT_KEY"),
         )
 
 
@@ -214,7 +220,8 @@ class AppConfig:
         return cls(
             debug=os.environ.get("FLASK_DEBUG", "false").lower() == "true",
             host=os.environ.get(  # nosec B104
-                "FLASK_HOST", "0.0.0.0",
+                "FLASK_HOST",
+                "0.0.0.0",
             ),
             port=int(os.environ.get("FLASK_PORT", "8080")),
             secret_key=os.environ.get("FLASK_SECRET_KEY", "dev-secret-key-change-in-production"),

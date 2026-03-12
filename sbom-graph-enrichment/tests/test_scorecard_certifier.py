@@ -22,16 +22,24 @@ class TestExtractGithubOwnerRepo:
     """Tests for GitHub URL parsing."""
 
     def test_standard_url(self) -> None:
-        assert extract_github_owner_repo("https://github.com/org/repo") == ("org", "repo")
+        assert extract_github_owner_repo(
+            "https://github.com/org/repo"
+        ) == ("org", "repo")
 
     def test_url_with_git_suffix(self) -> None:
-        assert extract_github_owner_repo("https://github.com/org/repo.git") == ("org", "repo")
+        assert extract_github_owner_repo(
+            "https://github.com/org/repo.git"
+        ) == ("org", "repo")
 
     def test_url_with_path(self) -> None:
-        assert extract_github_owner_repo("https://github.com/org/repo/tree/main") == ("org", "repo")
+        assert extract_github_owner_repo(
+            "https://github.com/org/repo/tree/main"
+        ) == ("org", "repo")
 
     def test_http_url(self) -> None:
-        assert extract_github_owner_repo("http://github.com/org/repo") == ("org", "repo")
+        assert extract_github_owner_repo(
+            "http://github.com/org/repo"
+        ) == ("org", "repo")
 
     def test_non_github_url(self) -> None:
         assert extract_github_owner_repo("https://gitlab.com/org/repo") is None

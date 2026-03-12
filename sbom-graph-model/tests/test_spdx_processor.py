@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from sbom_graph_model.model import ProjectType
 from sbom_graph_model.persistence import Persistence
 from sbom_graph_model.spdx.processor import (
     SPDXProcessor,
@@ -543,7 +544,7 @@ class TestParsePackage:
         assert project.name == "test-app"
         assert project.group == "com.test"
         assert project.purl == "pkg:maven/com.test/test-app@1.0.0"
-        assert project.type == "application"
+        assert project.type == ProjectType.Application
         assert project.application_id == "app-1"
         assert project.public_app_id == "pub-1"
         assert project.repo == "https://gitlab.com/test/app"
@@ -565,7 +566,7 @@ class TestParsePackage:
         )
         assert project.name == "lib-a"
         assert project.group == "org.example"
-        assert project.type == "library"
+        assert project.type == ProjectType.Library
         assert project.application_id is None
         assert project.public_app_id is None
         assert version.version == "2.0.0"
@@ -588,7 +589,10 @@ class TestParsePackage:
             "name": "foo",
             "versionInfo": "1.0",
             "externalRefs": [
-                {"referenceType": "purl", "referenceLocator": "pkg:maven/org.lib/foo@1.0"},
+                {
+                    "referenceType": "purl",
+                    "referenceLocator": "pkg:maven/org.lib/foo@1.0",
+                },
             ],
         }
         project, _ = spdx_processor.parse_package(pkg, "scan-x")
@@ -608,7 +612,9 @@ class TestParsePackage:
 class TestProcessSpdxJson:
     """Tests for SPDXProcessor.process_spdx_json integration."""
 
-    def test_processes_minimal_sbom(self, spdx_processor: SPDXProcessor, minimal_spdx: dict):
+    def test_processes_minimal_sbom(
+        self, spdx_processor: SPDXProcessor, minimal_spdx: dict
+    ):
         packages, deps, defects = spdx_processor.process_spdx_json(
             app_id="app-1",
             public_app_id="pub-1",
@@ -633,7 +639,12 @@ class TestProcessSpdxJson:
                 json_data={},
             )
 
-    def test_persistence_called(self, spdx_processor: SPDXProcessor, mock_graph: MagicMock, minimal_spdx: dict):
+    def test_persistence_called(
+        self,
+        spdx_processor: SPDXProcessor,
+        mock_graph: MagicMock,
+        minimal_spdx: dict,
+    ):
         spdx_processor.process_spdx_json(
             app_id="a",
             public_app_id="b",

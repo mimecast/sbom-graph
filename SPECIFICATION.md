@@ -49,6 +49,7 @@ graph LR
         ASM[sbom-graph-model<br/>Python Library]
         CW[sbom-graph-enrichment<br/>Celery Workers]
         CB[sbom-graph-enrichment<br/>Celery Beat]
+        CLI[sbom-graph-cli<br/>Click CLI]
     end
 
     ST -- "Webhook POST<br/>/webhook" --> RL
@@ -59,6 +60,7 @@ graph LR
     ADV -- "uses" --> ASM
     U -- "HTTP<br/>Reports & Visualizations" --> ADV
     CI -- "REST API<br/>Ingest & Gates" --> ADV
+    CLI -- "REST API<br/>Ingest, Query, Export" --> ADV
     CW -- "Cypher<br/>port 6379" --> FDB
     CW -- "task queue<br/>Redis DB 1" --> FDB
     CB -- "beat schedule<br/>Redis DB 1" --> FDB
@@ -150,6 +152,7 @@ A standalone Python library providing domain objects, CycloneDX and SPDX parsing
 | `PointOfContact` | Node | Incident response contact with email, team, slack_channel |
 | `VexStatement` | Node | VEX triage statement with status, justification, impact/action statements |
 | `SourceRepository` | Node | Source code repository with URL, VCS type, namespace, name, tag, commit |
+| `SBOMRecord` | Node | SBOM provenance metadata (record_id, format, tool info, ingested_at, source) |
 
 **Edge classes:**
 
@@ -164,6 +167,7 @@ A standalone Python library providing domain objects, CycloneDX and SPDX parsing
 | `VersionVex` | `HAS_VEX` | Version | VexStatement | Version has VEX statement |
 | `VexRefersTo` | `REFERS_TO` | VexStatement | Defect | VEX statement refers to vulnerability |
 | `VersionSource` | `HAS_SOURCE` | Version | SourceRepository | Version linked to source repo |
+| `ProducedBySBOM` | `PRODUCED_BY_SBOM` | Version | SBOMRecord | Version produced by SBOM ingestion |
 | `HasVersion` | `HAS_VERSION` | Project | Version | Project has version |
 
 **Enums:**
@@ -222,6 +226,8 @@ The `INTERNAL_PREFIXES` environment variable uses the format `field:prefix,field
 | `create_source_repository(repo)` | MERGE a SourceRepository node |
 | `link_version_to_source(purl, repo_url)` | MERGE a HAS_SOURCE edge (by purl) |
 | `link_version_to_source_by_name(...)` | MERGE a HAS_SOURCE edge (by name) |
+| `create_sbom_record(...)` | MERGE an SBOMRecord node (record_id, format, etc.) |
+| `link_version_to_sbom_record(purl, record_id)` | MERGE a PRODUCED_BY_SBOM edge |
 | `update_defect_enrichment(...)` | Update enrichment metadata on Defect |
 | `get_versions_by_purl(purl)` | Retrieve versions matching a package URL |
 | `get_packages_needing_enrichment(...)` | Return purls where enrichment is stale or missing |
@@ -404,8 +410,10 @@ All certifiers implement the abstract `Certifier` interface with `name` property
 | OpenSSF Scorecard | `certifiers/scorecard.py` | `GET https://api.scorecard.dev/projects/github.com/{owner}/{repo}` | 30 req/min | Security practices scoring (requires GitHub URL) |
 | Sonatype OSS Index | `certifiers/ossindex.py` | `POST https://ossindex.sonatype.org/api/v3/component-report` | 60/120 req/min | Vulnerability data (optional auth) |
 | deps.dev | `certifiers/depsdev.py` | `GET https://api.deps.dev/v3/systems/{system}/packages/{pkg}/versions/{ver}` | 150 req/min | Package metadata, advisories, Scorecard |
+| EOL | `certifiers/eol.py` | `GET https://endoflife.date/api/{product}/{cycle}.json` | Unspecified | End-of-life status (FindingKind.EOL) |
+| Source Repository | `certifiers/source_repo.py` | `GET https://api.deps.dev/v3/systems/{system}/packages/{pkg}/versions/{ver}` | 150 req/min | Source repo linking with SSRF host allowlist (FindingKind.SOURCE_REPO) |
 
-**Finding kinds:** `FindingKind` enum: `VULNERABILITY`, `LICENSE`, `SCORECARD`, `OSSINDEX`, `DEPSDEV`
+**Finding kinds:** `FindingKind` enum: `VULNERABILITY`, `LICENSE`, `SCORECARD`, `OSSINDEX`, `DEPSDEV`, `EOL`, `SOURCE_REPO`
 
 **Rate limiting:** Each certifier implements token-bucket rate limiting to respect external API limits.
 
@@ -437,6 +445,7 @@ The `TrustScoreCalculator` aggregates findings from all certifiers into a compos
 
 Trust scores propagate bottom-up through the dependency graph:
 
+- **Alerting** -- When `effective_score` falls below `TRUST_SCORE_ALERT_THRESHOLD` (default 4.0), the propagation task emits WARNING-level logs.
 - **Alpha blending** -- Direct and inherited scores combined via `TRUST_SCORE_ALPHA` (default 0.4)
 - **Decay** -- Transitive influence decays by `TRUST_SCORE_DECAY` (default 0.8) per depth level
 - **Max depth** -- Traversal limited by `TRUST_SCORE_MAX_DEPTH` (default 20)
@@ -512,7 +521,7 @@ enrichment:
   image: { repository: sbom-graph-enrichment, tag: latest }
   replicas: 1
   interval: "3600"
-  sources: ["osv", "clearlydefined", "scorecard", "ossindex", "depsdev"]
+  sources: ["osv", "clearlydefined", "scorecard", "ossindex", "depsdev", "eol", "source_repo"]
   celeryBrokerDb: "1"
   celeryResultDb: "2"
   concurrency: 2
@@ -522,6 +531,7 @@ enrichment:
     alpha: "0.4"
     decay: "0.8"
     maxDepth: "20"
+    alertThreshold: "4.0"
     weights: { security: "0.3", vulnerability: "0.3", maintenance: "0.2", supplyChain: "0.2" }
     ossindex: { user: "", token: "" }
   networkPolicy:
@@ -534,6 +544,40 @@ graphName: "acme-corp"
 ```
 
 When `falkordb.tls.enabled` is true and `key`/`cert` are empty, an init container generates self-signed certificates.
+
+### 3.6 sbom-graph-cli
+
+A standalone CLI for ingestion, querying, policy annotation, and report export.
+Communicates with sbom-graph-api via HTTP; no direct FalkorDB dependency.
+
+**Package:** `sbom_graph_cli`
+**Version:** 0.1.0
+**Build system:** hatchling
+**Dependencies:** `click`, `httpx`, `rich`
+
+#### 3.6.1 Commands
+
+| Command | Description |
+|--------|-------------|
+| `ingest <file>` | Upload CycloneDX or SPDX SBOM (auto-detects format) |
+| `query vulns <purl>` | List vulnerabilities for a package |
+| `query deps <purl>` | List dependencies (direct and transitive) |
+| `query dependants <purl>` | List dependants (reverse dependencies) |
+| `query patch-plan <defect_id>` | Show patch plan for a vulnerability |
+| `policy annotate <purl> --type bad\|good\|hold` | Create policy annotation (bad/good/hold) |
+| `export <report_name>` | Export report (json/excel) |
+
+#### 3.6.2 Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SBOM_GRAPH_API_URL` | `http://localhost:5000` | Base URL of the sbom-graph API |
+| `SBOM_GRAPH_TOKEN` | (none) | API token for authentication |
+
+#### 3.6.3 CI/CD Integration
+
+- Exit codes: 0 = success, 1 = policy violations, 2 = error.
+- `--output json` for machine-parseable output in pipelines.
 
 ## 4. Graph Database Schema
 
@@ -550,6 +594,7 @@ graph TD
         VX["VexStatement<br/>─────────────<br/>statement_id, status,<br/>justification,<br/>impact_statement,<br/>action_statement,<br/>source_document,<br/>timestamp"]
         POC["PointOfContact<br/>─────────────<br/>email, team,<br/>slack_channel"]
         SR["SourceRepository<br/>─────────────<br/>url, vcs_type,<br/>namespace, name,<br/>tag, commit"]
+        SB["SBOMRecord<br/>─────────────<br/>record_id, format,<br/>tool_name, tool_version,<br/>ingested_at, source,<br/>document_hash"]
     end
 
     subgraph "Additional Labels on Version"
@@ -567,6 +612,7 @@ graph TD
     V -->|"HAS_POLICY"| P
     V -->|"HAS_VEX"| VX
     V -->|"HAS_SOURCE"| SR
+    V -->|"PRODUCED_BY_SBOM"| SB
     VX -->|"REFERS_TO"| D
     POC -->|"CONTACT_FOR"| V
 
@@ -578,6 +624,7 @@ graph TD
     style VX fill:#1abc9c,color:#fff
     style POC fill:#e67e22,color:#fff
     style SR fill:#34495e,color:#fff
+    style SB fill:#8e44ad,color:#fff
 ```
 
 ### 4.2 Node Details
@@ -699,6 +746,21 @@ Primary label: `Version`. Additional labels are applied based on CycloneDX compo
 | `tag` | string | Release tag |
 | `commit` | string | Commit hash |
 
+#### SBOMRecord Node
+
+**MERGE key:** `(record_id)` -- unique identifier (UUID).
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `record_id` | string | Unique identifier (UUID) |
+| `format` | string | SBOM format ("cyclonedx" or "spdx") |
+| `tool_name` | string | Optional tool that generated the SBOM |
+| `tool_version` | string | Optional tool version |
+| `serial_number` | string | Optional CycloneDX serialNumber |
+| `ingested_at` | string | ISO timestamp of ingestion |
+| `source` | string | Ingestion source ("webhook", "api_upload", "cli") |
+| `document_hash` | string | Optional SHA-256 hash of the SBOM document |
+
 ### 4.3 Relationships
 
 | Relationship | From | To | Properties | Description |
@@ -712,6 +774,7 @@ Primary label: `Version`. Additional labels are applied based on CycloneDX compo
 | `REFERS_TO` | VexStatement | Defect | -- | VEX statement refers to vulnerability |
 | `CONTACT_FOR` | PointOfContact | Version | -- | Contact responsible for version |
 | `HAS_SOURCE` | Version | SourceRepository | -- | Version linked to source repository |
+| `PRODUCED_BY_SBOM` | Version | SBOMRecord | -- | Version produced by SBOM ingestion |
 
 ### 4.4 Indexes
 
@@ -730,31 +793,37 @@ Primary label: `Version`. Additional labels are applied based on CycloneDX compo
 | `PointOfContact` | `email` | Fast contact lookup |
 | `VexStatement` | `statement_id` | Fast VEX lookup |
 | `SourceRepository` | `url` | Fast repository lookup |
+| `SBOMRecord` | `record_id` | Fast SBOM provenance lookup |
 
 ## 5. API Reference
 
 ### 5.1 SBOM Ingestion (`/ingest`)
 
-All ingest endpoints require JWT authentication and are CSRF-exempt.
+All ingest endpoints require JWT authentication and are CSRF-exempt. Both CycloneDX and SPDX formats are supported. **SBOM provenance is tracked**: each successful ingestion creates an SBOM record (document hash, tool info, ingested_at) linked to all ingested versions; the response includes `record_id` for audit trails and provenance lookups.
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/ingest/cyclonedx` | Upload CycloneDX SBOM JSON |
 | `POST` | `/ingest/spdx` | Upload SPDX 2.3 JSON |
-| `POST` | `/ingest/sbom` | Auto-detect format (CycloneDX or SPDX) |
+| `POST` | `/ingest/sbom` | Auto-detect format (CycloneDX or SPDX) and process accordingly |
 | `POST` | `/ingest/vex` | Upload OpenVEX document |
 
 **Request body (CycloneDX/SPDX):** JSON SBOM document wrapped in an envelope validated against the `sbom-upload` JSON Schema (Draft-07). The schema enforces required fields (`sbom`), type constraints, string length limits, and `additionalProperties: false` to prevent mass assignment. The inner SBOM object is validated by the respective format processor. Content-Length limited to prevent DoS.
 
-**Response (CycloneDX):**
+**Response (CycloneDX/SPDX):**
 ```json
 {
   "status": "ok",
-  "components_processed": 142,
-  "dependencies_created": 287,
-  "vulnerabilities_processed": 15
+  "record_id": "550e8400-e29b-41d4-a716-446655440000",
+  "app_id": "a1b2c3...",
+  "public_app_id": "my-application",
+  "projects_count": 42,
+  "dependencies_count": 87,
+  "defects_count": 3
 }
 ```
+
+For SPDX and auto-detect (`/ingest/sbom`), the response also includes `"format": "spdx"` or `"format": "cyclonedx"`.
 
 **Response (VEX):**
 ```json
@@ -800,6 +869,9 @@ All report endpoints support the `format` query parameter (`html`, `excel`, `jso
 | `GET` | `/reports/vulnerability-dependants/{defect_id}` | `max_depth` | Projects affected by a specific vulnerability |
 | `GET` | `/reports/vulnerability-freshness` | -- | Packages with stale/missing enrichment data |
 | `GET` | `/reports/vex-coverage` | -- | VEX coverage percentage and breakdown |
+| `GET` | `/reports/enrichment-coverage` | -- | Enrichment coverage: recent vs stale vs never-scanned |
+| `GET` | `/reports/incident-response/{defect_id}` | `max_depth` | Blast radius and patch plan |
+| `GET` | `/reports/incident-response/{defect_id}/graph` | `max_depth` | Blast radius graph |
 
 #### License Reports
 
@@ -808,6 +880,14 @@ All report endpoints support the `format` query parameter (`html`, `excel`, `jso
 | `GET` | `/reports/licenses` | -- | All licenses grouped by risk category |
 | `GET` | `/reports/license-summary` | `project_name`, `version_name` | License BOM for a project version |
 | `GET` | `/reports/license-conflicts` | -- | Incompatible license combinations in transitive deps |
+| `GET` | `/reports/license-dashboard` | -- | License compliance dashboard by risk category |
+
+#### Trust Score Reports
+
+| Method | Path | Extra Parameters | Description |
+|--------|------|------------------|-------------|
+| `GET` | `/reports/trust-scores` | `limit` | Trust score report (colour-coded) |
+| `GET` | `/reports/trust-score-gaps` | `limit` | Low-confidence trust score packages |
 
 #### Policy & Source Reports
 
@@ -815,6 +895,15 @@ All report endpoints support the `format` query parameter (`html`, `excel`, `jso
 |--------|------|------------------|-------------|
 | `GET` | `/reports/policy-violations` | -- | All "bad" packages still in use with dependant counts |
 | `GET` | `/reports/source-repos` | -- | All tracked source repositories with package counts |
+| `GET` | `/reports/source-impact` | `repo_url` | Source repo impact (affected packages) |
+| `GET` | `/reports/source-impact/graph` | `repo_url` | Source impact graph |
+
+#### SBOM Provenance Reports
+
+| Method | Path | Extra Parameters | Description |
+|--------|------|------------------|-------------|
+| `GET` | `/reports/sbom-inventory` | `search` | SBOM inventory (all records with metadata) |
+| `GET` | `/reports/coverage` | -- | SBOM coverage (fresh/stale/never by project) |
 
 #### PURL Variant Routes
 
@@ -852,6 +941,19 @@ All visualization endpoints return self-contained HTML pages with inline JavaScr
 | `bfs` | BFS tree -- traditional hierarchical layout |
 | `circular` | Nodes arranged in a circle |
 
+#### Trust Score Visualizations (`/reports`)
+
+Interactive HTML visualizations for trust score and risk analysis:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/reports/trust-score-heatmap` | Trust score heatmap by package |
+| `GET` | `/reports/risk-propagation-graph` | Risk propagation through the dependency graph |
+| `GET` | `/reports/application-risk-dashboard` | Application-level risk dashboard |
+| `GET` | `/reports/risk-path-explorer` | Explore weakest-link paths in the graph |
+| `GET` | `/reports/risk-outliers` | Packages with anomalous risk profiles |
+| `GET` | `/reports/whatif-simulator` | What-if simulation for trust score changes |
+
 #### Visualization Endpoints
 
 | Method | Path | Description |
@@ -866,7 +968,28 @@ All visualization endpoints also have `/purl/<path:purl>` variants.
 
 ### 5.4 Programmatic API (`/api/v1`)
 
-All endpoints return JSON. Authentication required when `AUTH_ENABLED=true`.
+All endpoints return JSON with a standard envelope `{data, pagination?, meta}`. Authentication required when `AUTH_ENABLED=true` (JWT via `Authorization: Bearer <token>` or session cookie).
+
+#### Package Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/package/{purl}` | Package metadata for a specific PURL |
+| `GET` | `/api/v1/package/{purl}/dependencies` | Direct and transitive dependencies |
+| `GET` | `/api/v1/package/{purl}/dependants` | Direct and transitive dependants |
+
+#### Analysis Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/analysis/critical-dependencies` | Packages with low trust scores or high risk |
+| `GET` | `/api/v1/analysis/risk-summary` | Aggregate risk metrics across the graph |
+
+#### OpenAPI
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/openapi.json` | OpenAPI 3.0 specification for the v1 API |
 
 #### License Endpoints
 
@@ -972,6 +1095,18 @@ Available when `AUTH_ENABLED=true`.
 | `GET` | `/health` | both | Liveness probe |
 | `GET` | `/ready` | sbom-graph-api | Readiness probe (verifies FalkorDB connection) |
 
+### 5.9 Admin (`/admin`)
+
+Policy annotation management. Requires authentication; POST and DELETE require admin.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/admin/policies` | Policy admin page (search, filter, list) |
+| `POST` | `/admin/policies` | Add policy annotation (form: purl, type, justification) |
+| `DELETE` | `/admin/policies/<purl>` | Remove policy annotation (AJAX, JSON) |
+
+**Query params (GET):** `search` (PURL/project), `type` (banned/approved/deprecated).
+
 ## 6. Configuration
 
 ### 6.1 Environment Variables Summary
@@ -1020,7 +1155,7 @@ Available when `AUTH_ENABLED=true`.
 | `CELERY_RESULT_DB` | `2` | Redis DB number for Celery results |
 | `CELERY_REDIS_SSL` | `false` | Enable TLS for Redis connections |
 | `ENRICHMENT_INTERVAL` | `3600` | Seconds between full enrichment runs |
-| `ENRICHMENT_SOURCES` | `osv,clearlydefined` | Comma-separated list of enabled certifiers |
+| `ENRICHMENT_SOURCES` | (varies) | JSON string list of certifier names to enable (e.g. osv, clearlydefined, scorecard, ossindex, depsdev, eol, source_repo) |
 | `ENRICHMENT_HTTP_TIMEOUT` | `30` | HTTP timeout for external API calls (seconds) |
 
 #### Trust Score
@@ -1036,6 +1171,7 @@ Available when `AUTH_ENABLED=true`.
 | `TRUST_SCORE_WEIGHT_VULNERABILITY` | `0.3` | Weight for vulnerability profile category |
 | `TRUST_SCORE_WEIGHT_MAINTENANCE` | `0.2` | Weight for maintenance health category |
 | `TRUST_SCORE_WEIGHT_SUPPLY_CHAIN` | `0.2` | Weight for supply chain hygiene category |
+| `TRUST_SCORE_ALERT_THRESHOLD` | `4.0` | Effective score below which WARNING-level logs are emitted |
 | `OSSINDEX_USER` | (empty) | Sonatype OSS Index username |
 | `OSSINDEX_TOKEN` | (empty) | Sonatype OSS Index API token |
 
@@ -1206,6 +1342,8 @@ All path parameters, query parameters, and response headers that accept user inp
 | `validate_limit()` | Enforce maximum result count |
 | `validate_css_dimension()` | Allowlist CSS dimension patterns |
 | `validate_layout()` | Restrict to known layout algorithms |
+| `validate_sort_param()` | Centralized validation for sort field parameters |
+| `validate_sort_order()` | Centralized validation for sort order (asc/desc) |
 | `validate_project_group()` | Sanitize group parameter |
 | `validate_json_body()` | Validate JSON request body against a JSON Schema (Draft-07) |
 | `sanitize_content_disposition()` | Prevent header injection in Content-Disposition headers |
@@ -1233,6 +1371,7 @@ Validation errors return HTTP 400 with a JSON body containing `{"error": "Valida
 
 ### 8.3 Authentication Security
 
+- **Login rate limiting:** In-memory per-IP rate limiting on `/auth/login` (10 attempts per 15 minutes per worker) to mitigate brute-force attacks.
 - Passwords hashed with PBKDF2-SHA256 using 600,000 iterations and random salt.
 - JWT tokens signed with HS256 (configurable) using explicit algorithm specification.
 - Token values are SHA-256 hashed for lookup and Fernet-encrypted at rest in SQLite.
@@ -1262,10 +1401,14 @@ Validation errors return HTTP 400 with a JSON body containing `{"error": "Valida
 
 - **Log redaction:** Redis passwords in broker URLs are redacted from Celery and Kombu logs via `_RedactSecretsFilter`.
 - **Network egress policy:** Optional `NetworkPolicy` restricts enrichment worker egress to DNS (port 53), FalkorDB (port 6379), and HTTPS (port 443) to non-RFC1918 addresses. Beat is restricted to DNS and FalkorDB only.
-- **SSRF mitigation:** The ClearlyDefined license certifier constructs URLs with a hardcoded host (`api.clearlydefined.io`); path components from graph data cannot influence the target host. The `httpx` client enforces a 30-second timeout.
+- **SSRF mitigation:** The ClearlyDefined license certifier constructs URLs with a hardcoded host (`api.clearlydefined.io`); path components from graph data cannot influence the target host. The Source Repository certifier uses an SSRF host allowlist when resolving repository URLs via deps.dev. The `httpx` client enforces a 30-second timeout.
 - **Rate limiting:** Token-bucket rate limiters on all external API certifiers prevent rate exhaustion and associated IP bans.
 
-### 8.7 External API Dependencies
+### 8.7 License Compliance
+
+A dependency audit confirmed no unexpected copyleft dependencies. Accepted exceptions: `ldap3` (LGPL-3.0) for LDAP authentication and FalkorDB server (SSPLv1) as the graph database.
+
+### 8.8 External API Dependencies
 
 | API | Authentication | TLS | Rate Limit |
 |-----|---------------|-----|------------|
@@ -1274,6 +1417,7 @@ Validation errors return HTTP 400 with a JSON body containing `{"error": "Valida
 | api.scorecard.dev | None | HTTPS | 30 req/min |
 | ossindex.sonatype.org | Optional Basic Auth | HTTPS | 60/120 req/min |
 | api.deps.dev | None | HTTPS | 150 req/min |
+| endoflife.date | None | HTTPS | Unspecified |
 
 ## License
 

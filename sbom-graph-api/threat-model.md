@@ -69,7 +69,7 @@ The primary risks identified were around credential management (hardcoded defaul
 | # | Threat | STRIDE | Asset | Likelihood | Impact | Risk | Status | Mitigation |
 |---|--------|--------|-------|------------|--------|------|--------|------------|
 | 1 | Default secret keys used in production | S, T | SECRET_KEY, JWT_SECRET_KEY, TOKEN_DB_ENCRYPTION_KEY | Medium | High | **High** | **MITIGATED** | `app.py` raises `RuntimeError` at startup if any secret matches a known default when `FLASK_DEBUG=false`. See `_INSECURE_DEFAULT_SECRETS`. |
-| 2 | Brute force on `/auth/login` | S | User credentials | High | High | **Critical** | **ACCEPTED** | SameSite=Lax cookies and session-based auth reduce automated attack surface. Network-level rate limiting expected at ingress controller / WAF. Application-level rate limiting deferred to future sprint (requires Redis or shared state for multi-worker). |
+| 2 | Brute force on `/auth/login` | S | User credentials | High | High | **Critical** | **MITIGATED** | In-memory per-IP rate limiting (10 attempts / 15 min per Gunicorn worker) provides defense-in-depth. Network-level rate limiting at ingress controller / WAF is a documented deployment requirement and must be verified before production. Distributed rate limiting via Redis deferred to future sprint for multi-worker consistency. |
 | 3 | FalkorDB connection unencrypted | I | Graph data, credentials | Medium | Medium | **Medium** | **ACCEPTED** | Both pods deployed on same private network. Kubernetes NetworkPolicy restricts FalkorDB port access. Documented as deployment requirement. |
 | 4 | LDAP connection without SSL | I | LDAP credentials, user info | Medium | High | **High** | **MITIGATED** | `app.py` logs a WARNING at startup when `LDAP_ENABLED=true` and `LDAP_USE_SSL=false`. Operators are alerted to misconfiguration. `LDAP_USE_SSL` config option available for enabling TLS. |
 | 5 | Session fixation after login | S | Session cookie | Low | High | **Medium** | **MITIGATED** | Flask regenerates session ID on `session.permanent = True` and session data changes. `SESSION_COOKIE_HTTPONLY=True`, `SESSION_COOKIE_SAMESITE=Lax`, `SESSION_COOKIE_SECURE` tied to TLS config. |
@@ -146,7 +146,7 @@ All dependencies are actively maintained with established user bases and compati
 
 | Risk | Severity | Justification |
 |------|----------|---------------|
-| No application-level rate limiting on login | Critical | Network-level rate limiting at ingress/WAF is the expected control. Application-level limiting requires shared state (Redis) across Gunicorn workers and is deferred. Monitoring/alerting on failed login attempts provides detection. |
+| Per-worker (not distributed) login rate limiting | Medium | In-memory per-IP rate limiting (10 attempts / 15 min) is implemented in each Gunicorn worker. This provides defense-in-depth but is not shared across workers. Distributed rate limiting via Redis is deferred. Network-level rate limiting at ingress/WAF remains the primary control. |
 | FalkorDB unencrypted in-cluster traffic | Medium | Accepted if both pods share a private network with Kubernetes NetworkPolicy restricting access to the FalkorDB port. |
 | TOKEN_DB_ENCRYPTION_KEY compromise exposes tokens | Medium | Fernet provides defense-in-depth. Token expiration (default 90 days) limits exposure window. Key rotation would require re-encrypting all tokens. |
 | Transitive dependency vulnerabilities | Medium | Mitigated by lockfile pinning, Snyk/SonaType scanning, and automated security patch PRs. |
@@ -158,3 +158,4 @@ All dependencies are actively maintained with established user bases and compati
 | 2026-02-28 | AI-assisted threat model | Initial threat model with STRIDE analysis |
 | 2026-02-28 | Implementation | Mitigated findings #1, #4, #12, #19 via code changes |
 | 2026-03-10 | Parameter validation hardening | Added threats #20 (Content-Disposition header injection), #21 (unvalidated query params); expanded Input Validation controls with new validators and sanitizers |
+| 2026-03-12 | Login rate limiting | Mitigated threat #2 with in-memory per-IP rate limiting (10 attempts / 15 min per worker). Updated residual risk from Critical to Medium. |

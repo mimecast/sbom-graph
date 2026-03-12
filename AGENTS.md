@@ -14,6 +14,7 @@ This is the **authoritative, highest-bar governance document** for AI agents acr
 | `sbom-graph-api` | Flask application for REST API, reports, visualisations, and interactive documentation | [`sbom-graph-api/AGENTS.md`](sbom-graph-api/AGENTS.md) |
 | `sbom-graph-enrichment` | Celery-based enrichment pipeline querying OSV, ClearlyDefined, OpenSSF Scorecard, Sonatype OSS Index, and deps.dev | [`sbom-graph-enrichment/AGENTS.md`](sbom-graph-enrichment/AGENTS.md) |
 | `sonatype-lifecycle-release-listener` | Flask microservice receiving SCA webhook events and ingesting SBOMs | [`sonatype-lifecycle-release-listener/AGENTS.md`](sonatype-lifecycle-release-listener/AGENTS.md) |
+| `sbom-graph-cli` | CLI for ingestion, querying, policy annotation, and report export | [`sbom-graph-cli/AGENTS.md`](sbom-graph-cli/AGENTS.md) |
 
 ### Cross-Project Dependencies
 
@@ -24,13 +25,17 @@ sbom-graph-api ──────────────► sbom-graph-model �
        ▼                              │
 sbom-graph-enrichment ────────────────┘
 
-All sub-projects ──► FalkorDB (shared graph database)
+sbom-graph-cli ──────────────► sbom-graph-api (HTTP client)
+
+All sub-projects (except cli) ──► FalkorDB (shared graph database)
 ```
 
 - `sbom-graph-api` depends on `sbom-graph-model` and optionally `sbom-graph-enrichment`
 - `sbom-graph-enrichment` depends on `sbom-graph-model`
 - `sonatype-lifecycle-release-listener` depends on `sbom-graph-model`
-- All sub-projects share FalkorDB as the backing store
+- `sbom-graph-cli` communicates with `sbom-graph-api` via HTTP (no direct model dependency)
+- `sbom-graph-cli` is a standalone CLI that calls the sbom-graph API (no direct FalkorDB dependency)
+- All sub-projects except sbom-graph-cli share FalkorDB as the backing store
 
 ---
 
@@ -38,7 +43,7 @@ All sub-projects ──► FalkorDB (shared graph database)
 
 These agreements apply to **all** sub-projects without exception.
 
-1. All agents must operate in Privacy mode and use only approved models.
+1. All agents must operate in Privacy mode and use only approved models. **Never use fast/cheap models (e.g. `fast`) for code-generating, testing, or security subagents.** Fast models may only be used for trivial file searches.
 2. Each code-generating agent must use a different model and focus area.
 3. **Each code-generating agent must generate a complete design to be threat modelled before implementation, correct design flaws, and then implement the solution to be evaluated against the others.** This is non-negotiable for all new features and architectural changes.
 4. All code must be well-architected, elegant, maintainable, and thoroughly documented.
@@ -154,7 +159,7 @@ No solution may progress past a gate until its criteria are met.
 
 ### Testing
 
-- All existing tests must pass. New code must include tests.
+- **All tests must pass.** Failing tests must be investigated and fixed — never dismissed as "pre-existing" or excluded.
 - Code coverage must not decrease.
 - Integration tests required for new database queries or external API interactions.
 

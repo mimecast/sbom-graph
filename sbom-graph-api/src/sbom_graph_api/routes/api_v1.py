@@ -12,9 +12,16 @@ from sbom_graph_api.routes.auth import auth_required
 from sbom_graph_api.schemas.inbound import (
     CONTACT_CREATE_SCHEMA,
     ENRICHMENT_REQUEST_SCHEMA,
+    PATCH_PLAN_EVALUATE_SCHEMA,
     POLICY_ANNOTATION_SCHEMA,
+    VEX_AUTO_STUB_SCHEMA,
 )
 from sbom_graph_api.services.falkordb_service import get_falkordb_service
+from sbom_graph_api.utils.api_helpers import (
+    api_response,
+    make_pagination,
+    paginate_params,
+)
 from sbom_graph_api.utils.validation import (
     validate_annotation_id,
     validate_boolean,
@@ -22,23 +29,20 @@ from sbom_graph_api.utils.validation import (
     validate_float_param,
     validate_int_param,
     validate_json_body,
+    validate_purl,
+    validate_record_id,
+    validate_sort_param,
     validate_url,
 )
 
 bp = Blueprint("api_v1", __name__, url_prefix="/api/v1")
 
 
-_MAX_PURL_LENGTH = 512
-
-
-def _validate_purl(purl: str) -> tuple[Response, int] | None:
-    """Validate a purl path parameter; returns an error response or None."""
-    if not purl:
-        return jsonify({"error": "purl path parameter is required"}), 400
-    if len(purl) > _MAX_PURL_LENGTH:
-        return jsonify({"error": "purl exceeds maximum length"}), 400
-    if not purl.startswith("pkg:"):
-        return jsonify({"error": "purl must start with 'pkg:'"}), 400
+def _purl_error(purl: str) -> tuple[Response, int] | None:
+    """Return 400 if purl is invalid; otherwise None."""
+    validated = validate_purl(purl)
+    if not validated:
+        return jsonify({"error": "Invalid purl"}), 400
     return None
 
 
@@ -50,7 +54,7 @@ def package_licenses(purl: str) -> tuple[Response, int]:
     Returns:
         JSON: ``{purl, licenses: [{spdx_id, name, risk_category, url}]}``.
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
@@ -74,7 +78,7 @@ def package_vulnerabilities(purl: str) -> tuple[Response, int]:
     Query params:
         include_dependencies: "true" to include transitive dep vulns.
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
@@ -236,7 +240,9 @@ def get_patch_plan(defect_id: str) -> tuple[Response, int]:
 
     max_depth = validate_int_param(
         request.args.get("max_depth"),
-        default=10, min_val=1, max_val=50,
+        default=10,
+        min_val=1,
+        max_val=50,
     )
     internal_only = validate_boolean(request.args.get("internal_only"))
 
@@ -262,13 +268,15 @@ def get_blast_radius(purl: str) -> tuple[Response, int]:
         max_depth: Maximum BFS depth (default 10).
         internal_only: "true" to restrict to internal packages.
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
     max_depth = validate_int_param(
         request.args.get("max_depth"),
-        default=10, min_val=1, max_val=50,
+        default=10,
+        min_val=1,
+        max_val=50,
     )
     internal_only = validate_boolean(request.args.get("internal_only"))
 
@@ -341,7 +349,7 @@ def create_contact() -> tuple[Response, int]:
 @auth_required
 def package_vex(purl: str) -> tuple[Response, int]:
     """Return VEX statements for a package's vulnerabilities."""
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
@@ -357,6 +365,60 @@ def package_vex(purl: str) -> tuple[Response, int]:
     ), 200
 
 
+@bp.route("/package/<path:purl>/dependencies")
+@auth_required
+def package_dependencies(purl: str) -> tuple[Response, int]:
+    """Return dependency tree for a package (direct + transitive)."""
+    err = _purl_error(purl)
+    if err:
+        return err
+
+    max_depth = validate_int_param(
+        request.args.get("max_depth"), default=10, min_val=1, max_val=50
+    )
+    offset, limit = paginate_params(
+        request.args.get("offset"), request.args.get("limit")
+    )
+
+    service = get_falkordb_service()
+    deps = service.get_transitive_dependency_purls(purl, max_depth=max_depth)
+
+    total = len(deps)
+    page = deps[offset : offset + limit]
+
+    return api_response(
+        {"purl": purl, "dependencies": page},
+        pagination=make_pagination(offset, limit, total),
+    )
+
+
+@bp.route("/package/<path:purl>/dependants")
+@auth_required
+def package_dependants(purl: str) -> tuple[Response, int]:
+    """Return reverse dependency tree (packages that depend on this one)."""
+    err = _purl_error(purl)
+    if err:
+        return err
+
+    max_depth = validate_int_param(
+        request.args.get("max_depth"), default=10, min_val=1, max_val=50
+    )
+    offset, limit = paginate_params(
+        request.args.get("offset"), request.args.get("limit")
+    )
+
+    service = get_falkordb_service()
+    dependants = service.get_transitive_dependant_purls(purl, max_depth=max_depth)
+
+    total = len(dependants)
+    page = dependants[offset : offset + limit]
+
+    return api_response(
+        {"purl": purl, "dependants": page},
+        pagination=make_pagination(offset, limit, total),
+    )
+
+
 @bp.route("/package/<path:purl>/policy")
 @auth_required
 def check_package_policy(purl: str) -> tuple[Response, int]:
@@ -364,7 +426,7 @@ def check_package_policy(purl: str) -> tuple[Response, int]:
 
     Returns: ``{purl, status: "pass"|"fail"|"hold", annotations: [...]}``.
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
@@ -433,7 +495,7 @@ def package_trust_score(purl: str) -> tuple[Response, int]:
     Returns:
         JSON: full trust score object with all category scores.
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
@@ -454,7 +516,7 @@ def package_risk_path(purl: str) -> tuple[Response, int]:
     Query params:
         limit: Maximum dependencies to return (default 10, max 50).
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
@@ -479,7 +541,7 @@ def application_supply_chain_risk(purl: str) -> tuple[Response, int]:
     Returns:
         JSON: effective_score, min_path_score, dep_count, weakest_links.
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
@@ -506,6 +568,95 @@ def trust_score_distribution() -> tuple[Response, int]:
     ), 200
 
 
+@bp.route("/analysis/critical-dependencies")
+@auth_required
+def critical_dependencies() -> tuple[Response, int]:
+    """Return most critical dependencies (high fan-in or low scorecard).
+
+    Query params:
+        sort: "fan_in" (default) or "trust_score"
+        limit: max results (default 20, max 100)
+    """
+    sort_by = validate_sort_param(
+        request.args.get("sort"),
+        allowed=frozenset({"fan_in", "trust_score"}),
+        default="fan_in",
+    )
+
+    limit = validate_int_param(
+        request.args.get("limit"), default=20, min_val=1, max_val=100
+    )
+
+    service = get_falkordb_service()
+
+    if sort_by == "trust_score":
+        results = service.get_remediation_priorities(limit=limit)
+    else:
+        results = service.get_most_depended_packages(limit=limit)
+
+    return api_response(
+        {"dependencies": results, "sort": sort_by},
+    )
+
+
+@bp.route("/analysis/risk-summary")
+@auth_required
+def risk_summary() -> tuple[Response, int]:
+    """Return aggregate risk metrics: vuln counts by severity, license risk, policy violations."""
+    service = get_falkordb_service()
+
+    vuln_result = service.execute_query(
+        "MATCH (d:Defect) "
+        "RETURN d.severity AS severity, count(d) AS count "
+        "ORDER BY count DESC",
+        {},
+    )
+    vuln_by_severity = {
+        (row[0] if row else "unknown"): (row[1] if row and len(row) > 1 else 0)
+        for row in vuln_result
+    }
+
+    license_result = service.execute_query(
+        "MATCH (l:License) "
+        "RETURN l.risk_category AS category, count(l) AS count "
+        "ORDER BY count DESC",
+        {},
+    )
+    license_by_risk = {
+        (row[0] if row else "unknown"): (row[1] if row and len(row) > 1 else 0)
+        for row in license_result
+    }
+
+    policy_result = service.execute_query(
+        "MATCH (a:PolicyAnnotation) "
+        "RETURN a.type AS type, count(a) AS count "
+        "ORDER BY count DESC",
+        {},
+    )
+    policy_by_type = {
+        (row[0] if row else "unknown"): (row[1] if row and len(row) > 1 else 0)
+        for row in policy_result
+    }
+
+    pkg_result = service.execute_query(
+        "MATCH (v:Version) WHERE v.package_url IS NOT NULL "
+        "RETURN count(DISTINCT v.package_url) AS total",
+        {},
+    )
+    total_packages = (
+        pkg_result[0][0] if pkg_result and pkg_result[0] else 0
+    )
+
+    data = {
+        "total_packages": total_packages,
+        "vulnerabilities_by_severity": vuln_by_severity,
+        "licenses_by_risk_category": license_by_risk,
+        "policy_annotations_by_type": policy_by_type,
+    }
+
+    return api_response(data)
+
+
 @bp.route("/analysis/remediation-priorities")
 @auth_required
 def remediation_priorities() -> tuple[Response, int]:
@@ -526,6 +677,129 @@ def remediation_priorities() -> tuple[Response, int]:
     ), 200
 
 
+@bp.route("/analysis/risk-propagation-impact")
+@auth_required
+def risk_propagation_impact() -> tuple[Response, int]:
+    """What-if simulation: if package X drops to score Y, what apps are impacted?
+
+    Query params:
+        purl: Required. Package URL to simulate.
+        simulated_score: Required. Simulated trust score (0-10).
+
+    Returns:
+        JSON: list of {purl, current_effective, simulated_effective, impact}.
+    """
+    purl = request.args.get("purl", "").strip()
+    err = _purl_error(purl)
+    if err:
+        return err
+
+    if "simulated_score" not in request.args:
+        return jsonify({"error": "simulated_score query parameter is required"}), 400
+
+    simulated_score = validate_float_param(
+        request.args.get("simulated_score"),
+        default=0.0,
+        min_val=0.0,
+        max_val=10.0,
+    )
+
+    service = get_falkordb_service()
+    impacts = service.simulate_risk_propagation(purl, simulated_score)
+
+    return jsonify(
+        {
+            "purl": purl,
+            "simulated_score": simulated_score,
+            "impacts": impacts,
+            "count": len(impacts),
+        }
+    ), 200
+
+
+@bp.route("/sbom/<record_id>")
+@auth_required
+def get_sbom_record(record_id: str) -> tuple[Response, int]:
+    """Return a single SBOM record by ID with linked version purls."""
+    if not validate_record_id(record_id):
+        return jsonify({"error": "Invalid record_id (expected UUID)"}), 400
+
+    service = get_falkordb_service()
+    record = service.get_sbom_record_by_id(record_id)
+
+    if record is None:
+        return jsonify({"error": "SBOM record not found"}), 404
+
+    return jsonify(record), 200
+
+
+@bp.route("/patch-plan/evaluate", methods=["POST"])
+@auth_required
+def evaluate_patch_plan() -> tuple[Response, int]:
+    """Evaluate a proposed dependency update for vulnerability impact.
+
+    Body: {purl, current_version, target_version}.
+    Returns which vulnerabilities are resolved and which are added.
+    """
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+
+    errors = validate_json_body(body, PATCH_PLAN_EVALUATE_SCHEMA)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
+
+    purl = body["purl"]
+    current_version = body["current_version"]
+    target_version = body["target_version"]
+
+    service = get_falkordb_service()
+    result = service.evaluate_patch_plan(
+        purl=purl,
+        current_version=current_version,
+        target_version=target_version,
+    )
+
+    return jsonify(result), 200
+
+
+@bp.route("/vex/auto-stub", methods=["POST"])
+@auth_required
+def vex_auto_stub() -> tuple[Response, int]:
+    """Auto-generate VEX not_affected stubs for packages with vulns but no VEX.
+
+    Body: {purl, justification?}.
+    """
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+
+    errors = validate_json_body(body, VEX_AUTO_STUB_SCHEMA)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
+
+    purl = body["purl"]
+    justification = body.get("justification")
+
+    service = get_falkordb_service()
+    version_exists = service.execute_query(
+        "MATCH (v:Version {package_url: $purl}) RETURN 1 LIMIT 1",
+        {"purl": purl},
+    )
+    if not version_exists:
+        return jsonify({"error": "Package not found in graph"}), 404
+
+    created = service.generate_vex_auto_stubs(purl, justification)
+
+    return jsonify(
+        {
+            "purl": purl,
+            "created": created,
+            "count": len(created),
+        }
+    ), 201
+
+
 @bp.route("/package/<path:purl>/trust-check")
 @auth_required
 def package_trust_check(purl: str) -> tuple[Response, int]:
@@ -538,7 +812,7 @@ def package_trust_check(purl: str) -> tuple[Response, int]:
     Returns:
         JSON: {pass: bool, effective_score, confidence, reason}.
     """
-    err = _validate_purl(purl)
+    err = _purl_error(purl)
     if err:
         return err
 
@@ -585,3 +859,319 @@ def package_trust_check(purl: str) -> tuple[Response, int]:
             "reason": reason,
         }
     ), 200
+
+
+@bp.route("/package/<path:purl>")
+@auth_required
+def package_metadata(purl: str) -> tuple[Response, int]:
+    """Return all metadata for a package: versions, vulns, licenses, scorecard, policy."""
+    err = _purl_error(purl)
+    if err:
+        return err
+
+    service = get_falkordb_service()
+    version_info = service.find_version_by_purl(purl)
+    if not version_info:
+        return jsonify({"error": "Package not found"}), 404
+
+    vulns = service.get_package_vulnerabilities(purl, include_dependencies=False)
+    licenses = service.get_package_licenses(purl)
+    trust_score = service.get_trust_score_for_purl(purl)
+    policy = service.check_policy(purl)
+    vex = service.get_vex_for_package(purl)
+
+    data = {
+        "purl": purl,
+        "vulnerabilities": vulns,
+        "licenses": licenses,
+        "trust_score": trust_score,
+        "policy": policy,
+        "vex_statements": vex,
+    }
+
+    return api_response(data)
+
+
+@bp.route("/openapi.json")
+@auth_required
+def openapi_spec() -> tuple[Response, int]:
+    """Return OpenAPI 3.1 specification for the v1 API."""
+    spec = {
+        "openapi": "3.1.0",
+        "info": {
+            "title": "SBOM Graph API",
+            "version": "1.0.0",
+            "description": (
+                "Programmatic API for querying SBOM dependency graphs, "
+                "vulnerabilities, licenses, trust scores, and policy annotations."
+            ),
+        },
+        "servers": [{"url": "/api/v1"}],
+        "security": [{"bearerAuth": []}],
+        "components": {
+            "securitySchemes": {
+                "bearerAuth": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "bearerFormat": "JWT",
+                }
+            }
+        },
+        "paths": _build_openapi_paths(),
+    }
+    return jsonify(spec), 200
+
+
+def _build_openapi_paths() -> dict:
+    """Build OpenAPI paths from documented endpoints."""
+    return {
+        "/package/{purl}": {
+            "get": {
+                "summary": "Get all metadata for a package",
+                "parameters": [
+                    {
+                        "name": "purl",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {"200": {"description": "Package metadata"}},
+            }
+        },
+        "/package/{purl}/vulns": {
+            "get": {
+                "summary": "Get vulnerabilities for a package",
+                "parameters": [
+                    {
+                        "name": "purl",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "include_dependencies",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": ["true", "false"],
+                        },
+                    },
+                ],
+                "responses": {"200": {"description": "Vulnerability list"}},
+            }
+        },
+        "/package/{purl}/licenses": {
+            "get": {
+                "summary": "Get licenses for a package",
+                "parameters": [
+                    {
+                        "name": "purl",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {"200": {"description": "License list"}},
+            }
+        },
+        "/package/{purl}/dependencies": {
+            "get": {
+                "summary": "Get dependency tree for a package",
+                "parameters": [
+                    {
+                        "name": "purl",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "max_depth",
+                        "in": "query",
+                        "schema": {"type": "integer", "default": 10},
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "schema": {"type": "integer", "default": 0},
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "schema": {"type": "integer", "default": 100},
+                    },
+                ],
+                "responses": {
+                    "200": {"description": "Dependency tree with pagination"}
+                },
+            }
+        },
+        "/package/{purl}/dependants": {
+            "get": {
+                "summary": "Get reverse dependency tree",
+                "parameters": [
+                    {
+                        "name": "purl",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "max_depth",
+                        "in": "query",
+                        "schema": {"type": "integer", "default": 10},
+                    },
+                    {
+                        "name": "offset",
+                        "in": "query",
+                        "schema": {"type": "integer", "default": 0},
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "schema": {"type": "integer", "default": 100},
+                    },
+                ],
+                "responses": {
+                    "200": {"description": "Dependants list with pagination"}
+                },
+            }
+        },
+        "/package/{purl}/trust-score": {
+            "get": {
+                "summary": "Get trust score breakdown",
+                "parameters": [
+                    {
+                        "name": "purl",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {"200": {"description": "Trust score data"}},
+            }
+        },
+        "/package/{purl}/trust-check": {
+            "get": {
+                "summary": "CI/CD gate: check trust score thresholds",
+                "parameters": [
+                    {
+                        "name": "purl",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "min_score",
+                        "in": "query",
+                        "schema": {"type": "number", "default": 5.0},
+                    },
+                    {
+                        "name": "min_confidence",
+                        "in": "query",
+                        "schema": {"type": "number", "default": 0.25},
+                    },
+                ],
+                "responses": {"200": {"description": "Trust check result"}},
+            }
+        },
+        "/package/{purl}/policy": {
+            "get": {
+                "summary": "Check policy status for CI/CD gate",
+                "parameters": [
+                    {
+                        "name": "purl",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {"200": {"description": "Policy check result"}},
+            }
+        },
+        "/package/{purl}/vex": {
+            "get": {
+                "summary": "Get VEX statements for a package",
+                "parameters": [
+                    {
+                        "name": "purl",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    }
+                ],
+                "responses": {"200": {"description": "VEX statements"}},
+            }
+        },
+        "/analysis/critical-dependencies": {
+            "get": {
+                "summary": "Get most critical dependencies",
+                "parameters": [
+                    {
+                        "name": "sort",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": ["fan_in", "trust_score"],
+                            "default": "fan_in",
+                        },
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "schema": {"type": "integer", "default": 20},
+                    },
+                ],
+                "responses": {
+                    "200": {"description": "Critical dependency list"}
+                },
+            }
+        },
+        "/analysis/risk-summary": {
+            "get": {
+                "summary": "Get aggregate risk metrics",
+                "responses": {"200": {"description": "Risk summary data"}},
+            }
+        },
+        "/analysis/trust-score-distribution": {
+            "get": {
+                "summary": "Get trust score histogram",
+                "responses": {"200": {"description": "Distribution data"}},
+            }
+        },
+        "/analysis/remediation-priorities": {
+            "get": {
+                "summary": "Get remediation priority ranking",
+                "parameters": [
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "schema": {"type": "integer", "default": 20},
+                    },
+                ],
+                "responses": {"200": {"description": "Priority list"}},
+            }
+        },
+        "/analysis/risk-propagation-impact": {
+            "get": {
+                "summary": "What-if risk propagation simulation",
+                "parameters": [
+                    {
+                        "name": "purl",
+                        "in": "query",
+                        "required": True,
+                        "schema": {"type": "string"},
+                    },
+                    {
+                        "name": "simulated_score",
+                        "in": "query",
+                        "required": True,
+                        "schema": {"type": "number"},
+                    },
+                ],
+                "responses": {
+                    "200": {"description": "Propagation impact data"}
+                },
+            }
+        },
+    }

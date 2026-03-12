@@ -130,6 +130,65 @@ POLICY_ANNOTATION_SCHEMA: dict[str, Any] = {
 }
 
 # ============================================================================
+# Patch Plan Evaluate Schema
+# ============================================================================
+PATCH_PLAN_EVALUATE_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/inbound/patch-plan-evaluate",
+    "title": "Patch Plan Evaluate",
+    "description": "Evaluate a proposed dependency update for vulnerability impact",
+    "type": "object",
+    "required": ["purl", "current_version", "target_version"],
+    "properties": {
+        "purl": {
+            "type": "string",
+            "pattern": "^pkg:",
+            "maxLength": _MAX_PURL_LENGTH,
+            "description": "Package URL (without version for comparison)",
+        },
+        "current_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Current version being used",
+        },
+        "target_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "Target version to upgrade to",
+        },
+    },
+    "additionalProperties": False,
+}
+
+# ============================================================================
+# VEX Auto-Stub Schema
+# ============================================================================
+VEX_AUTO_STUB_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/inbound/vex-auto-stub",
+    "title": "VEX Auto-Stub",
+    "description": "Auto-generate VEX not_affected stubs for packages with vulns",
+    "type": "object",
+    "required": ["purl"],
+    "properties": {
+        "purl": {
+            "type": "string",
+            "pattern": "^pkg:",
+            "maxLength": _MAX_PURL_LENGTH,
+            "description": "Package URL to generate VEX stubs for",
+        },
+        "justification": {
+            "type": "string",
+            "maxLength": _MAX_JUSTIFICATION_LENGTH,
+            "description": "Optional justification for not_affected status",
+        },
+    },
+    "additionalProperties": False,
+}
+
+# ============================================================================
 # Contact Create Schema
 # ============================================================================
 CONTACT_CREATE_SCHEMA: dict[str, Any] = {
@@ -194,5 +253,15 @@ INBOUND_SCHEMA_INDEX: dict[str, dict[str, Any]] = {
         "schema": CONTACT_CREATE_SCHEMA,
         "endpoint": "/api/v1/contacts",
         "description": "Point-of-contact creation request",
+    },
+    "patch-plan-evaluate": {
+        "schema": PATCH_PLAN_EVALUATE_SCHEMA,
+        "endpoint": "/api/v1/patch-plan/evaluate",
+        "description": "Evaluate dependency update for vulnerability impact",
+    },
+    "vex-auto-stub": {
+        "schema": VEX_AUTO_STUB_SCHEMA,
+        "endpoint": "/api/v1/vex/auto-stub",
+        "description": "Auto-generate VEX not_affected stubs",
     },
 }

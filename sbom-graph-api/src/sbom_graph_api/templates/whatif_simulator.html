@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/report.css') }}">
+    <style>
+        .whatif-form { display: flex; flex-wrap: wrap; gap: 15px; align-items: flex-end; margin-bottom: 20px; }
+        .whatif-form label { display: block; font-weight: bold; margin-bottom: 5px; }
+        .whatif-form input { padding: 8px 12px; border-radius: 5px; border: 1px solid #ccc; min-width: 300px; }
+        .whatif-form button { padding: 8px 20px; background: #366092; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        .whatif-form button:hover { background: #254a73; }
+        .whatif-form button:disabled { background: #999; cursor: not-allowed; }
+        #resultTable { margin-top: 20px; }
+        .delta-positive { color: #d32f2f; }
+        .delta-zero { color: #666; }
+    </style>
+</head>
+<body>
+    <h1>{{ title }}</h1>
+
+    <div class="whatif-form">
+        <div>
+            <label for="purlInput">Package PURL</label>
+            <input type="text" id="purlInput" placeholder="pkg:maven/org/example@1.0.0">
+        </div>
+        <div>
+            <label for="scoreInput">Simulated Score (0-10)</label>
+            <input type="number" id="scoreInput" min="0" max="10" step="0.1" value="5" placeholder="5.0">
+        </div>
+        <div>
+            <button type="button" id="submitBtn">Simulate</button>
+        </div>
+    </div>
+
+    <div id="errorMsg" style="color:#d32f2f; margin-bottom:15px; display:none;"></div>
+
+    <div id="resultSection" style="display:none;">
+        <h3>Projected Impact</h3>
+        <div class="table-container">
+            <table id="resultTable">
+                <thead>
+                    <tr>
+                        <th>Affected Application</th>
+                        <th>Current Effective Score</th>
+                        <th>Simulated Effective Score</th>
+                        <th>Delta</th>
+                    </tr>
+                </thead>
+                <tbody id="resultBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            const apiBase = '{{ api_base }}';
+            const submitBtn = document.getElementById('submitBtn');
+            const purlInput = document.getElementById('purlInput');
+            const scoreInput = document.getElementById('scoreInput');
+            const errorMsg = document.getElementById('errorMsg');
+            const resultSection = document.getElementById('resultSection');
+            const resultBody = document.getElementById('resultBody');
+
+            function showError(msg) {
+                errorMsg.textContent = msg;
+                errorMsg.style.display = 'block';
+                resultSection.style.display = 'none';
+            }
+
+            function hideError() {
+                errorMsg.style.display = 'none';
+            }
+
+            function scoreClass(s) {
+                if (s >= 7) return 'trust-score-high';
+                if (s >= 4) return 'trust-score-medium';
+                return 'trust-score-low';
+            }
+
+            submitBtn.addEventListener('click', function() {
+                const purl = purlInput.value.trim();
+                const score = parseFloat(scoreInput.value);
+                if (!purl) {
+                    showError('Please enter a package PURL.');
+                    return;
+                }
+                if (isNaN(score) || score < 0 || score > 10) {
+                    showError('Please enter a valid score between 0 and 10.');
+                    return;
+                }
+
+                submitBtn.disabled = true;
+                hideError();
+
+                const url = apiBase + '/analysis/risk-propagation-impact?purl=' +
+                    encodeURIComponent(purl) + '&simulated_score=' + score;
+
+                fetch(url)
+                    .then(r => r.json())
+                    .then(data => {
+                        submitBtn.disabled = false;
+                        if (data.error) {
+                            showError(data.error);
+                            return;
+                        }
+                        const impacts = data.impacts || [];
+                        resultBody.innerHTML = impacts.map(function(i) {
+                            const delta = (i.impact || 0).toFixed(2);
+                            const deltaCls = delta > 0 ? 'delta-positive' : 'delta-zero';
+                            const curScore = i.current_effective != null ? i.current_effective.toFixed(1) : '-';
+                            const simScore = i.simulated_effective != null ? i.simulated_effective.toFixed(1) : '-';
+                            const purlEsc = (i.purl || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                            return '<tr><td><code>' + purlEsc + '</code></td><td><span class="trust-score ' +
+                                scoreClass(i.current_effective) + '">' + curScore + '</span></td><td><span class="trust-score ' +
+                                scoreClass(i.simulated_effective) + '">' + simScore + '</span></td><td class="' +
+                                deltaCls + '">' + delta + '</td></tr>';
+                        }).join('');
+                        resultSection.style.display = 'block';
+                    })
+                    .catch(function(err) {
+                        submitBtn.disabled = false;
+                        showError('Request failed. Ensure you are authenticated.');
+                    });
+            });
+        })();
+    </script>
+</body>
+</html>

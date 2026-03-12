@@ -15,7 +15,9 @@ from sbom_graph_enrichment.certifiers.ossindex import (
 )
 
 
-def _mock_response(status_code: int, json_data: list | dict | None = None) -> httpx.Response:
+def _mock_response(
+    status_code: int, json_data: list | dict | None = None
+) -> httpx.Response:
     request = httpx.Request("POST", "https://test.example.com")
     return httpx.Response(status_code, json=json_data, request=request)
 
@@ -74,7 +76,9 @@ class TestOSSIndexCertifier:
         mock_client.post.return_value = mock_response
 
         certifier = OSSIndexCertifier()
-        findings = certifier.enrich("pkg:maven/org.example/safe@1.0", client=mock_client)
+        findings = certifier.enrich(
+            "pkg:maven/org.example/safe@1.0", client=mock_client
+        )
 
         assert findings == []
 
@@ -100,7 +104,9 @@ class TestEnrichBatch:
         mock_client = MagicMock(spec=httpx.Client)
         mock_client.post.return_value = mock_response
 
-        findings = enrich_batch(["pkg:npm/foo@1.0", "pkg:npm/bar@2.0"], client=mock_client)
+        findings = enrich_batch(
+            ["pkg:npm/foo@1.0", "pkg:npm/bar@2.0"], client=mock_client
+        )
 
         assert len(findings) == 1
         assert findings[0].data["severity"] == "critical"
@@ -112,7 +118,10 @@ class TestEnrichBatch:
         mock_client.post.assert_not_called()
 
     @patch("sbom_graph_enrichment.certifiers.ossindex._bucket")
-    @patch("sbom_graph_enrichment.certifiers.ossindex._get_auth", return_value=("user", "token"))
+    @patch(
+        "sbom_graph_enrichment.certifiers.ossindex._get_auth",
+        return_value=("user", "token"),
+    )
     def test_uses_auth_when_available(
         self, mock_auth: MagicMock, mock_bucket: MagicMock
     ) -> None:

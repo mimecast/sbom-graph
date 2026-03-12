@@ -53,9 +53,7 @@ class TestValidateLabel:
 
     def test_injection_attempt_rejected(self):
         with pytest.raises(ValueError, match="Invalid node label"):
-            Persistence._validate_label(
-                "Library}) RETURN n //", ALLOWED_PROJECT_TYPES
-            )
+            Persistence._validate_label("Library}) RETURN n //", ALLOWED_PROJECT_TYPES)
 
 
 class TestSafeIdentifierRegex:
@@ -96,16 +94,12 @@ class TestAppendToMainFields:
     """Tests for Persistence._append_to_main_fields."""
 
     def test_adds_field_when_value_present(self):
-        main_fields, params = Persistence._append_to_main_fields(
-            "name", "test", {}, ""
-        )
+        main_fields, params = Persistence._append_to_main_fields("name", "test", {}, "")
         assert "name: $name" in main_fields
         assert params["name"] == "test"
 
     def test_skips_field_when_value_is_none(self):
-        main_fields, params = Persistence._append_to_main_fields(
-            "name", None, {}, ""
-        )
+        main_fields, params = Persistence._append_to_main_fields("name", None, {}, "")
         assert main_fields == ""
         assert "name" not in params
 
@@ -298,15 +292,11 @@ class TestCreateProjectVersion:
         first_call_query = str(mock_graph.query.call_args_list[0])
         assert "Library" in first_call_query
 
-    def test_scan_ids_appended(
-        self, mock_persistence, mock_graph, sample_version
-    ):
+    def test_scan_ids_appended(self, mock_persistence, mock_graph, sample_version):
         mock_persistence.create_project_version(sample_version)
         assert mock_graph.query.call_count >= 2
 
-    def test_no_scan_id_append_when_missing_name(
-        self, mock_persistence, mock_graph
-    ):
+    def test_no_scan_id_append_when_missing_name(self, mock_persistence, mock_graph):
         v = Version()
         v.version = None
         p = Project()
@@ -421,9 +411,7 @@ class TestCreateDependency:
         p.purl = "pkg:npm/no-group-lib@1.0"
         parent.project = p
 
-        mock_persistence.create_dependency(
-            parent=parent, child=sample_library_version
-        )
+        mock_persistence.create_dependency(parent=parent, child=sample_library_version)
         mock_graph.query.assert_called_once()
         call_kwargs = mock_graph.query.call_args
         assert "parent_purl_prefix" in call_kwargs.kwargs["params"]
@@ -455,9 +443,7 @@ class TestCreateDependency:
         p.purl = None
         parent.project = p
 
-        mock_persistence.create_dependency(
-            parent=parent, child=sample_library_version
-        )
+        mock_persistence.create_dependency(parent=parent, child=sample_library_version)
         mock_graph.query.assert_not_called()
 
     def test_child_no_group_no_purl_returns_early(
@@ -619,18 +605,39 @@ class TestGetVersionsByPurl:
     def test_returns_structured_rows(self, mock_persistence, mock_graph):
         mock_graph.query.return_value = MagicMock(
             result_set=[
-                {"name": "1.0.0", "project_name": "my-lib", "project_group": "com.example"},
-                {"name": "2.0.0", "project_name": "my-lib", "project_group": "com.example"},
+                {
+                    "name": "1.0.0",
+                    "project_name": "my-lib",
+                    "project_group": "com.example",
+                },
+                {
+                    "name": "2.0.0",
+                    "project_name": "my-lib",
+                    "project_group": "com.example",
+                },
             ]
         )
-        result = mock_persistence.get_versions_by_purl("pkg:maven/com.example/my-lib@1.0.0")
+        result = mock_persistence.get_versions_by_purl(
+            "pkg:maven/com.example/my-lib@1.0.0"
+        )
         assert len(result) == 2
-        assert result[0] == {"name": "1.0.0", "project_name": "my-lib", "project_group": "com.example"}
-        assert result[1] == {"name": "2.0.0", "project_name": "my-lib", "project_group": "com.example"}
+        assert result[0] == {
+            "name": "1.0.0",
+            "project_name": "my-lib",
+            "project_group": "com.example",
+        }
+        assert result[1] == {
+            "name": "2.0.0",
+            "project_name": "my-lib",
+            "project_group": "com.example",
+        }
 
         query_str = mock_graph.query.call_args.kwargs["q"]
         assert "package_url" in query_str
-        assert mock_graph.query.call_args.kwargs["params"]["purl"] == "pkg:maven/com.example/my-lib@1.0.0"
+        assert (
+            mock_graph.query.call_args.kwargs["params"]["purl"]
+            == "pkg:maven/com.example/my-lib@1.0.0"
+        )
 
     def test_returns_empty_for_no_matches(self, mock_persistence, mock_graph):
         mock_graph.query.return_value = MagicMock(result_set=[])
@@ -673,9 +680,7 @@ class TestUpdateDefectEnrichment:
         mock_graph.query.assert_not_called()
 
     def test_without_aliases(self, mock_persistence, mock_graph):
-        mock_persistence.update_defect_enrichment(
-            defect_id="CVE-2024-1", source="osv"
-        )
+        mock_persistence.update_defect_enrichment(defect_id="CVE-2024-1", source="osv")
         mock_graph.query.assert_called_once()
         params = mock_graph.query.call_args.kwargs["params"]
         assert "aliases" not in params
@@ -997,29 +1002,29 @@ class TestCentralityScores:
 class TestCreateIndexes:
     """Tests for Persistence.create_indexes."""
 
-    def test_creates_thirteen_indexes(self, mock_persistence, mock_graph):
+    def test_creates_fourteen_indexes(self, mock_persistence, mock_graph):
         mock_persistence.create_indexes()
-        assert mock_graph.query.call_count == 13
+        assert mock_graph.query.call_count == 14
 
     def test_handles_already_exists_gracefully(self, mock_persistence, mock_graph):
         mock_graph.query.side_effect = Exception("Index already exists")
         mock_persistence.create_indexes()
-        assert mock_graph.query.call_count == 13
+        assert mock_graph.query.call_count == 14
 
     def test_handles_equivalent_index_gracefully(self, mock_persistence, mock_graph):
         mock_graph.query.side_effect = Exception("An equivalent index already exists")
         mock_persistence.create_indexes()
-        assert mock_graph.query.call_count == 13
+        assert mock_graph.query.call_count == 14
 
-    def test_logs_warning_on_unexpected_error(
+    def test_logs_debug_on_unexpected_error(
         self, mock_persistence, mock_graph, caplog
     ):
         mock_graph.query.side_effect = Exception("Connection refused")
         import logging
 
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.DEBUG):
             mock_persistence.create_indexes()
-        assert any("Failed to create index" in msg for msg in caplog.messages)
+        assert any("already exists or could not be created" in msg for msg in caplog.messages)
 
     def test_mixed_success_and_failure(self, mock_persistence, mock_graph):
         mock_graph.query.side_effect = [
@@ -1036,9 +1041,10 @@ class TestCreateIndexes:
             None,
             None,
             None,
+            None,
         ]
         mock_persistence.create_indexes()
-        assert mock_graph.query.call_count == 13
+        assert mock_graph.query.call_count == 14
 
 
 # ---------------------------------------------------------------------------
@@ -1193,6 +1199,255 @@ class TestGetDependencyGraphForPropagation:
     def test_empty_graph(self, mock_persistence, mock_graph):
         mock_graph.query.return_value = MagicMock(result_set=[])
         assert mock_persistence.get_dependency_graph_for_propagation() == []
+
+
+# ---------------------------------------------------------------------------
+# SBOM Record persistence
+# ---------------------------------------------------------------------------
+
+
+class TestCreateSbomRecord:
+    """Tests for Persistence.create_sbom_record."""
+
+    def test_creates_sbom_record_with_required_fields(
+        self, mock_persistence, mock_graph
+    ):
+        mock_persistence.create_sbom_record(
+            record_id="550e8400-e29b-41d4-a716-446655440000",
+            sbom_format="cyclonedx",
+            ingested_at="2026-03-11T12:00:00Z",
+            source="webhook",
+        )
+        mock_graph.query.assert_called_once()
+        q = mock_graph.query.call_args.kwargs["q"]
+        assert "SBOMRecord" in q
+        assert "MERGE" in q
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["record_id"] == "550e8400-e29b-41d4-a716-446655440000"
+        assert params["format"] == "cyclonedx"
+        assert params["source"] == "webhook"
+
+    def test_creates_sbom_record_with_all_optional_fields(
+        self, mock_persistence, mock_graph
+    ):
+        mock_persistence.create_sbom_record(
+            record_id="550e8400-e29b-41d4-a716-446655440001",
+            sbom_format="spdx",
+            ingested_at="2026-03-11T12:00:00Z",
+            source="api_upload",
+            tool_name="trivy",
+            tool_version="0.50.0",
+            serial_number="urn:uuid:abc-123",
+            document_hash="a" * 64,
+        )
+        mock_graph.query.assert_called_once()
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["tool_name"] == "trivy"
+        assert params["tool_version"] == "0.50.0"
+        assert params["serial_number"] == "urn:uuid:abc-123"
+        assert params["document_hash"] == "a" * 64
+
+    def test_empty_record_id_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.create_sbom_record(
+            record_id="",
+            sbom_format="cyclonedx",
+            ingested_at="2026-03-11T12:00:00Z",
+            source="webhook",
+        )
+        mock_graph.query.assert_not_called()
+
+
+class TestLinkVersionToSbomRecord:
+    """Tests for Persistence.link_version_to_sbom_record."""
+
+    def test_creates_produced_by_sbom_edge(self, mock_persistence, mock_graph):
+        mock_persistence.link_version_to_sbom_record(
+            purl="pkg:maven/com.example/lib@1.0",
+            record_id="550e8400-e29b-41d4-a716-446655440000",
+        )
+        mock_graph.query.assert_called_once()
+        q = mock_graph.query.call_args.kwargs["q"]
+        assert "PRODUCED_BY_SBOM" in q
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["purl"] == "pkg:maven/com.example/lib@1.0"
+        assert params["record_id"] == "550e8400-e29b-41d4-a716-446655440000"
+
+    def test_empty_purl_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.link_version_to_sbom_record(
+            purl="",
+            record_id="550e8400-e29b-41d4-a716-446655440000",
+        )
+        mock_graph.query.assert_not_called()
+
+    def test_empty_record_id_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.link_version_to_sbom_record(
+            purl="pkg:maven/a@1",
+            record_id="",
+        )
+        mock_graph.query.assert_not_called()
+
+
+class TestLinkVersionToSbomRecordByName:
+    """Tests for Persistence.link_version_to_sbom_record_by_name."""
+
+    def test_creates_edge_with_project_group(self, mock_persistence, mock_graph):
+        mock_persistence.link_version_to_sbom_record_by_name(
+            project_name="my-lib",
+            project_group="com.example",
+            version_name="1.0.0",
+            record_id="550e8400-e29b-41d4-a716-446655440000",
+        )
+        mock_graph.query.assert_called_once()
+        q = mock_graph.query.call_args.kwargs["q"]
+        assert "PRODUCED_BY_SBOM" in q
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["project_name"] == "my-lib"
+        assert params["project_group"] == "com.example"
+        assert params["version_name"] == "1.0.0"
+        assert params["record_id"] == "550e8400-e29b-41d4-a716-446655440000"
+
+    def test_creates_edge_without_project_group(self, mock_persistence, mock_graph):
+        mock_persistence.link_version_to_sbom_record_by_name(
+            project_name="my-lib",
+            project_group=None,
+            version_name="1.0.0",
+            record_id="550e8400-e29b-41d4-a716-446655440000",
+        )
+        mock_graph.query.assert_called_once()
+        q = mock_graph.query.call_args.kwargs["q"]
+        assert "PRODUCED_BY_SBOM" in q
+
+    def test_empty_record_id_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.link_version_to_sbom_record_by_name(
+            project_name="my-lib",
+            project_group="com.example",
+            version_name="1.0.0",
+            record_id="",
+        )
+        mock_graph.query.assert_not_called()
+
+
+class TestGetSbomInventory:
+    """Tests for Persistence.get_sbom_inventory."""
+
+    def test_returns_records_with_version_count(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(
+            result_set=[
+                {
+                    "record_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "format": "cyclonedx",
+                    "ingested_at": "2026-03-11T12:00:00Z",
+                    "source": "webhook",
+                    "version_count": 5,
+                },
+            ]
+        )
+        result = mock_persistence.get_sbom_inventory()
+        assert len(result) == 1
+        assert result[0]["record_id"] == "550e8400-e29b-41d4-a716-446655440000"
+        assert result[0]["version_count"] == 5
+
+    def test_empty_graph(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(result_set=[])
+        assert mock_persistence.get_sbom_inventory() == []
+
+
+class TestGetSbomCoverage:
+    """Tests for Persistence.get_sbom_coverage."""
+
+    def test_returns_coverage_stats(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(
+            result_set=[
+                {
+                    "total_projects": 100,
+                    "with_recent_sbom": 60,
+                    "with_stale_sbom": 20,
+                    "with_no_sbom": 20,
+                },
+            ]
+        )
+        result = mock_persistence.get_sbom_coverage()
+        assert "total_projects" in result
+        assert "with_recent_sbom" in result
+        assert "with_stale_sbom" in result
+        assert "with_no_sbom" in result
+
+    def test_empty_graph_returns_zeros(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(
+            result_set=[
+                {
+                    "total_projects": 0,
+                    "with_recent_sbom": 0,
+                    "with_stale_sbom": 0,
+                    "with_no_sbom": 0,
+                },
+            ]
+        )
+        result = mock_persistence.get_sbom_coverage()
+        assert result["total_projects"] == 0
+
+
+class TestGetSbomRecord:
+    """Tests for Persistence.get_sbom_record."""
+
+    def test_returns_record_with_linked_purls(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(
+            result_set=[
+                {
+                    "record_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "format": "cyclonedx",
+                    "ingested_at": "2026-03-11T12:00:00Z",
+                    "source": "webhook",
+                    "purls": ["pkg:maven/a/b@1.0", "pkg:maven/c/d@2.0"],
+                },
+            ]
+        )
+        result = mock_persistence.get_sbom_record(
+            "550e8400-e29b-41d4-a716-446655440000"
+        )
+        assert result is not None
+        assert result["record_id"] == "550e8400-e29b-41d4-a716-446655440000"
+        assert "purls" in result
+
+    def test_returns_none_when_not_found(self, mock_persistence, mock_graph):
+        mock_graph.query.return_value = MagicMock(result_set=[])
+        result = mock_persistence.get_sbom_record("nonexistent-id")
+        assert result is None
+
+    def test_empty_record_id_returns_none(self, mock_persistence, mock_graph):
+        result = mock_persistence.get_sbom_record("")
+        assert result is None
+        mock_graph.query.assert_not_called()
+
+
+class TestLinkSourceRepoToTrustScore:
+    """Tests for Persistence.link_source_repo_to_trust_score."""
+
+    def test_creates_has_trust_score_edge(self, mock_persistence, mock_graph):
+        mock_persistence.link_source_repo_to_trust_score(
+            repo_url="https://github.com/org/repo",
+            purl="pkg:maven/org/repo@1.0",
+        )
+        mock_graph.query.assert_called_once()
+        q = mock_graph.query.call_args.kwargs["q"]
+        assert "HAS_TRUST_SCORE" in q
+        params = mock_graph.query.call_args.kwargs["params"]
+        assert params["repo_url"] == "https://github.com/org/repo"
+        assert params["purl"] == "pkg:maven/org/repo@1.0"
+
+    def test_empty_repo_url_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.link_source_repo_to_trust_score(
+            repo_url="",
+            purl="pkg:maven/a@1",
+        )
+        mock_graph.query.assert_not_called()
+
+    def test_empty_purl_returns_early(self, mock_persistence, mock_graph):
+        mock_persistence.link_source_repo_to_trust_score(
+            repo_url="https://github.com/org/repo",
+            purl="",
+        )
+        mock_graph.query.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1389,9 +1644,7 @@ class TestPersistenceInitInternalPrefixes:
 
     def test_invalid_field_raises_value_error(self, mock_graph):
         with pytest.raises(ValueError, match="Invalid internal prefix field"):
-            _make_persistence(
-                mock_graph, internal_prefixes=[("invalid_field", "test")]
-            )
+            _make_persistence(mock_graph, internal_prefixes=[("invalid_field", "test")])
 
 
 # ---------------------------------------------------------------------------

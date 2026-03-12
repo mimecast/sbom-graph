@@ -12,6 +12,7 @@ from datetime import datetime
 
 class RiskStatus(IntEnum):
     """Risk status for defects."""
+
     ACCEPTED = 2
     MITIGATED = 1
     UNKNOWN = 0
@@ -19,17 +20,20 @@ class RiskStatus(IntEnum):
 
 class DefectType(IntEnum):
     """Type of security defect."""
+
     SAST = 0
     SCA = 1
 
 
 class ProjectType(IntEnum):
     """Type of project."""
+
     Application = 0
     Library = 1
 
 
 # Nodes
+
 
 class Version:
     """Represents a specific version of a project."""
@@ -41,10 +45,10 @@ class Version:
         self.sbom_format: Optional[str] = None  # "cyclonedx" or "spdx"
 
     def __str__(self):
-        return_value = 'Version {'
+        return_value = "Version {"
         for key, value in self.__dict__.items():
             return_value += f"'{key}': '{value}', "
-        return_value += '}'
+        return_value += "}"
         return return_value
 
 
@@ -71,10 +75,10 @@ class Project:
         self.scan_id: Optional[str] = None
 
     def __str__(self):
-        return_value = 'Project {'
+        return_value = "Project {"
         for key, value in self.__dict__.items():
             return_value += f"'{key}': '{value}', "
-        return_value += '}'
+        return_value += "}"
         return return_value
 
 
@@ -98,6 +102,7 @@ class Defect:
 
 class PolicyType(str):
     """Policy annotation type for packages."""
+
     BAD = "bad"
     GOOD = "good"
     HOLD = "hold"
@@ -108,7 +113,9 @@ class PolicyType(str):
     def from_str(cls, value: str | None) -> str:
         if value and value in cls._VALID:
             return value
-        raise ValueError(f"Invalid policy type {value!r}: must be one of {sorted(cls._VALID)}")
+        raise ValueError(
+            f"Invalid policy type {value!r}: must be one of {sorted(cls._VALID)}"
+        )
 
 
 class PolicyAnnotation:
@@ -165,14 +172,20 @@ class ContactFor:
 
 class VexStatus(str):
     """VEX statement status values."""
+
     NOT_AFFECTED = "not_affected"
     AFFECTED = "affected"
     FIXED = "fixed"
     UNDER_INVESTIGATION = "under_investigation"
 
-    _VALID: frozenset[str] = frozenset({
-        NOT_AFFECTED, AFFECTED, FIXED, UNDER_INVESTIGATION,
-    })
+    _VALID: frozenset[str] = frozenset(
+        {
+            NOT_AFFECTED,
+            AFFECTED,
+            FIXED,
+            UNDER_INVESTIGATION,
+        }
+    )
 
     @classmethod
     def from_str(cls, value: str | None) -> str:
@@ -236,13 +249,15 @@ class LicenseRiskCategory(str):
     PROPRIETARY = "proprietary"
     UNKNOWN = "unknown"
 
-    _VALID: frozenset[str] = frozenset({
-        PERMISSIVE,
-        WEAK_COPYLEFT,
-        STRONG_COPYLEFT,
-        PROPRIETARY,
-        UNKNOWN,
-    })
+    _VALID: frozenset[str] = frozenset(
+        {
+            PERMISSIVE,
+            WEAK_COPYLEFT,
+            STRONG_COPYLEFT,
+            PROPRIETARY,
+            UNKNOWN,
+        }
+    )
 
     @classmethod
     def from_str(cls, value: str | None) -> str:
@@ -356,7 +371,41 @@ class VersionSource:
         self.repository: Optional[SourceRepository] = None
 
 
+class SBOMRecord:
+    """Represents an ingested SBOM document's provenance metadata.
+
+    Attributes:
+        record_id: Unique identifier (UUID, MERGE key).
+        format: SBOM format ("cyclonedx" or "spdx").
+        tool_name: Optional tool that generated the SBOM (e.g. "trivy", "syft").
+        tool_version: Optional tool version.
+        serial_number: Optional CycloneDX serialNumber.
+        ingested_at: ISO timestamp of ingestion.
+        source: Ingestion source ("webhook", "api_upload", "cli").
+        document_hash: Optional SHA-256 hash of the SBOM document.
+    """
+
+    def __init__(self):
+        self.record_id: Optional[str] = None
+        self.format: Optional[str] = None
+        self.tool_name: Optional[str] = None
+        self.tool_version: Optional[str] = None
+        self.serial_number: Optional[str] = None
+        self.ingested_at: Optional[str] = None
+        self.source: Optional[str] = None
+        self.document_hash: Optional[str] = None
+
+
+class ProducedBySBOM:
+    """Edge linking a Version to an SBOMRecord (PRODUCED_BY_SBOM)."""
+
+    def __init__(self):
+        self.version: Optional[Version] = None
+        self.sbom_record: Optional[SBOMRecord] = None
+
+
 # Edges
+
 
 class VersionDefect:
     """Edge linking a Version to a Defect it contains."""

@@ -121,7 +121,10 @@ class DepsDevCertifier(Certifier):
         package = quote(params["package"], safe="")
         version = quote(params["version"], safe="")
 
-        version_url = f"{DEPSDEV_API_BASE}/systems/{system}/packages/{package}/versions/{version}"
+        version_url = (
+            f"{DEPSDEV_API_BASE}/systems/{system}/packages/{package}/versions/"
+            f"{version}"
+        )
         resp = client.get(version_url)
 
         if resp.status_code == 404:

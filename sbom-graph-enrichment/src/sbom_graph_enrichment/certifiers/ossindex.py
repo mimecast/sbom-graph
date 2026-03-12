@@ -96,7 +96,10 @@ def enrich_batch(purls: list[str], *, client: httpx.Client) -> list[Finding]:
 
     auth = _get_auth()
     headers: dict[str, str] = {"Content-Type": "application/json"}
-    kwargs: dict[str, Any] = {"headers": headers, "json": {"coordinates": purls[:_BATCH_SIZE]}}
+    kwargs: dict[str, Any] = {
+        "headers": headers,
+        "json": {"coordinates": purls[:_BATCH_SIZE]},
+    }
     if auth:
         kwargs["auth"] = auth
 
@@ -135,7 +138,11 @@ def enrich_batch(purls: list[str], *, client: httpx.Client) -> list[Finding]:
             )
 
     if findings:
-        logger.info("OSS Index returned %d vulns for %d PURLs", len(findings), len(purls))
+        logger.info(
+            "OSS Index returned %d vulns for %d PURLs",
+            len(findings),
+            len(purls),
+        )
     return findings
 
 

@@ -61,6 +61,7 @@
         .try-form label { display: inline-block; min-width: 100px; font-size: 13px; color: #555; }
         .try-form input[type="text"],
         .try-form input[type="number"],
+        .try-form input[type="date"],
         .try-form select {
             padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px;
             font-size: 13px; margin-right: 10px; margin-bottom: 8px;
@@ -89,6 +90,7 @@
             <span class="username">{{ username }}</span>
             {% if is_admin %}
             <a href="/auth/admin/users">Manage Users</a>
+            <a href="/admin/policies">Policy Admin</a>
             {% endif %}
             <a href="/auth/tokens">API Tokens</a>
             {% if not ldap_enabled %}
@@ -112,13 +114,20 @@
         <tr><td><code>internal_only</code></td><td>boolean</td><td>false</td><td>Set to <code>true</code> to show only internal-labeled nodes</td></tr>
         <tr><td><code>latest_only</code></td><td>boolean</td><td>false</td><td>For <code>/reports/applications</code>: show only the latest version per application</td></tr>
         <tr><td><code>longest_only</code></td><td>boolean</td><td>true</td><td>For <code>/reports/dependants</code>: show only the longest paths (for vulnerability prioritization)</td></tr>
-        <tr><td><code>layout</code></td><td>string</td><td>spring/radial</td><td>Visualization layout: <code>spring</code>, <code>radial</code>, <code>shell</code>, <code>bfs</code>, <code>circular</code></td></tr>
+        <tr><td><code>layout</code></td><td>string</td><td>spring</td><td>Visualization layout: <code>spring</code>, <code>radial</code>, <code>shell</code>, <code>bfs</code>, <code>circular</code></td></tr>
         <tr><td><code>sort_by</code></td><td>string</td><td>inDegree</td><td>For <code>/reports/centrality</code>: <code>inDegree</code>, <code>outDegree</code>, <code>project_name</code>, <code>version_name</code></td></tr>
         <tr><td><code>sort_order</code></td><td>string</td><td>desc</td><td>For <code>/reports/centrality</code>: <code>asc</code> or <code>desc</code></td></tr>
         <tr><td><code>max_depth</code></td><td>integer</td><td>15</td><td>Maximum traversal depth (1-100)</td></tr>
         <tr><td><code>limit</code></td><td>integer</td><td>10000</td><td>Maximum number of results (max: 100000)</td></tr>
         <tr><td><code>height</code></td><td>string</td><td>100vh</td><td>Visualization height (CSS dimension)</td></tr>
         <tr><td><code>width</code></td><td>string</td><td>100vw</td><td>Visualization width (CSS dimension)</td></tr>
+        <tr><td><code>offset</code></td><td>integer</td><td>0</td><td>Pagination offset for API v1 list endpoints</td></tr>
+        <tr><td><code>vex_filter</code></td><td>string</td><td>all</td><td>For <code>/reports/vulnerabilities</code>: <code>all</code>, <code>hide_not_affected</code>, or <code>under_investigation</code></td></tr>
+        <tr><td><code>min_score</code></td><td>float</td><td>0</td><td>Minimum trust score filter (0-10)</td></tr>
+        <tr><td><code>min_confidence</code></td><td>float</td><td>0.25</td><td>Minimum confidence threshold for trust score gate</td></tr>
+        <tr><td><code>min_dependents</code></td><td>integer</td><td>3</td><td>For <code>/reports/risk-outliers</code>: minimum number of dependants</td></tr>
+        <tr><td><code>recent_days</code></td><td>integer</td><td>30</td><td>For <code>/reports/coverage</code>: days within which SBOM is considered fresh</td></tr>
+        <tr><td><code>repo_url</code></td><td>string</td><td>&mdash;</td><td>Source repository URL (required for source-related endpoints)</td></tr>
     </table>
 
     <h2>Visualization Endpoints</h2>
@@ -214,8 +223,8 @@
             <div class="form-row">
                 <label>Layout:</label>
                 <select id="depmulti_layout">
-                    <option value="spring">Spring (Force-Directed)</option>
-                    <option value="radial" selected>Radial Tree</option>
+                    <option value="spring" selected>Spring (Force-Directed)</option>
+                    <option value="radial">Radial Tree</option>
                     <option value="shell">Shell</option>
                     <option value="bfs">BFS Tree (Hierarchical)</option>
                     <option value="circular">Circular</option>
@@ -374,9 +383,17 @@
         <span class="method">GET</span>
         <span class="path"><a href="/reports/vulnerabilities">/reports/vulnerabilities</a></span>
         <div class="description">Report of all vulnerabilities ordered by severity with affected versions. Links to dependant visualizations and impact reports.</div>
-        <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code>, <code>vex_filter</code></div>
         <div class="try-form">
-            <label class="checkbox-label"><input type="checkbox" id="vuln_internal">Internal Only</label>
+            <div class="form-row">
+                <label>VEX Filter:</label>
+                <select id="vuln_vex_filter">
+                    <option value="">All (default)</option>
+                    <option value="hide_not_affected">Hide Not Affected</option>
+                    <option value="under_investigation">Under Investigation Only</option>
+                </select>
+                <label class="checkbox-label"><input type="checkbox" id="vuln_internal">Internal Only</label>
+            </div>
             <button onclick="goToVulnerabilities()">View Report</button>
         </div>
     </div>
@@ -395,6 +412,23 @@
                 <label class="checkbox-label"><input type="checkbox" id="vulndep_internal">Internal Only</label>
             </div>
             <button onclick="goToVulnDependants()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/reports/incident-response/{defect_id}</span>
+        <div class="description">Incident response page: blast radius graph and patch plan table for a vulnerability</div>
+        <div class="params">Params: <code>format</code>, <code>max_depth</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>CVE ID:</label><input type="text" id="incident_defect_id" placeholder="e.g., CVE-2021-44228">
+            </div>
+            <div class="form-row">
+                <label>Max Depth:</label><input type="number" id="incident_depth" placeholder="50" min="1" max="100">
+                <label class="checkbox-label"><input type="checkbox" id="incident_internal">Internal Only</label>
+            </div>
+            <button onclick="goToIncidentResponse()">View Incident Response</button>
         </div>
     </div>
 
@@ -467,6 +501,17 @@
 
     <div class="endpoint">
         <span class="method">GET</span>
+        <span class="path"><a href="/reports/enrichment-coverage">/reports/enrichment-coverage</a></span>
+        <div class="description">Enrichment coverage dashboard showing recent, stale, and never-scanned packages</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <label class="checkbox-label"><input type="checkbox" id="enrcov_internal">Internal Only</label>
+            <button onclick="goToEnrichmentCoverage()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
         <span class="path"><a href="/reports/policy-violations">/reports/policy-violations</a></span>
         <div class="description">All packages with &lsquo;bad&rsquo; policy annotations that are still in use as dependencies</div>
         <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
@@ -489,6 +534,17 @@
 
     <div class="endpoint">
         <span class="method">GET</span>
+        <span class="path"><a href="/reports/license-dashboard">/reports/license-dashboard</a></span>
+        <div class="description">Licence compliance dashboard with counts by risk category and drill-down to affected packages</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
+        <div class="try-form">
+            <label class="checkbox-label"><input type="checkbox" id="licdash_internal">Internal Only</label>
+            <button onclick="goToLicenseDashboard()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
         <span class="path"><a href="/reports/license-conflicts">/reports/license-conflicts</a></span>
         <div class="description">Projects mixing incompatible license categories in their dependency tree</div>
         <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
@@ -502,34 +558,204 @@
         <span class="method">GET</span>
         <span class="path"><a href="/reports/source-repos">/reports/source-repos</a></span>
         <div class="description">All tracked source repositories with linked package counts</div>
-        <div class="params">Params: <code>format</code></div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code></div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/source-impact">/reports/source-impact</a></span>
+        <div class="description">Source impact report: packages from a repo and downstream consumers</div>
+        <div class="params">Params: <code>repo_url</code> (required), <code>format</code>, <code>internal_only</code>, <code>max_depth</code> (default 50)</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Repo URL:</label><input type="text" id="srcimpact_url" placeholder="e.g., https://github.com/google/guava" style="width:350px;">
+            </div>
+            <div class="form-row">
+                <label>Max Depth:</label><input type="number" id="srcimpact_depth" placeholder="50" min="1" max="100">
+                <label class="checkbox-label"><input type="checkbox" id="srcimpact_internal">Internal Only</label>
+            </div>
+            <button onclick="goToSourceImpact()">View Report</button>
+        </div>
+    </div>
+
+    <h2>Trust Score Reports</h2>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/trust-scores">/reports/trust-scores</a></span>
+        <div class="description">All packages with trust score columns (direct, effective, confidence)</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code>, <code>min_score</code>, <code>sort_by</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Min Score:</label><input type="number" id="ts_min_score" placeholder="0" min="0" max="10" step="0.1">
+                <label>Sort By:</label>
+                <select id="ts_sort">
+                    <option value="effective_score">Effective Score</option>
+                    <option value="direct_score">Direct Score</option>
+                    <option value="confidence">Confidence</option>
+                </select>
+                <label class="checkbox-label"><input type="checkbox" id="ts_internal">Internal Only</label>
+            </div>
+            <button onclick="goToTrustScores()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/trust-score-gaps">/reports/trust-score-gaps</a></span>
+        <div class="description">Packages with low confidence (gaps in trust score data)</div>
+        <div class="params">Params: <code>format</code>, <code>limit</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Limit:</label><input type="number" id="tsg_limit" placeholder="100" min="1" max="10000">
+            </div>
+            <button onclick="goToTrustScoreGaps()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/trust-score-heatmap">/reports/trust-score-heatmap</a></span>
+        <div class="description">Colour-coded heatmap grid by score category</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code>, <code>limit</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Limit:</label><input type="number" id="tsh_limit" placeholder="200" min="1" max="10000">
+                <label class="checkbox-label"><input type="checkbox" id="tsh_internal">Internal Only</label>
+            </div>
+            <button onclick="goToTrustScoreHeatmap()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/risk-propagation-graph">/reports/risk-propagation-graph</a></span>
+        <div class="description">Risk propagation network (vis.js) with nodes sized by fan-in, coloured by score</div>
+        <div class="params">Params: <code>internal_only</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label class="checkbox-label"><input type="checkbox" id="rpg_internal">Internal Only</label>
+            </div>
+            <button onclick="goToRiskPropGraph()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/application-risk-dashboard">/reports/application-risk-dashboard</a></span>
+        <div class="description">Per-application supply-chain risk with direct/transitive dep counts</div>
+        <div class="params">Params: <code>format</code>, <code>internal_only</code>, <code>limit</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Limit:</label><input type="number" id="ard_limit" placeholder="100" min="1" max="10000">
+                <label class="checkbox-label"><input type="checkbox" id="ard_internal">Internal Only</label>
+            </div>
+            <button onclick="goToAppRiskDashboard()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/reports/risk-path-explorer/{purl}</span>
+        <div class="description">Dependency risk path drill-down for a package</div>
+        <div class="params">Params: <code>format</code>, <code>limit</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>PURL:</label><input type="text" id="rpe_purl" placeholder="e.g., pkg:maven/com.google.guava/guava@31.1-jre" style="width:350px;">
+            </div>
+            <div class="form-row">
+                <label>Limit:</label><input type="number" id="rpe_limit" placeholder="10" min="1" max="100">
+            </div>
+            <button onclick="goToRiskPathExplorer()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/risk-outliers">/reports/risk-outliers</a></span>
+        <div class="description">Packages with score &lt; 4 and ≥ 3 dependants (high-impact remediation targets)</div>
+        <div class="params">Params: <code>format</code>, <code>min_dependents</code>, <code>limit</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Min Dependants:</label><input type="number" id="ro_mindeps" placeholder="3" min="1" max="100">
+                <label>Limit:</label><input type="number" id="ro_limit" placeholder="50" min="1" max="10000">
+            </div>
+            <button onclick="goToRiskOutliers()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/whatif-simulator">/reports/whatif-simulator</a></span>
+        <div class="description">What-if simulator: enter package and hypothetical score to see projected impact</div>
+    </div>
+
+    <h2>SBOM Provenance Reports</h2>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/sbom-inventory">/reports/sbom-inventory</a></span>
+        <div class="description">All ingested SBOM records with metadata, tool info, and linked versions</div>
+        <div class="params">Params: <code>format</code>, <code>search</code>, <code>tool</code>, <code>sbom_format</code>, <code>date_from</code>, <code>date_to</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Search:</label><input type="text" id="sbominv_search" placeholder="Search term">
+                <label>Tool:</label><input type="text" id="sbominv_tool" placeholder="e.g., cyclonedx-maven-plugin">
+            </div>
+            <div class="form-row">
+                <label>SBOM Format:</label>
+                <select id="sbominv_format">
+                    <option value="">Any</option>
+                    <option value="cyclonedx">CycloneDX</option>
+                    <option value="spdx">SPDX</option>
+                </select>
+                <label>Date From:</label><input type="date" id="sbominv_from">
+                <label>Date To:</label><input type="date" id="sbominv_to">
+            </div>
+            <button onclick="goToSbomInventory()">View Report</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/reports/coverage">/reports/coverage</a></span>
+        <div class="description">SBOM coverage statistics: which projects have recent SBOMs and which don't</div>
+        <div class="params">Params: <code>format</code>, <code>recent_days</code> (default 30), <code>internal_only</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Recent Days:</label><input type="number" id="sbomcov_days" placeholder="30" min="1" max="365">
+                <label class="checkbox-label"><input type="checkbox" id="sbomcov_internal">Internal Only</label>
+            </div>
+            <button onclick="goToSbomCoverage()">View Report</button>
+        </div>
     </div>
 
     <h2>Ingestion Endpoints</h2>
 
     <div class="section-note">
         These endpoints accept <code>POST</code> requests with JSON bodies. Use <code>Authorization: Bearer &lt;token&gt;</code> for authentication.
+        SBOM ingestion responses include <code>record_id</code> for provenance tracking.
     </div>
 
     <div class="endpoint">
         <span class="method-post">POST</span>
         <span class="path">/ingest/cyclonedx</span>
-        <div class="description">Upload and process a CycloneDX SBOM. Parses components and dependencies into the graph.</div>
-        <div class="body-desc">Body: CycloneDX JSON document. Optional fields: <code>scan_id</code>, <code>application_name</code>, <code>gitlab_project_url</code></div>
+        <div class="description">Upload and process a CycloneDX SBOM. Parses components, dependencies, and defects into the graph. SBOM provenance (document hash, tool info) is stored and linked to ingested versions.</div>
+        <div class="body-desc">Body: <code>{"sbom": &lt;CycloneDX JSON&gt;, "app_id"?: string, "public_app_id"?: string, "project_url"?: string}</code>. Response includes <code>record_id</code> for provenance tracking.</div>
     </div>
 
     <div class="endpoint">
         <span class="method-post">POST</span>
         <span class="path">/ingest/spdx</span>
-        <div class="description">Upload and process an SPDX 2.3 JSON SBOM. Parses packages and relationships into the graph.</div>
-        <div class="body-desc">Body: SPDX 2.3 JSON document. Optional fields: <code>scan_id</code>, <code>application_name</code></div>
+        <div class="description">Upload and process an SPDX 2.3 JSON SBOM. Parses packages, relationships, licenses, source repos, and defects into the graph. SBOM provenance is stored and linked to ingested versions.</div>
+        <div class="body-desc">Body: <code>{"sbom": &lt;SPDX 2.3 JSON&gt;, "app_id"?: string, "public_app_id"?: string, "project_url"?: string}</code>. Response includes <code>record_id</code> and <code>format</code>.</div>
     </div>
 
     <div class="endpoint">
         <span class="method-post">POST</span>
         <span class="path">/ingest/sbom</span>
-        <div class="description">Auto-detect SBOM format (CycloneDX or SPDX) from the document structure and process accordingly</div>
-        <div class="body-desc">Body: CycloneDX or SPDX JSON document. Format is detected automatically.</div>
+        <div class="description">Auto-detect SBOM format (CycloneDX or SPDX) from the document structure and process accordingly. Use when format is unknown or tools may produce either format.</div>
+        <div class="body-desc">Body: <code>{"sbom": &lt;CycloneDX or SPDX JSON&gt;, ...}</code>. Format detected via <code>bomFormat</code>/<code>metadata.component</code> (CycloneDX) or <code>spdxVersion</code> (SPDX). Response includes <code>record_id</code> and <code>format</code>.</div>
     </div>
 
     <div class="endpoint">
@@ -544,6 +770,54 @@
     <div class="section-note">
         JSON-only endpoints under <code>/api/v1/</code> designed for CI/CD pipelines and programmatic consumption.
         All endpoints require JWT authentication via <code>Authorization: Bearer &lt;token&gt;</code>.
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/package/{purl}</span>
+        <div class="description">All metadata for a package: versions, vulns, licenses, scorecard, policy</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>PURL:</label><input type="text" id="api_meta_purl" placeholder="e.g., pkg:maven/com.google.guava/guava@31.1-jre" style="width:350px;">
+            </div>
+            <button onclick="goToApiPackageMetadata()">Query</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/package/{purl}/dependencies</span>
+        <div class="description">Dependency tree for a package (direct + transitive)</div>
+        <div class="params">Params: <code>max_depth</code> (default 10, max 50), <code>offset</code>, <code>limit</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>PURL:</label><input type="text" id="api_deps_purl" placeholder="e.g., pkg:maven/com.google.guava/guava@31.1-jre" style="width:350px;">
+                <label>Max Depth:</label><input type="number" id="api_deps_depth" placeholder="10" min="1" max="50">
+            </div>
+            <div class="form-row">
+                <label>Offset:</label><input type="number" id="api_deps_offset" placeholder="0" min="0">
+                <label>Limit:</label><input type="number" id="api_deps_limit" placeholder="100" min="1">
+            </div>
+            <button onclick="goToApiDependencies()">Query</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/package/{purl}/dependants</span>
+        <div class="description">Reverse dependency tree (packages that depend on this one)</div>
+        <div class="params">Params: <code>max_depth</code> (default 10, max 50), <code>offset</code>, <code>limit</code></div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>PURL:</label><input type="text" id="api_depnts_purl" placeholder="e.g., pkg:maven/com.google.guava/guava@31.1-jre" style="width:350px;">
+                <label>Max Depth:</label><input type="number" id="api_depnts_depth" placeholder="10" min="1" max="50">
+            </div>
+            <div class="form-row">
+                <label>Offset:</label><input type="number" id="api_depnts_offset" placeholder="0" min="0">
+                <label>Limit:</label><input type="number" id="api_depnts_limit" placeholder="100" min="1">
+            </div>
+            <button onclick="goToApiDependants()">Query</button>
+        </div>
     </div>
 
     <div class="endpoint">
@@ -659,6 +933,76 @@
         </div>
     </div>
 
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/api/v1/analysis/critical-dependencies">/api/v1/analysis/critical-dependencies</a></span>
+        <div class="description">Most critical dependencies (high fan-in or low trust score)</div>
+        <div class="params">Params: <code>sort</code> (fan_in or trust_score, default fan_in), <code>limit</code> (default 20, max 100)</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Sort:</label>
+                <select id="api_crit_sort">
+                    <option value="fan_in">Fan In</option>
+                    <option value="trust_score">Trust Score</option>
+                </select>
+                <label>Limit:</label><input type="number" id="api_crit_limit" placeholder="20" min="1" max="100">
+            </div>
+            <button onclick="goToCriticalDeps()">Query</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/api/v1/analysis/risk-summary">/api/v1/analysis/risk-summary</a></span>
+        <div class="description">Aggregate risk metrics: vuln counts by severity, license risk, policy violations</div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/api/v1/analysis/risk-propagation-impact">/api/v1/analysis/risk-propagation-impact</a></span>
+        <div class="description">What-if simulation: if package X drops to score Y, what apps are impacted?</div>
+        <div class="params">Params: <code>purl</code> (required), <code>simulated_score</code> (required, 0-10)</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>PURL:</label><input type="text" id="api_rpi_purl" placeholder="e.g., pkg:maven/com.google.guava/guava@31.1-jre" style="width:350px;">
+                <label>Simulated Score:</label><input type="number" id="api_rpi_score" placeholder="3" min="0" max="10" step="0.1">
+            </div>
+            <button onclick="goToRiskPropImpact()">Query</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/api/v1/sbom/{record_id}</span>
+        <div class="description">Return a single SBOM record by ID with linked version PURLs</div>
+        <div class="try-form">
+            <div class="form-row">
+                <label>Record ID:</label><input type="text" id="api_sbom_id" placeholder="UUID" style="width:350px;">
+            </div>
+            <button onclick="goToSbomRecord()">Query</button>
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method-post">POST</span>
+        <span class="path">/api/v1/patch-plan/evaluate</span>
+        <div class="description">Evaluate a proposed dependency update for vulnerability impact</div>
+        <div class="body-desc">Body: <code>{"purl": "pkg:...", "current_version": "...", "target_version": "..."}</code></div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method-post">POST</span>
+        <span class="path">/api/v1/vex/auto-stub</span>
+        <div class="description">Auto-generate VEX not_affected stubs for packages with vulns but no VEX</div>
+        <div class="body-desc">Body: <code>{"purl": "pkg:...", "justification": "..."}</code></div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path"><a href="/api/v1/openapi.json">/api/v1/openapi.json</a></span>
+        <div class="description">OpenAPI 3.1 specification for the v1 API</div>
+    </div>
+
     <h2>Source Repository API</h2>
 
     <div class="endpoint">
@@ -738,6 +1082,7 @@
         <span class="method">GET</span>
         <span class="path"><a href="/api/v1/analysis/trust-score-distribution">/api/v1/analysis/trust-score-distribution</a></span>
         <div class="description">Histogram of effective trust scores across all packages for portfolio-level risk assessment</div>
+        <div class="params">Params: <code>limit</code> (default 50)</div>
     </div>
 
     <div class="endpoint">
@@ -799,6 +1144,7 @@
                 <option value="centrality">centrality</option>
                 <option value="licenses">licenses</option>
                 <option value="license-summary">license-summary</option>
+                <option value="license-dashboard">license-dashboard</option>
                 <option value="license-conflicts">license-conflicts</option>
                 <option value="vulnerability-freshness">vulnerability-freshness</option>
                 <option value="policy-violations">policy-violations</option>
@@ -888,7 +1234,7 @@
             if (!project || !version) { alert('Please enter project and version'); return; }
             const layout = document.getElementById('depmulti_layout').value;
             const params = {
-                layout: layout !== 'radial' ? layout : null,
+                layout: layout !== 'spring' ? layout : null,
                 max_depth: document.getElementById('depmulti_depth').value || null,
                 internal_only: document.getElementById('depmulti_internal').checked ? 'true' : null
             };
@@ -983,7 +1329,10 @@
         }
 
         function goToVulnerabilities() {
-            const params = { internal_only: document.getElementById('vuln_internal').checked ? 'true' : null };
+            const params = {
+                internal_only: document.getElementById('vuln_internal').checked ? 'true' : null,
+                vex_filter: document.getElementById('vuln_vex_filter').value || null
+            };
             window.location.href = buildUrl('/reports/vulnerabilities', params);
         }
 
@@ -995,6 +1344,16 @@
                 internal_only: document.getElementById('vulndep_internal').checked ? 'true' : null
             };
             window.location.href = buildUrl('/reports/vulnerability-dependants/' + encodeURIComponent(defectId), params);
+        }
+
+        function goToIncidentResponse() {
+            const defectId = document.getElementById('incident_defect_id').value;
+            if (!defectId) { alert('Please enter a CVE ID'); return; }
+            const params = {
+                max_depth: document.getElementById('incident_depth').value || null,
+                internal_only: document.getElementById('incident_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/reports/incident-response/' + encodeURIComponent(defectId), params);
         }
 
         function goToSchema() {
@@ -1031,6 +1390,11 @@
         function goToVexCoverage() {
             const params = { internal_only: document.getElementById('vex_internal').checked ? 'true' : null };
             window.location.href = buildUrl('/reports/vex-coverage', params);
+        }
+
+        function goToLicenseDashboard() {
+            const params = { internal_only: document.getElementById('licdash_internal').checked ? 'true' : null };
+            window.location.href = buildUrl('/reports/license-dashboard', params);
         }
 
         function goToLicenseConflicts() {
@@ -1129,6 +1493,142 @@
                 min_confidence: document.getElementById('api_tcheck_conf').value || null
             };
             window.location.href = buildUrl('/api/v1/package/' + encodeURIComponent(purl) + '/trust-check', params);
+        }
+
+        function goToTrustScores() {
+            const params = {
+                min_score: document.getElementById('ts_min_score').value || null,
+                sort_by: document.getElementById('ts_sort').value || null,
+                internal_only: document.getElementById('ts_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/reports/trust-scores', params);
+        }
+
+        function goToTrustScoreGaps() {
+            const params = { limit: document.getElementById('tsg_limit').value || null };
+            window.location.href = buildUrl('/reports/trust-score-gaps', params);
+        }
+
+        function goToTrustScoreHeatmap() {
+            const params = {
+                limit: document.getElementById('tsh_limit').value || null,
+                internal_only: document.getElementById('tsh_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/reports/trust-score-heatmap', params);
+        }
+
+        function goToAppRiskDashboard() {
+            const params = {
+                limit: document.getElementById('ard_limit').value || null,
+                internal_only: document.getElementById('ard_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/reports/application-risk-dashboard', params);
+        }
+
+        function goToRiskPropGraph() {
+            const params = { internal_only: document.getElementById('rpg_internal').checked ? 'true' : null };
+            window.location.href = buildUrl('/reports/risk-propagation-graph', params);
+        }
+
+        function goToRiskPathExplorer() {
+            const purl = document.getElementById('rpe_purl').value;
+            if (!purl) { alert('Please enter a PURL'); return; }
+            const params = { limit: document.getElementById('rpe_limit').value || null };
+            window.location.href = buildUrl('/reports/risk-path-explorer/' + encodeURIComponent(purl), params);
+        }
+
+        function goToRiskOutliers() {
+            const params = {
+                min_dependents: document.getElementById('ro_mindeps').value || null,
+                limit: document.getElementById('ro_limit').value || null
+            };
+            window.location.href = buildUrl('/reports/risk-outliers', params);
+        }
+
+        function goToApiPackageMetadata() {
+            const purl = document.getElementById('api_meta_purl').value;
+            if (!purl) { alert('Please enter a PURL'); return; }
+            window.location.href = '/api/v1/package/' + encodeURIComponent(purl);
+        }
+
+        function goToApiDependencies() {
+            const purl = document.getElementById('api_deps_purl').value;
+            if (!purl) { alert('Please enter a PURL'); return; }
+            const params = {
+                max_depth: document.getElementById('api_deps_depth').value || null,
+                offset: document.getElementById('api_deps_offset').value || null,
+                limit: document.getElementById('api_deps_limit').value || null
+            };
+            window.location.href = buildUrl('/api/v1/package/' + encodeURIComponent(purl) + '/dependencies', params);
+        }
+
+        function goToApiDependants() {
+            const purl = document.getElementById('api_depnts_purl').value;
+            if (!purl) { alert('Please enter a PURL'); return; }
+            const params = {
+                max_depth: document.getElementById('api_depnts_depth').value || null,
+                offset: document.getElementById('api_depnts_offset').value || null,
+                limit: document.getElementById('api_depnts_limit').value || null
+            };
+            window.location.href = buildUrl('/api/v1/package/' + encodeURIComponent(purl) + '/dependants', params);
+        }
+
+        function goToCriticalDeps() {
+            const params = {
+                sort: document.getElementById('api_crit_sort').value || null,
+                limit: document.getElementById('api_crit_limit').value || null
+            };
+            window.location.href = buildUrl('/api/v1/analysis/critical-dependencies', params);
+        }
+
+        function goToRiskPropImpact() {
+            const purl = document.getElementById('api_rpi_purl').value;
+            const score = document.getElementById('api_rpi_score').value;
+            if (!purl) { alert('Please enter a PURL'); return; }
+            if (!score) { alert('Please enter a simulated score'); return; }
+            const params = { purl: purl, simulated_score: score };
+            window.location.href = buildUrl('/api/v1/analysis/risk-propagation-impact', params);
+        }
+
+        function goToSbomRecord() {
+            const id = document.getElementById('api_sbom_id').value;
+            if (!id) { alert('Please enter a record ID'); return; }
+            window.location.href = '/api/v1/sbom/' + encodeURIComponent(id);
+        }
+
+        function goToSourceImpact() {
+            const url = document.getElementById('srcimpact_url').value;
+            if (!url) { alert('Please enter a repository URL'); return; }
+            const params = {
+                repo_url: url,
+                max_depth: document.getElementById('srcimpact_depth').value || null,
+                internal_only: document.getElementById('srcimpact_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/reports/source-impact', params);
+        }
+
+        function goToEnrichmentCoverage() {
+            const params = { internal_only: document.getElementById('enrcov_internal').checked ? 'true' : null };
+            window.location.href = buildUrl('/reports/enrichment-coverage', params);
+        }
+
+        function goToSbomInventory() {
+            const params = {
+                search: document.getElementById('sbominv_search').value || null,
+                tool: document.getElementById('sbominv_tool').value || null,
+                sbom_format: document.getElementById('sbominv_format').value || null,
+                date_from: document.getElementById('sbominv_from').value || null,
+                date_to: document.getElementById('sbominv_to').value || null
+            };
+            window.location.href = buildUrl('/reports/sbom-inventory', params);
+        }
+
+        function goToSbomCoverage() {
+            const params = {
+                recent_days: document.getElementById('sbomcov_days').value || null,
+                internal_only: document.getElementById('sbomcov_internal').checked ? 'true' : null
+            };
+            window.location.href = buildUrl('/reports/coverage', params);
         }
     </script>
 </body>

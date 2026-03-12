@@ -131,6 +131,7 @@ class TestCreateAllProjectsExcel:
         """Test returns BytesIO buffer."""
         mock_service = MagicMock()
         mock_service.get_all_projects.return_value = []
+        mock_service.get_policy_annotations_for_purls.return_value = {}
 
         result = create_all_projects_excel(mock_service)
 
@@ -142,9 +143,10 @@ class TestCreateAllProjectsExcel:
 
         mock_service = MagicMock()
         mock_service.get_all_projects.return_value = [
-            {"project_name": "project-a", "version": "1.0.0"},
-            {"project_name": "project-b", "version": "2.0.0"},
+            {"project_name": "project-a", "version": "1.0.0", "package_url": None},
+            {"project_name": "project-b", "version": "2.0.0", "package_url": None},
         ]
+        mock_service.get_policy_annotations_for_purls.return_value = {}
 
         result = create_all_projects_excel(mock_service, limit=100)
         wb = load_workbook(result)
@@ -157,6 +159,7 @@ class TestCreateAllProjectsExcel:
         """Test respects limit parameter."""
         mock_service = MagicMock()
         mock_service.get_all_projects.return_value = []
+        mock_service.get_policy_annotations_for_purls.return_value = {}
 
         create_all_projects_excel(mock_service, limit=500)
 
@@ -168,8 +171,9 @@ class TestCreateAllProjectsExcel:
 
         mock_service = MagicMock()
         mock_service.get_all_projects.return_value = [
-            {"project_name": "acme_corp-lib", "version": "1.0.0"},
+            {"project_name": "acme_corp-lib", "version": "1.0.0", "package_url": None},
         ]
+        mock_service.get_policy_annotations_for_purls.return_value = {}
 
         result = create_all_projects_excel(mock_service, limit=100, internal_only=True)
 
@@ -191,6 +195,7 @@ class TestCreateAllProjectsExcel:
         """Test handles empty database."""
         mock_service = MagicMock()
         mock_service.get_all_projects.return_value = []
+        mock_service.get_policy_annotations_for_purls.return_value = {}
 
         result = create_all_projects_excel(mock_service)
 

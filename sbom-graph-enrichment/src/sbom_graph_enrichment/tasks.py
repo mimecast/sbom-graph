@@ -9,6 +9,7 @@ to enable TCP/TLS connection pooling.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections import defaultdict
@@ -25,6 +26,8 @@ from .certifiers.license import LicenseCertifier
 from .certifiers.scorecard import ScorecardCertifier
 from .certifiers.ossindex import OSSIndexCertifier
 from .certifiers.depsdev import DepsDevCertifier
+from .certifiers.eol import EOLCertifier
+from .certifiers.source_repo import SourceRepoCertifier
 from .certifiers.trust_score import TrustScoreCalculator
 from .persistence_helpers import create_persistence, get_persistence, get_http_client
 
@@ -36,11 +39,15 @@ _CERTIFIERS: dict[str, type] = {
     "scorecard": ScorecardCertifier,
     "ossindex": OSSIndexCertifier,
     "depsdev": DepsDevCertifier,
+    "eol": EOLCertifier,
+    "source_repo": SourceRepoCertifier,
 }
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def enrich_package(self: Any, purl: str, sources: list[str] | None = None) -> dict[str, Any]:
+def enrich_package(
+    self: Any, purl: str, sources: list[str] | None = None
+) -> dict[str, Any]:
     """Enrich a single package identified by *purl*.
 
     Args:
@@ -72,6 +79,9 @@ def enrich_package(self: Any, purl: str, sources: list[str] | None = None) -> di
     persistence = get_persistence()
     vuln_count = 0
     license_count = 0
+    eol_count = 0
+    source_repo_count = 0
+    depsdev_count = 0
 
     for finding in all_findings:
         if finding.kind == FindingKind.VULNERABILITY:
@@ -80,6 +90,15 @@ def enrich_package(self: Any, purl: str, sources: list[str] | None = None) -> di
         elif finding.kind == FindingKind.LICENSE:
             _persist_license(persistence, finding)
             license_count += 1
+        elif finding.kind == FindingKind.EOL:
+            _persist_eol(persistence, finding)
+            eol_count += 1
+        elif finding.kind == FindingKind.SOURCE_REPO:
+            _persist_source_repo(persistence, finding)
+            source_repo_count += 1
+        elif finding.kind == FindingKind.DEPSDEV:
+            _persist_depsdev(persistence, finding)
+            depsdev_count += 1
 
     if _TRUST_SCORE_ENABLED and all_findings:
         compute_trust_score.delay(purl, _serialise_findings(all_findings))
@@ -88,6 +107,9 @@ def enrich_package(self: Any, purl: str, sources: list[str] | None = None) -> di
         "purl": purl,
         "vulnerabilities": vuln_count,
         "licenses": license_count,
+        "eol": eol_count,
+        "source_repo": source_repo_count,
+        "depsdev": depsdev_count,
     }
 
 
@@ -104,11 +126,18 @@ def enrich_all_packages(sources: list[str] | None = None) -> dict[str, int]:
     """
     persistence = create_persistence()
     result = persistence.run_query(
-        query="MATCH (v:Version) WHERE v.package_url IS NOT NULL RETURN DISTINCT v.package_url AS purl"
+        query=(
+            "MATCH (v:Version) WHERE v.package_url IS NOT NULL "
+            "RETURN DISTINCT v.package_url AS purl"
+        )
     )
     purls: list[str] = [row["purl"] for row in result.result_set if row.get("purl")]
 
-    logger.info("Dispatching enrichment for %d packages in batches of %d", len(purls), _DISPATCH_BATCH_SIZE)
+    logger.info(
+        "Dispatching enrichment for %d packages in batches of %d",
+        len(purls),
+        _DISPATCH_BATCH_SIZE,
+    )
     for i in range(0, len(purls), _DISPATCH_BATCH_SIZE):
         batch = purls[i : i + _DISPATCH_BATCH_SIZE]
         for purl in batch:
@@ -166,6 +195,145 @@ def _persist_license(persistence: Any, finding: Finding) -> None:
     persistence.create_version_license(purl=purl, spdx_id=spdx_id)
 
 
+def _persist_eol(persistence: Any, finding: Finding) -> None:
+    """Store EOL data on the Version node."""
+    data = finding.data
+    purl = finding.package_url
+    eol = data.get("eol")
+    eol_date = data.get("eol_date")
+
+    persistence.run_query(
+        query=(
+            "MATCH (v:Version {package_url: $purl}) "
+            "SET v.eol = $eol, v.eol_date = $eol_date, "
+            "v.eol_product = $product, v.eol_cycle = $cycle, "
+            "v.eol_last_enriched = $ts"
+        ),
+        params={
+            "purl": purl,
+            "eol": eol is True or (isinstance(eol, str) and eol != "false"),
+            "eol_date": eol_date or "",
+            "product": data.get("product", ""),
+            "cycle": data.get("cycle", ""),
+            "ts": finding.timestamp.isoformat(),
+        },
+    )
+
+
+def _persist_source_repo(persistence: Any, finding: Finding) -> None:
+    """Create or link a SourceRepository node."""
+    data = finding.data
+    repo_url = data.get("repo_url")
+    if not repo_url:
+        return
+
+    purl = finding.package_url
+    persistence.run_query(
+        query=(
+            "MERGE (r:SourceRepository {url: $repo_url}) "
+            "ON CREATE SET r.host = $host "
+            "WITH r "
+            "MATCH (v:Version {package_url: $purl}) "
+            "MERGE (v)-[:FROM_REPO]->(r)"
+        ),
+        params={
+            "repo_url": repo_url,
+            "host": data.get("repo_host", ""),
+            "purl": purl,
+        },
+    )
+
+
+def _persist_depsdev(persistence: Any, finding: Finding) -> None:
+    """Persist deps.dev metadata on the Version node and optionally a Scorecard node.
+
+    Stores advisory count, publication date, default-version flag, and
+    deps.dev license data directly on the Version node.  If OpenSSF
+    Scorecard data is present, creates (or merges) a ``Scorecard`` node
+    linked to the version.
+    """
+    data = finding.data
+    purl = finding.package_url
+
+    licenses_json = json.dumps(data.get("licenses", []))
+
+    persistence.run_query(
+        query=(
+            "MATCH (v:Version {package_url: $purl}) "
+            "SET v.depsdev_advisory_count = $advisory_count, "
+            "    v.depsdev_published_at   = $published_at, "
+            "    v.depsdev_is_default     = $is_default, "
+            "    v.depsdev_licenses       = $licenses, "
+            "    v.depsdev_last_enriched  = $ts"
+        ),
+        params={
+            "purl": purl,
+            "advisory_count": data.get("advisory_count", 0),
+            "published_at": data.get("published_at") or "",
+            "is_default": data.get("is_default", False),
+            "licenses": licenses_json,
+            "ts": finding.timestamp.isoformat(),
+        },
+    )
+
+    scorecard_overall = data.get("scorecard_overall")
+    if scorecard_overall is not None:
+        checks_json = json.dumps(data.get("scorecard_checks", {}))
+        persistence.run_query(
+            query=(
+                "MATCH (v:Version {package_url: $purl}) "
+                "MERGE (sc:Scorecard {purl: $purl}) "
+                "ON CREATE SET sc.overall_score = $overall, "
+                "             sc.checks         = $checks, "
+                "             sc.source          = 'depsdev', "
+                "             sc.scored_at       = $ts "
+                "ON MATCH SET  sc.overall_score = $overall, "
+                "             sc.checks         = $checks, "
+                "             sc.scored_at       = $ts "
+                "MERGE (v)-[:HAS_SCORECARD]->(sc)"
+            ),
+            params={
+                "purl": purl,
+                "overall": scorecard_overall,
+                "checks": checks_json,
+                "ts": finding.timestamp.isoformat(),
+            },
+        )
+
+    oss_fuzz = data.get("oss_fuzz")
+    if oss_fuzz:
+        persistence.run_query(
+            query=(
+                "MATCH (v:Version {package_url: $purl}) "
+                "SET v.oss_fuzz = $oss_fuzz_json"
+            ),
+            params={
+                "purl": purl,
+                "oss_fuzz_json": json.dumps(oss_fuzz),
+            },
+        )
+
+    project_key = data.get("project_key")
+    if project_key:
+        persistence.run_query(
+            query=(
+                "MATCH (v:Version {package_url: $purl}) "
+                "SET v.depsdev_project_key = $project_key"
+            ),
+            params={
+                "purl": purl,
+                "project_key": project_key,
+            },
+        )
+
+    logger.debug(
+        "Persisted deps.dev metadata for %s (advisory_count=%d, scorecard=%s)",
+        purl,
+        data.get("advisory_count", 0),
+        scorecard_overall,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Trust score tasks
 # ---------------------------------------------------------------------------
@@ -174,7 +342,9 @@ _TRUST_SCORE_ENABLED = os.environ.get("TRUST_SCORE_ENABLED", "true").lower() == 
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=120)
-def compute_trust_score(self: Any, purl: str, findings_data: list[dict[str, Any]]) -> dict[str, Any]:
+def compute_trust_score(  # pylint: disable=unused-argument
+    self: Any, purl: str, findings_data: list[dict[str, Any]]
+) -> dict[str, Any]:
     """Compute and persist the direct trust score for a single PURL.
 
     Called after :func:`enrich_package` completes.  Receives serialised
@@ -212,7 +382,9 @@ def compute_trust_score(self: Any, purl: str, findings_data: list[dict[str, Any]
 
     logger.info(
         "Trust score computed for %s: direct=%.2f confidence=%.2f",
-        purl, result.direct_score, result.confidence,
+        purl,
+        result.direct_score,
+        result.confidence,
     )
     return {
         "purl": purl,
@@ -260,22 +432,52 @@ def propagate_effective_scores() -> dict[str, Any]:
             children[parent].append(child)
 
     effective, inherited, min_path, dep_counts = _propagate(
-        direct_scores, children, alpha, decay, max_depth,
+        direct_scores,
+        children,
+        alpha,
+        decay,
+        max_depth,
     )
 
+    alert_threshold = float(os.environ.get("TRUST_SCORE_ALERT_THRESHOLD", "4.0"))
+
     updated = 0
+    alerts: list[dict[str, Any]] = []
     for purl in effective:
+        eff_score = effective[purl]
         persistence.update_trust_score_propagation(
             purl=purl,
-            effective_score=effective[purl],
+            effective_score=eff_score,
             inherited_score=inherited.get(purl, 0.0),
             min_path_score=min_path.get(purl, direct_scores.get(purl, 5.0)),
             dep_count=dep_counts.get(purl, 0),
         )
         updated += 1
 
+        if eff_score < alert_threshold:
+            alerts.append({
+                "purl": purl,
+                "effective_score": eff_score,
+                "direct_score": direct_scores.get(purl, 5.0),
+                "dep_count": dep_counts.get(purl, 0),
+            })
+
+    if alerts:
+        alerts.sort(key=lambda a: a["effective_score"])
+        top_alerts = alerts[:20]
+        logger.warning(
+            "Trust score alert: %d packages below threshold %.1f. "
+            "Top concerns: %s",
+            len(alerts),
+            alert_threshold,
+            ", ".join(
+                f"{a['purl']} ({a['effective_score']:.1f})"
+                for a in top_alerts
+            ),
+        )
+
     logger.info("Propagated effective scores for %d packages", updated)
-    return {"updated": updated}
+    return {"updated": updated, "alerts": len(alerts)}
 
 
 def _propagate(
@@ -283,7 +485,7 @@ def _propagate(
     children: dict[str, list[str]],
     alpha: float,
     decay: float,
-    max_depth: int,
+    max_depth: int,  # noqa: ARG001  # pylint: disable=unused-argument
 ) -> tuple[dict[str, float], dict[str, float], dict[str, float], dict[str, int]]:
     """Bottom-up propagation of inherited risk.
 

@@ -188,7 +188,8 @@ class TrustScoreCalculator:
             elif sev == "high":
                 high_count += 1
 
-        penalty = critical_count * 3.0 + high_count * 1.5 + max(0, total - critical_count - high_count) * 0.5
+        other_count = max(0, total - critical_count - high_count)
+        penalty = critical_count * 3.0 + high_count * 1.5 + other_count * 0.5
         return max(0.0, min(10.0, 10.0 - penalty))
 
     def _compute_maintenance_health(

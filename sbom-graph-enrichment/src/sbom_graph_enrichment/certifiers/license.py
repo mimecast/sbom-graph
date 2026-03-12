@@ -90,7 +90,9 @@ class LicenseCertifier(Certifier):
     def enrich(self, purl: str, *, client: httpx.Client) -> list[Finding]:
         coord = _purl_to_coordinates(purl)
         if coord is None:
-            logger.warning("Cannot convert purl to ClearlyDefined coordinates: %s", purl)
+            logger.warning(
+                "Cannot convert purl to ClearlyDefined coordinates: %s", purl
+            )
             return []
 
         url = f"{CLEARLY_DEFINED_API}/{coord}"

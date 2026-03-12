@@ -75,6 +75,10 @@ spec:
               value: "true"
             - name: FALKORDB_CA_FILE
               value: /tls/ca.crt
+            - name: FALKORDB_CLIENT_CERT
+              value: /tls/client.crt
+            - name: FALKORDB_CLIENT_KEY
+              value: /tls/client.key
             - name: TLS_CERT_FILE
               value: /tls/tls.crt
             - name: TLS_KEY_FILE
@@ -141,4 +145,8 @@ spec:
                 path: tls.crt
               - key: tls.key
                 path: tls.key
+              - key: client.crt
+                path: client.crt
+              - key: client.key
+                path: client.key
         {{- end }}

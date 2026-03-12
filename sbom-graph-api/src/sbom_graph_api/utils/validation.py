@@ -19,6 +19,9 @@ CSS_DIMENSION_PATTERN = re.compile(r"^(\d+)(px|%|em|rem|vh|vw|pt)?$|^auto$", re.
 # Allowed output formats
 ALLOWED_FORMATS = frozenset({"html", "excel", "json"})
 
+# Allowed VEX filter values for vulnerabilities report
+ALLOWED_VEX_FILTERS = frozenset({"all", "hide_not_affected", "under_investigation"})
+
 # Allowed visualization layouts
 ALLOWED_LAYOUTS = frozenset({"spring", "radial", "shell", "bfs", "circular"})
 
@@ -67,6 +70,15 @@ USERNAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._@-]*$")
 
 # URL pattern - must start with http:// or https://
 URL_SCHEME_PATTERN = re.compile(r"^https?://", re.IGNORECASE)
+
+# Search term for SBOM inventory - safe chars (alphanumeric, spaces, hyphens, etc.)
+SEARCH_TERM_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._\s-]*$")
+
+# Date pattern YYYY-MM-DD for filter params
+DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# Allowed SBOM formats for filter
+ALLOWED_SBOM_FORMATS = frozenset({"cyclonedx", "spdx"})
 
 
 def validate_css_dimension(value: str, default: str = "800px") -> str:
@@ -165,6 +177,26 @@ def validate_format(value: str | None, default: str = "html") -> str:
     return default
 
 
+def validate_vex_filter(value: str | None, default: str = "all") -> str:
+    """Validate VEX filter parameter for vulnerabilities report.
+
+    Args:
+        value: The input vex_filter value
+        default: Default value if validation fails
+
+    Returns:
+        Validated vex_filter: 'all', 'hide_not_affected', or
+        'under_investigation'
+    """
+    if not value:
+        return default
+
+    value = str(value).strip().lower()
+    if value in ALLOWED_VEX_FILTERS:
+        return value
+    return default
+
+
 def validate_layout(value: str | None, default: str = "spring") -> str:
     """Validate visualization layout parameter.
 
@@ -197,6 +229,65 @@ def validate_boolean(value: str | None, default: bool = False) -> bool:
     if not value:
         return default
     return str(value).strip().lower() == "true"
+
+
+def validate_search_term(
+    value: str | None,
+    max_len: int = 200,
+) -> str | None:
+    """Validate and sanitize search term for SBOM inventory filter.
+
+    Args:
+        value: The search input
+        max_len: Maximum allowed length
+
+    Returns:
+        Sanitized search string or None if invalid/empty
+    """
+    if not value:
+        return None
+    val = str(value).strip()
+    if len(val) > max_len:
+        return None
+    if not val:
+        return None
+    if not SEARCH_TERM_PATTERN.match(val):
+        return None
+    return val
+
+
+def validate_sbom_format(value: str | None) -> str | None:
+    """Validate SBOM format filter (CycloneDX or SPDX).
+
+    Args:
+        value: The format filter value
+
+    Returns:
+        Lowercase format string or None if invalid
+    """
+    if not value:
+        return None
+    val = str(value).strip().lower()
+    if val in ALLOWED_SBOM_FORMATS:
+        return val
+    return None
+
+
+def validate_date_param(value: str | None) -> str | None:
+    """Validate date parameter (YYYY-MM-DD format).
+
+    Args:
+        value: The date string
+
+    Returns:
+        Valid date string or None if invalid
+    """
+    if not value:
+        return None
+    val = str(value).strip()
+    if DATE_PATTERN.match(val):
+        return val
+    return None
 
 
 def validate_project_name(value: str) -> str | None:
@@ -339,6 +430,28 @@ def validate_annotation_id(value: str) -> str | None:
 
     Returns:
         The validated annotation ID, or None if invalid
+    """
+    if not value:
+        return None
+
+    value = str(value).strip()
+    if len(value) > 64:
+        return None
+
+    if not UUID_PATTERN.match(value):
+        return None
+
+    return value
+
+
+def validate_record_id(value: str) -> str | None:
+    """Validate an SBOM record ID (UUID v4 format).
+
+    Args:
+        value: The record ID to validate
+
+    Returns:
+        The validated record ID, or None if invalid
     """
     if not value:
         return None
@@ -502,6 +615,46 @@ def validate_int_param(
     return result
 
 
+ALLOWED_SORT_ORDERS = frozenset({"asc", "desc"})
+
+
+def validate_sort_param(
+    value: str | None,
+    allowed: frozenset[str],
+    default: str,
+) -> str:
+    """Validate a sort/sort_by query parameter against an allowlist.
+
+    Args:
+        value: Raw query string value
+        allowed: Set of allowed sort field names
+        default: Default sort field
+
+    Returns:
+        Validated sort field or default
+    """
+    if not value:
+        return default
+    val = str(value).strip().lower()
+    return val if val in allowed else default
+
+
+def validate_sort_order(value: str | None, default: str = "desc") -> str:
+    """Validate sort order parameter (asc/desc).
+
+    Args:
+        value: Raw query string value
+        default: Default sort order
+
+    Returns:
+        Validated sort order or default
+    """
+    if not value:
+        return default
+    val = str(value).strip().lower()
+    return val if val in ALLOWED_SORT_ORDERS else default
+
+
 def sanitize_content_disposition(filename: str) -> str:
     """Produce a safe Content-Disposition header value.
 
@@ -608,6 +761,7 @@ def build_url_params(  # pylint: disable=redefined-builtin
     internal_only: bool = False,
     longest_only: bool = True,
     latest_only: bool = False,
+    vex_filter: str | None = None,
 ) -> str:
     """Build URL query parameters string, filtering out None/False values.
 
@@ -618,6 +772,8 @@ def build_url_params(  # pylint: disable=redefined-builtin
         internal_only: Internal only filter
         longest_only: Show only longest paths (default True, only include param if False)
         latest_only: Show only latest version per application (default False)
+        vex_filter: VEX filter for vulnerabilities (all, hide_not_affected,
+            under_investigation; only include if not 'all')
 
     Returns:
         URL-encoded query string (without leading '?')
@@ -635,6 +791,8 @@ def build_url_params(  # pylint: disable=redefined-builtin
         params["longest_only"] = "false"
     if latest_only:
         params["latest_only"] = "true"
+    if vex_filter and vex_filter != "all":
+        params["vex_filter"] = vex_filter
 
     return urlencode(params) if params else ""
 
@@ -647,6 +805,7 @@ def build_url_with_params(  # pylint: disable=redefined-builtin
     internal_only: bool = False,
     longest_only: bool = True,
     latest_only: bool = False,
+    vex_filter: str | None = None,
 ) -> str:
     """Build a complete URL with query parameters.
 
@@ -658,6 +817,7 @@ def build_url_with_params(  # pylint: disable=redefined-builtin
         internal_only: Internal only filter
         longest_only: Show only longest paths (default True)
         latest_only: Show only latest version per application (default False)
+        vex_filter: VEX filter for vulnerabilities report
 
     Returns:
         Complete URL with query string
@@ -669,6 +829,7 @@ def build_url_with_params(  # pylint: disable=redefined-builtin
         internal_only=internal_only,
         longest_only=longest_only,
         latest_only=latest_only,
+        vex_filter=vex_filter,
     )
     if query_string:
         return f"{base_url}?{query_string}"

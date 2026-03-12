@@ -11,7 +11,7 @@ from sbom_graph_model.cyclonedx.processor import (
     CycloneDXProcessor,
     CycloneDXValidationError,
 )
-from sbom_graph_model.model import Defect, Project, Version
+from sbom_graph_model.model import Defect, Project, ProjectType, Version
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +57,9 @@ class TestValidateCycloneDXStructure:
             CycloneDXProcessor._validate_cyclonedx_structure({})
 
     def test_rejects_non_dict_metadata(self):
-        with pytest.raises(CycloneDXValidationError, match="metadata.*must be a JSON object"):
+        with pytest.raises(
+            CycloneDXValidationError, match="metadata.*must be a JSON object"
+        ):
             CycloneDXProcessor._validate_cyclonedx_structure({"metadata": "bad"})
 
     def test_rejects_missing_component_in_metadata(self):
@@ -65,7 +67,9 @@ class TestValidateCycloneDXStructure:
             CycloneDXProcessor._validate_cyclonedx_structure({"metadata": {}})
 
     def test_rejects_non_dict_component(self):
-        with pytest.raises(CycloneDXValidationError, match="metadata.component.*must be"):
+        with pytest.raises(
+            CycloneDXValidationError, match="metadata.component.*must be"
+        ):
             CycloneDXProcessor._validate_cyclonedx_structure(
                 {"metadata": {"component": "bad"}}
             )
@@ -84,27 +88,37 @@ class TestValidateCycloneDXStructure:
 
     def test_rejects_components_wrong_type(self, minimal_cyclonedx):
         minimal_cyclonedx["components"] = "not-a-list"
-        with pytest.raises(CycloneDXValidationError, match="components.*must be a list"):
+        with pytest.raises(
+            CycloneDXValidationError, match="components.*must be a list"
+        ):
             CycloneDXProcessor._validate_cyclonedx_structure(minimal_cyclonedx)
 
     def test_rejects_dependencies_wrong_type(self, minimal_cyclonedx):
         minimal_cyclonedx["dependencies"] = {"bad": "type"}
-        with pytest.raises(CycloneDXValidationError, match="dependencies.*must be a list"):
+        with pytest.raises(
+            CycloneDXValidationError, match="dependencies.*must be a list"
+        ):
             CycloneDXProcessor._validate_cyclonedx_structure(minimal_cyclonedx)
 
     def test_rejects_vulnerabilities_wrong_type(self, minimal_cyclonedx):
         minimal_cyclonedx["vulnerabilities"] = "bad"
-        with pytest.raises(CycloneDXValidationError, match="vulnerabilities.*must be a list"):
+        with pytest.raises(
+            CycloneDXValidationError, match="vulnerabilities.*must be a list"
+        ):
             CycloneDXProcessor._validate_cyclonedx_structure(minimal_cyclonedx)
 
     def test_rejects_component_non_dict(self, minimal_cyclonedx):
         minimal_cyclonedx["components"] = ["not-a-dict"]
-        with pytest.raises(CycloneDXValidationError, match="components\\[0\\].*must be"):
+        with pytest.raises(
+            CycloneDXValidationError, match="components\\[0\\].*must be"
+        ):
             CycloneDXProcessor._validate_cyclonedx_structure(minimal_cyclonedx)
 
     def test_rejects_component_missing_bom_ref(self, minimal_cyclonedx):
         minimal_cyclonedx["components"] = [{"name": "lib", "version": "1.0"}]
-        with pytest.raises(CycloneDXValidationError, match="components\\[0\\].*bom-ref"):
+        with pytest.raises(
+            CycloneDXValidationError, match="components\\[0\\].*bom-ref"
+        ):
             CycloneDXProcessor._validate_cyclonedx_structure(minimal_cyclonedx)
 
     def test_accepts_without_optional_sections(self):
@@ -168,12 +182,14 @@ class TestParseApplicationFromCycloneDx:
                 "purl": "pkg:maven/com.example/my-app@3.0.0",
             },
         }
-        bom_ref, (project, version) = CycloneDXProcessor.parse_application_from_cyclone_dx(
-            app_id="app-1",
-            public_app_id="pub-1",
-            scan_id="scan-1",
-            metadata_json=metadata,
-            gitlab_project_url="https://gitlab.example.com/app",
+        bom_ref, (project, version) = (
+            CycloneDXProcessor.parse_application_from_cyclone_dx(
+                app_id="app-1",
+                public_app_id="pub-1",
+                scan_id="scan-1",
+                metadata_json=metadata,
+                gitlab_project_url="https://gitlab.example.com/app",
+            )
         )
         assert bom_ref == "ref-123"
         assert project.name == "my-app"
@@ -244,7 +260,7 @@ class TestParseComponentFromCycloneDx:
         )
         assert project.name == "library-x"
         assert project.group == "org.test"
-        assert project.type == "library"
+        assert project.type == ProjectType.Library
         assert version.version == "1.2.3"
         assert version.scan_id == "scan-1"
 
@@ -465,7 +481,9 @@ class TestProcessCycloneDxJson:
         )
         assert "orphan-1" in deps.get("root-ref", set())
 
-    def test_persistence_called_for_projects(self, processor, mock_graph, minimal_cyclonedx):
+    def test_persistence_called_for_projects(
+        self, processor, mock_graph, minimal_cyclonedx
+    ):
         processor.process_cyclone_dx_json(
             app_id="a",
             public_app_id="b",
@@ -673,7 +691,7 @@ class TestPersistDefects:
 
 
 class TestAdminConsoleSBOMIntegration:
-    """Integration tests using the customer_portal SBOM fixture (acme_corp demo data)."""
+    """Integration tests using customer_portal SBOM fixture (acme_corp demo)."""
 
     def test_component_count(self, admin_console_sbom):
         assert len(admin_console_sbom["components"]) > 50
@@ -714,6 +732,6 @@ class TestAdminConsoleSBOMIntegration:
         root_project, root_version = projects[root_ref]
         assert root_project.name == "customer-portal"
         assert root_project.group == "com.acme.apps"
-        assert root_project.type == "application"
+        assert root_project.type == ProjectType.Application
         assert root_project.repo == "https://bitbucket.acme-corp.internal/customer-portal"
         assert root_version.version == "2.1.0"

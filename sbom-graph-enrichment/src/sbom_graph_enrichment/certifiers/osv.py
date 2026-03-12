@@ -48,7 +48,9 @@ class _TokenBucket:
                 self._tokens -= 1.0
 
 
-_bucket = _TokenBucket(rate=_RATE_LIMIT_PER_MINUTE / 60.0, capacity=_RATE_LIMIT_PER_MINUTE)
+_bucket = _TokenBucket(
+    rate=_RATE_LIMIT_PER_MINUTE / 60.0, capacity=_RATE_LIMIT_PER_MINUTE
+)
 
 
 class OSVCertifier(Certifier):

@@ -19,7 +19,9 @@ class TestPropagate:
         direct = {"A": 8.0}
         children: dict[str, list[str]] = {}
 
-        eff, inh, mp, dc = _propagate(direct, children, alpha=0.4, decay=0.8, max_depth=20)
+        eff, inh, mp, dc = _propagate(
+            direct, children, alpha=0.4, decay=0.8, max_depth=20
+        )
 
         assert eff["A"] == 8.0
         assert inh["A"] == 0.0
@@ -31,7 +33,9 @@ class TestPropagate:
         direct = {"A": 8.0, "B": 6.0, "C": 4.0}
         children = {"A": ["B"], "B": ["C"]}
 
-        eff, _, mp, dc = _propagate(direct, children, alpha=0.4, decay=0.8, max_depth=20)
+        eff, _, mp, dc = _propagate(
+            direct, children, alpha=0.4, decay=0.8, max_depth=20
+        )
 
         assert eff["C"] == 4.0
         assert mp["A"] <= 4.0
@@ -42,7 +46,9 @@ class TestPropagate:
         direct = {"A": 8.0, "B": 7.0, "C": 6.0, "D": 3.0}
         children = {"A": ["B", "C"], "B": ["D"], "C": ["D"]}
 
-        eff, _, mp, dc = _propagate(direct, children, alpha=0.4, decay=0.8, max_depth=20)
+        eff, _, mp, dc = _propagate(
+            direct, children, alpha=0.4, decay=0.8, max_depth=20
+        )
 
         assert eff["D"] == 3.0
         assert mp["A"] <= 3.0
@@ -53,7 +59,9 @@ class TestPropagate:
         direct = {"A": 7.0}
         children = {"A": ["B"]}
 
-        eff, _, _, dc = _propagate(direct, children, alpha=0.4, decay=0.8, max_depth=20)
+        eff, _, _, dc = _propagate(
+            direct, children, alpha=0.4, decay=0.8, max_depth=20
+        )
 
         assert eff["A"] == 7.0
         assert dc["A"] == 0
@@ -63,7 +71,9 @@ class TestPropagate:
         direct = {"A": 10.0, "B": 2.0}
         children = {"A": ["B"]}
 
-        eff, _, _, _ = _propagate(direct, children, alpha=0.0, decay=0.8, max_depth=20)
+        eff, _, _, _ = _propagate(
+            direct, children, alpha=0.0, decay=0.8, max_depth=20
+        )
 
         assert eff["B"] == 2.0
         assert abs(eff["A"] - 2.0) < 0.01
@@ -73,7 +83,9 @@ class TestPropagate:
         direct = {"A": 10.0, "B": 0.0}
         children = {"A": ["B"]}
 
-        eff, _, _, _ = _propagate(direct, children, alpha=1.0, decay=0.8, max_depth=20)
+        eff, _, _, _ = _propagate(
+            direct, children, alpha=1.0, decay=0.8, max_depth=20
+        )
 
         assert eff["A"] == 10.0
 
@@ -82,7 +94,9 @@ class TestPropagate:
         direct = {"A": 7.0, "B": 5.0}
         children = {"A": ["B"], "B": ["A"]}
 
-        eff, _, _, _ = _propagate(direct, children, alpha=0.4, decay=0.8, max_depth=20)
+        eff, _, _, _ = _propagate(
+            direct, children, alpha=0.4, decay=0.8, max_depth=20
+        )
 
         assert "A" in eff
         assert "B" in eff
@@ -163,3 +177,8 @@ class TestSerialiseFindingsRoundTrip:
         ]
         result = _deserialise_findings(data)
         assert len(result) == 1
+
+    def test_deserialise_skips_missing_kind(self) -> None:
+        data = [{"source": "x", "package_url": "pkg:npm/x@1", "data": {}}]
+        result = _deserialise_findings(data)
+        assert len(result) == 0

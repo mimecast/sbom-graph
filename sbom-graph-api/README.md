@@ -155,6 +155,8 @@ gunicorn \
 | `GET /visualizations/dependencies/purl/<path:purl>` | Same as above, using purl |
 | `GET /visualizations/dependants-multi/{project_name}/{version}` | Dependants graph with cycle detection and multiple layouts |
 | `GET /visualizations/dependants-multi/purl/<path:purl>` | Same as above, using purl |
+| `GET /api/v1/blast-radius/<path:purl>` | Blast radius visualization for compromised package |
+| `GET /reports/source-impact/graph` | Source impact visualization (affected apps by repo) |
 
 #### Query Parameters for Visualizations
 
@@ -220,6 +222,12 @@ All report endpoints support multiple output formats via the `format` query para
 | `GET /reports/dependants/purl/<path:purl>` | Same as above, using purl |
 | `GET /reports/multi-version-deps/purl/<path:purl>` | Library version adoption, using purl |
 | `GET /reports/multi-version-sources/purl/<path:purl>` | Diamond dependency conflicts, using purl |
+| `GET /reports/trust-score-heatmap` | Color-coded trust score grid |
+| `GET /reports/risk-propagation-graph` | vis.js network graph showing risk propagation |
+| `GET /reports/application-risk-dashboard` | Per-application risk summaries |
+| `GET /reports/risk-path-explorer/<path:purl>` | Drill-down into dependency chains contributing to risk |
+| `GET /reports/risk-outliers` | Packages with low effective scores and many dependants |
+| `GET /reports/whatif-simulator` | Interactive form to simulate risk propagation changes |
 
 #### Special Version Values
 
@@ -292,13 +300,13 @@ npx ajv validate -s projects.schema.json -d projects.json
 
 ### SBOM Ingestion Endpoints
 
-All ingestion endpoints validate request bodies against JSON Schema (Draft-07) before processing. Validation errors return `400` with a list of human-readable error messages. Schemas enforce `additionalProperties: false` to prevent mass assignment.
+All ingestion endpoints validate request bodies against JSON Schema (Draft-07) before processing. Validation errors return `400` with a list of human-readable error messages. Schemas enforce `additionalProperties: false` to prevent mass assignment. **SBOM provenance is tracked**: each successful ingestion creates an SBOM record linked to the ingested versions; the response includes a `record_id` for provenance tracking and audit trails.
 
 | Endpoint | Description |
 |----------|-------------|
 | `POST /ingest/cyclonedx` | Upload and process a CycloneDX SBOM |
 | `POST /ingest/spdx` | Upload and process an SPDX 2.3 SBOM |
-| `POST /ingest/sbom` | Upload SBOM with automatic format detection |
+| `POST /ingest/sbom` | Upload SBOM with automatic format detection (CycloneDX or SPDX) |
 | `POST /ingest/vex` | Upload an OpenVEX document |
 
 #### POST /ingest/cyclonedx
@@ -306,7 +314,8 @@ All ingestion endpoints validate request bodies against JSON Schema (Draft-07) b
 Accepts a CycloneDX SBOM as a JSON body and persists the parsed projects,
 dependencies, and defects to the graph database via the `sbom-graph-model`
 library. Requires JWT authentication. The request body is validated against the
-`sbom-upload` JSON Schema.
+`sbom-upload` JSON Schema. SBOM provenance (document hash, tool info) is stored
+and linked to all ingested versions.
 
 **Request** (`Content-Type: application/json`):
 
@@ -331,6 +340,7 @@ library. Requires JWT authentication. The request body is validated against the
 ```json
 {
   "status": "ok",
+  "record_id": "550e8400-e29b-41d4-a716-446655440000",
   "app_id": "a1b2c3...",
   "public_app_id": "my-application",
   "projects_count": 42,
@@ -338,6 +348,24 @@ library. Requires JWT authentication. The request body is validated against the
   "defects_count": 3
 }
 ```
+
+The `record_id` uniquely identifies this ingestion for provenance tracking and can be used to trace which SBOM document produced the ingested graph data.
+
+#### POST /ingest/spdx
+
+Accepts an SPDX 2.3 JSON SBOM and persists packages, relationships, licenses, source repositories, and defects to the graph database. Requires JWT authentication. The request body uses the same `sbom-upload` envelope schema as CycloneDX. SBOM provenance is stored and linked to all ingested versions.
+
+**Request** (`Content-Type: application/json`): Same envelope as CycloneDX; the `sbom` field must contain a valid SPDX 2.3 JSON document (e.g., with `spdxVersion`, `packages`, `relationships`).
+
+**Response** (`201 Created`): Same structure as CycloneDX, plus a `format` field set to `"spdx"`. Includes `record_id` for provenance tracking.
+
+#### POST /ingest/sbom
+
+Auto-detects the SBOM format from the document structure and delegates to the appropriate processor. Accepts either CycloneDX (detected via `bomFormat` or `metadata.component`) or SPDX (detected via `spdxVersion`). Use this endpoint when the format is unknown or when integrating with tools that may produce either format. Response includes `record_id` and `format` (the detected format).
+
+**Request** (`Content-Type: application/json`): Same envelope as CycloneDX; the `sbom` field may contain either a CycloneDX or SPDX JSON document.
+
+**Response** (`201 Created`): Same structure as the format-specific endpoints, with `record_id` and `format` (`"cyclonedx"` or `"spdx"`).
 
 **Error Responses**:
 
@@ -356,6 +384,41 @@ curl -X POST http://localhost:8080/ingest/cyclonedx \
   -H "Authorization: Bearer <jwt-token>" \
   -d '{"sbom": <cyclonedx-json>}'
 ```
+
+#### Programmatic API v1 Endpoints
+
+All programmatic API v1 endpoints require JWT authentication and return a consistent JSON envelope: `{data, pagination?, meta}`. Paginated endpoints include `pagination` with `offset`, `limit`, and `total`.
+
+| Endpoint | Description |
+|----------|-------------|
+| **Package metadata** | |
+| `GET /api/v1/package/<path:purl>` | Comprehensive package metadata (vulnerabilities, licenses, trust score, policy, VEX) |
+| `GET /api/v1/package/<path:purl>/vulns` | Vulnerabilities for a package (optional `include_dependencies`) |
+| `GET /api/v1/package/<path:purl>/licenses` | Licenses for a package |
+| `GET /api/v1/package/<path:purl>/vex` | VEX statements for a package |
+| `GET /api/v1/package/<path:purl>/dependencies` | Paginated dependency tree (`max_depth`, `offset`, `limit`) |
+| `GET /api/v1/package/<path:purl>/dependants` | Paginated reverse dependency tree (`max_depth`, `offset`, `limit`) |
+| `GET /api/v1/package/<path:purl>/policy` | Policy check result for CI/CD gate |
+| **Trust score** | |
+| `GET /api/v1/package/<path:purl>/trust-score` | Trust score breakdown for a package |
+| `GET /api/v1/package/<path:purl>/trust-score/risk-path` | Risk propagation path for a package |
+| `GET /api/v1/package/<path:purl>/trust-check` | CI/CD gate: pass/fail against minimum effective score and confidence thresholds |
+| `GET /api/v1/application/<path:purl>/supply-chain-risk` | Supply-chain risk summary for an application |
+| **Analysis** | |
+| `GET /api/v1/analysis/critical-dependencies` | Critical dependencies sorted by `fan_in` or `trust_score` |
+| `GET /api/v1/analysis/risk-summary` | Aggregate risk metrics (vuln counts by severity, license risk, policy violations) |
+| `GET /api/v1/analysis/trust-score-distribution` | Trust score histogram across all packages |
+| `GET /api/v1/analysis/remediation-priorities` | Packages ranked by remediation leverage (applications improved per upgrade) |
+| `GET /api/v1/analysis/risk-propagation-impact` | What-if simulation: impact of a score change on downstream apps |
+| **Source repository** | |
+| `GET /api/v1/source/packages` | Packages from a source repository URL |
+| `GET /api/v1/source/vulnerabilities` | Vulnerabilities from a source repository URL |
+| **Incident response** | |
+| `GET /api/v1/blast-radius/<path:purl>` | Blast radius visualization for a compromised package |
+| `GET /api/v1/patch-plan/<path:defect_id>` | Patch plan for a vulnerability |
+| `GET /api/v1/sbom/<record_id>` | SBOM record metadata by ingestion ID |
+| **Specification** | |
+| `GET /api/v1/openapi.json` | OpenAPI 3.1 specification |
 
 #### Programmatic API Endpoints with JSON Schema Validation
 
@@ -481,6 +544,10 @@ export LDAP_USER_GROUPS="appsec-users,developers,security-team"
 
 When `AUTH_ENABLED=true`, all endpoints (except `/health` and `/ready`) require authentication.
 
+### Login Rate Limiting
+
+The `/auth/login` endpoint is protected by in-memory per-IP rate limiting: 10 attempts per 15 minutes per Gunicorn worker. When exceeded, the server returns `429 Too Many Requests` with a `Retry-After` header. Note: limits are per-worker (not shared across workers).
+
 ### Authentication Methods
 
 1. **LDAP Authentication** (when `LDAP_ENABLED=true`): Users log in via `/auth/login` with LDAP credentials
@@ -515,6 +582,9 @@ When LDAP is disabled, the application uses local user storage:
 
 | Endpoint | Description |
 |----------|-------------|
+| `GET /admin/policies` | Policy annotation admin page (search, filter, add/remove) |
+| `POST /admin/policies` | Add policy annotation (admin only, CSRF protected) |
+| `DELETE /admin/policies/<purl>` | Remove policy annotation (admin only, AJAX) |
 | `GET /auth/admin/users` | User management page |
 | `GET /auth/admin/users/create` | Create new user form |
 | `POST /auth/admin/users/create` | Create new user |
@@ -857,7 +927,7 @@ sbom-graph-api/
 │       ├── wsgi.py             # WSGI entry point
 │       ├── routes/
 │       │   ├── auth.py         # Authentication endpoints
-│       │   ├── ingest.py       # SBOM ingestion (CycloneDX upload)
+│       │   ├── ingest.py       # SBOM ingestion (CycloneDX, SPDX, auto-detect; provenance tracking)
 │       │   ├── visualizations.py
 │       │   ├── exports.py
 │       │   ├── reports.py

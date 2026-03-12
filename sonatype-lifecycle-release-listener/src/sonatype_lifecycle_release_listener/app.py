@@ -1,13 +1,16 @@
 """
 Flask microservice to listen for SonaType webhook messages and process release scans.
 """
+
 import hashlib
 import hmac
-import os
+import json
 import logging
 import logging.config
+import os
 import re
 import uuid
+from datetime import datetime, UTC
 from typing import Optional
 from urllib.parse import quote as urlquote
 from flask import Flask, request, jsonify
@@ -16,6 +19,7 @@ import requests
 from requests.auth import HTTPBasicAuth
 from sbom_graph_model.cyclonedx.processor import CycloneDXProcessor
 from sbom_graph_model.persistence import Persistence
+from sbom_graph_model.vex import VexProcessor
 from redis.exceptions import RedisError
 
 _SONATYPE_ID_RE = re.compile(r"^[a-fA-F0-9]{32}$")
@@ -26,9 +30,9 @@ _PUBLIC_ID_RE = re.compile(r"^[a-zA-Z0-9._-]{1,256}$")
 def _configure_logging():
     """Configure logging from file or fall back to basic config."""
     logging_conf_paths = [
-        os.path.join(os.path.dirname(__file__), '..', '..', 'logging.conf'),
-        os.path.join(os.getcwd(), 'logging.conf'),
-        'logging.conf'
+        os.path.join(os.path.dirname(__file__), "..", "..", "logging.conf"),
+        os.path.join(os.getcwd(), "logging.conf"),
+        "logging.conf",
     ]
 
     for conf_path in logging_conf_paths:
@@ -42,7 +46,7 @@ def _configure_logging():
     # Fall back to basic configuration
     logging.basicConfig(
         level=logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(funcName)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(name)s - %(funcName)s - %(levelname)s - %(message)s",
     )
 
 
@@ -53,46 +57,55 @@ logger = logging.getLogger(__name__)
 def create_app(config: Optional[dict] = None) -> Flask:
     """
     Application factory for creating the Flask app.
-    
+
     :param config: Optional configuration dictionary
     :return: Configured Flask application
     """
-    app = Flask(__name__)
+    app = Flask(__name__)  # pylint: disable=redefined-outer-name
 
     # Apply configuration
     if config is not None:
         app.config.update(config)
 
     # Default configuration from environment variables
-    app.config.setdefault('SONATYPE_HOST', os.environ.get('SONATYPE_HOST', ''))
-    app.config.setdefault('SONATYPE_USERNAME', os.environ.get('SONATYPE_USERNAME', ''))
-    app.config.setdefault('SONATYPE_PASSWORD', os.environ.get('SONATYPE_PASSWORD', ''))
+    app.config.setdefault("SONATYPE_HOST", os.environ.get("SONATYPE_HOST", ""))
+    app.config.setdefault("SONATYPE_USERNAME", os.environ.get("SONATYPE_USERNAME", ""))
+    app.config.setdefault("SONATYPE_PASSWORD", os.environ.get("SONATYPE_PASSWORD", ""))
     app.config.setdefault(
-        'SONATYPE_CACERTS', os.environ.get('SONATYPE_CACERTS', 'certs/ca_bundle.pem'))
-    app.config.setdefault('FALKORDB_HOST', os.environ.get('FALKORDB_HOST', ''))
-    app.config.setdefault('FALKORDB_PORT', int(os.environ.get('FALKORDB_PORT', '6379')))
-    app.config.setdefault('FALKORDB_GRAPH_NAME', os.environ.get('FALKORDB_GRAPH_NAME', 'acme-corp'))
-    app.config.setdefault('FALKORDB_PASSWORD', os.environ.get('FALKORDB_PASSWORD', ''))
+        "SONATYPE_CACERTS", os.environ.get("SONATYPE_CACERTS", "certs/ca_bundle.pem")
+    )
+    app.config.setdefault("FALKORDB_HOST", os.environ.get("FALKORDB_HOST", ""))
+    app.config.setdefault("FALKORDB_PORT", int(os.environ.get("FALKORDB_PORT", "6379")))
     app.config.setdefault(
-        'FALKORDB_CACERTS', os.environ.get('FALKORDB_CACERTS', 'certs/ca_bundle.pem'))
+        "FALKORDB_GRAPH_NAME", os.environ.get("FALKORDB_GRAPH_NAME", "acme-corp")
+    )
+    app.config.setdefault("FALKORDB_PASSWORD", os.environ.get("FALKORDB_PASSWORD", ""))
     app.config.setdefault(
-        'INTERNAL_PREFIXES', os.environ.get('INTERNAL_PREFIXES', ''))
+        "FALKORDB_CACERTS", os.environ.get("FALKORDB_CACERTS")
+    )
+    app.config.setdefault("FALKORDB_SSL", os.environ.get("FALKORDB_SSL", "false"))
     app.config.setdefault(
-        'WEBHOOK_SECRET', os.environ.get('WEBHOOK_SECRET', ''))
-    app.config['MAX_CONTENT_LENGTH'] = 1 * 1024 * 1024  # 1 MB
+        "FALKORDB_CLIENT_CERT", os.environ.get("FALKORDB_CLIENT_CERT")
+    )
+    app.config.setdefault(
+        "FALKORDB_CLIENT_KEY", os.environ.get("FALKORDB_CLIENT_KEY")
+    )
+    app.config.setdefault("INTERNAL_PREFIXES", os.environ.get("INTERNAL_PREFIXES", ""))
+    app.config.setdefault("WEBHOOK_SECRET", os.environ.get("WEBHOOK_SECRET", ""))
+    app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024  # 1 MB
 
-    if not app.config['WEBHOOK_SECRET']:
+    if not app.config["WEBHOOK_SECRET"]:
         logger.warning(
             "WEBHOOK_SECRET is not set -- webhook endpoint is unauthenticated. "
             "Set WEBHOOK_SECRET to enable HMAC signature verification."
         )
 
-    @app.route('/health', methods=['GET'])
+    @app.route("/health", methods=["GET"])
     def health_check():
         """Health check endpoint for load balancers and orchestration."""
-        return jsonify({'status': 'healthy'}), 200
+        return jsonify({"status": "healthy"}), 200
 
-    @app.route('/webhook', methods=['POST'])
+    @app.route("/webhook", methods=["POST"])
     def handle_webhook():
         """
         Handle incoming webhook messages from SonaType.
@@ -105,62 +118,77 @@ def create_app(config: Optional[dict] = None) -> Flask:
         request_id = uuid.uuid4().hex[:12]
 
         try:
-            webhook_secret = app.config.get('WEBHOOK_SECRET', '')
+            webhook_secret = app.config.get("WEBHOOK_SECRET", "")
             if webhook_secret:
-                sig_header = request.headers.get('X-Webhook-Signature', '')
+                sig_header = request.headers.get("X-Webhook-Signature", "")
                 if not _verify_hmac(webhook_secret, request.get_data(), sig_header):
-                    logger.warning("Webhook signature verification failed",
-                                   extra={'request_id': request_id})
-                    return jsonify({'error': 'Invalid signature'}), 403
+                    logger.warning(
+                        "Webhook signature verification failed",
+                        extra={"request_id": request_id},
+                    )
+                    return jsonify({"error": "Invalid signature"}), 403
 
             try:
                 message = request.get_json()
             except BadRequest:
-                logger.warning("Received invalid JSON payload",
-                               extra={'request_id': request_id})
-                return jsonify({'error': 'Invalid JSON payload'}), 400
+                logger.warning(
+                    "Received invalid JSON payload", extra={"request_id": request_id}
+                )
+                return jsonify({"error": "Invalid JSON payload"}), 400
 
             if not message:
-                logger.warning("Received empty or invalid JSON payload",
-                               extra={'request_id': request_id})
-                return jsonify({'error': 'Invalid JSON payload'}), 400
+                logger.warning(
+                    "Received empty or invalid JSON payload",
+                    extra={"request_id": request_id},
+                )
+                return jsonify({"error": "Invalid JSON payload"}), 400
 
-            logger.info("Received webhook message",
-                        extra={'request_id': request_id,
-                               'webhook_id': message.get('id', 'unknown')})
+            logger.info(
+                "Received webhook message",
+                extra={
+                    "request_id": request_id,
+                    "webhook_id": message.get("id", "unknown"),
+                },
+            )
 
-            application_evaluation = message.get('applicationEvaluation')
+            application_evaluation = message.get("applicationEvaluation")
             if not application_evaluation:
                 logger.debug("Message does not contain applicationEvaluation, ignoring")
-                return jsonify({'status': 'ignored', 'reason': 'No applicationEvaluation'}), 200
+                return jsonify(
+                    {"status": "ignored", "reason": "No applicationEvaluation"}
+                ), 200
 
-            stage = application_evaluation.get('stage', '').lower()
-            if stage != 'release':
+            stage = application_evaluation.get("stage", "").lower()
+            if stage != "release":
                 logger.debug("Stage '%s' is not 'release', ignoring", stage)
                 return jsonify(
-                    {'status': 'ignored', 'reason': f"Stage '{stage}' is not release"}), 200
+                    {"status": "ignored", "reason": f"Stage '{stage}' is not release"}
+                ), 200
 
-            application = application_evaluation.get('application', {})
-            app_id = application.get('id', '')
-            public_id = application.get('publicId', '')
+            application = application_evaluation.get("application", {})
+            app_id = application.get("id", "")
+            public_id = application.get("publicId", "")
 
             if not app_id or not public_id:
                 logger.warning("Missing application id or publicId in message")
-                return jsonify({'error': 'Missing application id or publicId'}), 400
+                return jsonify({"error": "Missing application id or publicId"}), 400
 
             if not _SONATYPE_ID_RE.match(app_id):
-                logger.warning("Invalid app_id format rejected",
-                               extra={'request_id': request_id})
-                return jsonify({'error': 'Invalid application id format'}), 400
+                logger.warning(
+                    "Invalid app_id format rejected", extra={"request_id": request_id}
+                )
+                return jsonify({"error": "Invalid application id format"}), 400
 
             if not _PUBLIC_ID_RE.match(public_id):
-                logger.warning("Invalid publicId format rejected",
-                               extra={'request_id': request_id})
-                return jsonify({'error': 'Invalid publicId format'}), 400
+                logger.warning(
+                    "Invalid publicId format rejected", extra={"request_id": request_id}
+                )
+                return jsonify({"error": "Invalid publicId format"}), 400
 
-            logger.info("Processing release scan",
-                        extra={'request_id': request_id,
-                               'public_id': public_id})
+            logger.info(
+                "Processing release scan",
+                extra={"request_id": request_id, "public_id": public_id},
+            )
 
             result = process_release_scan(
                 app_id=app_id,
@@ -168,43 +196,115 @@ def create_app(config: Optional[dict] = None) -> Flask:
                 config=app.config,
             )
 
-            if result['success']:
-                logger.info("Successfully processed release scan",
-                            extra={'request_id': request_id,
-                                   'public_id': public_id})
-                return jsonify({'status': 'processed', 'application': public_id}), 200
+            if result["success"]:
+                logger.info(
+                    "Successfully processed release scan",
+                    extra={"request_id": request_id, "public_id": public_id},
+                )
+                return jsonify({"status": "processed", "application": public_id}), 200
             else:
-                logger.error("Failed to process release scan",
-                             extra={'request_id': request_id,
-                                    'public_id': public_id,
-                                    'error': result['error']})
-                return jsonify({
-                    'status': 'error',
-                    'message': 'Failed to process release scan',
-                    'reference': request_id,
-                }), 500
+                logger.error(
+                    "Failed to process release scan",
+                    extra={
+                        "request_id": request_id,
+                        "public_id": public_id,
+                        "error": result["error"],
+                    },
+                )
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": "Failed to process release scan",
+                        "reference": request_id,
+                    }
+                ), 500
 
         except (NotFound, RedisError):
-            logger.exception("Error processing webhook",
-                             extra={'request_id': request_id})
-            return jsonify({
-                'status': 'error',
-                'message': 'Internal processing error',
-                'reference': request_id,
-            }), 500
+            logger.exception(
+                "Error processing webhook", extra={"request_id": request_id}
+            )
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": "Internal processing error",
+                    "reference": request_id,
+                }
+            ), 500
 
     return app
 
 
 def _verify_hmac(secret: str, body: bytes, signature_header: str) -> bool:
     """Verify HMAC-SHA256 signature of the request body."""
-    if not signature_header.startswith('sha256='):
+    if not signature_header.startswith("sha256="):
         return False
     received_sig = signature_header[7:]
-    expected_sig = hmac.new(
-        secret.encode('utf-8'), body, hashlib.sha256
-    ).hexdigest()
+    expected_sig = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected_sig, received_sig)
+
+
+def _extract_cyclonedx_tool_info(sbom: dict) -> tuple[Optional[str], Optional[str]]:
+    """Extract tool name and version from CycloneDX metadata.tools.
+
+    Handles both CycloneDX 1.4+ (tools as array) and 1.5+ (tools.components).
+
+    Args:
+        sbom: The CycloneDX SBOM dict.
+
+    Returns:
+        Tuple of (tool_name, tool_version). Either may be None.
+    """
+    metadata = sbom.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        return None, None
+
+    tools = metadata.get("tools")
+    if tools is None:
+        return None, None
+
+    # CycloneDX 1.5+: tools.components
+    if isinstance(tools, dict):
+        components = tools.get("components")
+        if isinstance(components, list) and components:
+            first = components[0]
+            if isinstance(first, dict):
+                return (
+                    first.get("name") if isinstance(first.get("name"), str) else None,
+                    first.get("version")
+                    if isinstance(first.get("version"), str)
+                    else None,
+                )
+        return None, None
+
+    # CycloneDX 1.4+: tools as array
+    if isinstance(tools, list) and tools:
+        first = tools[0]
+        if isinstance(first, dict):
+            name = first.get("name")
+            version = first.get("version")
+            return (
+                name if isinstance(name, str) else None,
+                version if isinstance(version, str) else None,
+            )
+    return None, None
+
+
+def _link_versions_to_sbom_record(
+    persistence: Persistence,
+    projects: dict,
+    record_id: str,
+) -> None:
+    """Link all project versions to an SBOM record."""
+    for _bom_ref, (project, version) in projects.items():
+        if project.purl:
+            persistence.link_version_to_sbom_record(project.purl, record_id)
+        elif project.name and version.version:
+            persistence.link_version_to_sbom_record_by_name(
+                project.name,
+                project.group,
+                version.version,
+                record_id,
+            )
 
 
 class CycloneDXHelper:
@@ -212,15 +312,20 @@ class CycloneDXHelper:
 
     def __init__(self, config: dict):
         internal_prefixes = Persistence.parse_internal_prefixes(
-            config.get('INTERNAL_PREFIXES', '')
+            config.get("INTERNAL_PREFIXES", "")
         )
+        ssl_enabled = config.get("FALKORDB_SSL", "false")
+        if isinstance(ssl_enabled, str):
+            ssl_enabled = ssl_enabled.lower() == "true"
         self.persistence = Persistence(
-            host=config.get('FALKORDB_HOST', ''),
-            port=int(config.get('FALKORDB_PORT', 6379)),
-            graph_name=config.get('FALKORDB_GRAPH_NAME', 'acme-corp'),
-            password=config.get('FALKORDB_PASSWORD', ''),
-            ssl=True,
-            ssl_ca_certs=config.get('FALKORDB_CACERTS', 'certs/ca_bundle.pem'),
+            host=config.get("FALKORDB_HOST", ""),
+            port=int(config.get("FALKORDB_PORT", 6379)),
+            graph_name=config.get("FALKORDB_GRAPH_NAME", "acme-corp"),
+            password=config.get("FALKORDB_PASSWORD", ""),
+            ssl=ssl_enabled,
+            ssl_ca_certs=config.get("FALKORDB_CACERTS"),
+            ssl_certfile=config.get("FALKORDB_CLIENT_CERT"),
+            ssl_keyfile=config.get("FALKORDB_CLIENT_KEY"),
             internal_prefixes=internal_prefixes,
         )
         self.sonatype_client = SonaTypeClient(config)
@@ -230,40 +335,72 @@ class CycloneDXHelper:
         self,
         app_id: str,
         public_app_id: str,
-        version: str = '1.5',
-        stage_id: str = 'release'):
-        """
-        Process the CycloneDX SBOM.
+        version: str = "1.5",
+        stage_id: str = "release",
+    ) -> str:
+        """Process the CycloneDX SBOM and store provenance.
+
+        Returns:
+            The record_id of the created SBOM record.
         """
         try:
             sbom = self.sonatype_client.get_cyclonedx_sbom(app_id, version, stage_id)
             if sbom is None:
                 error_message = (
-                    f"Error: Unable to retrieve CycloneDX {version} data for app ID {app_id} on {stage_id}"
+                    f"Error: Unable to retrieve CycloneDX {version} data "
+                    f"for app ID {app_id} on {stage_id}"
                 )
                 logger.error(error_message)
                 raise NotFound(error_message)
-        except NotFound as e:
+        except NotFound:
             logger.exception("Error processing CycloneDX SBOM")
             raise
 
         try:
-            self.cyclonedx_processor.process_cyclone_dx_json(
+            projects, _, _ = self.cyclonedx_processor.process_cyclone_dx_json(
                 app_id=app_id,
                 public_app_id=public_app_id,
                 gitlab_project_url="",
-                json_data=sbom)
-        except RedisError as e:
+                json_data=sbom,
+            )
+        except RedisError:
             logger.exception("Error processing CycloneDX SBOM")
             raise
 
+        # Store SBOM provenance
+        record_id = str(uuid.uuid4())
+        ingested_at = datetime.now(UTC).isoformat()
+        document_hash = hashlib.sha256(
+            json.dumps(sbom, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        tool_name, tool_version = _extract_cyclonedx_tool_info(sbom)
+        serial_number = (
+            sbom.get("serialNumber")
+            if isinstance(sbom.get("serialNumber"), str)
+            else None
+        )
+
+        self.persistence.create_sbom_record(
+            record_id=record_id,
+            sbom_format="cyclonedx",
+            ingested_at=ingested_at,
+            source="webhook",
+            tool_name=tool_name,
+            tool_version=tool_version,
+            serial_number=serial_number,
+            document_hash=document_hash,
+        )
+        _link_versions_to_sbom_record(self.persistence, projects, record_id)
+
+        return record_id
 
     def process_cyclone_sbom(
         self,
         app_id: str,
         public_app_id: str,
-        version: str = '1.5',
-        stage_id: str = 'release'):
+        version: str = "1.5",
+        stage_id: str = "release",
+    ):
         """
         Backwards-compatible wrapper for :meth:`process_cyclonedx_sbom`.
         """
@@ -275,35 +412,85 @@ class CycloneDXHelper:
         )
 
 
+class VexHelper:
+    """Helper class to fetch and process VEX documents from Sonatype."""
+
+    def __init__(self, config: dict):
+        """Initialize with shared persistence and Sonatype client."""
+        internal_prefixes = Persistence.parse_internal_prefixes(
+            config.get("INTERNAL_PREFIXES", "")
+        )
+        ssl_enabled = config.get("FALKORDB_SSL", "false")
+        if isinstance(ssl_enabled, str):
+            ssl_enabled = ssl_enabled.lower() == "true"
+        self.persistence = Persistence(
+            host=config.get("FALKORDB_HOST", ""),
+            port=int(config.get("FALKORDB_PORT", 6379)),
+            graph_name=config.get("FALKORDB_GRAPH_NAME", "acme-corp"),
+            password=config.get("FALKORDB_PASSWORD", ""),
+            ssl=ssl_enabled,
+            ssl_ca_certs=config.get("FALKORDB_CACERTS"),
+            ssl_certfile=config.get("FALKORDB_CLIENT_CERT"),
+            ssl_keyfile=config.get("FALKORDB_CLIENT_KEY"),
+            internal_prefixes=internal_prefixes,
+        )
+        self.sonatype_client = SonaTypeClient(config)
+        self.vex_processor = VexProcessor(persistence=self.persistence)
+
+    def process_vex_for_application(
+        self,
+        app_id: str,
+        stage_id: str = "release",
+    ) -> Optional[dict[str, int]]:
+        """Fetch and process VEX data for an application.
+
+        Args:
+            app_id: The Sonatype application ID.
+            stage_id: The stage to fetch VEX for.
+
+        Returns:
+            Summary dict with statements_processed and linked_vulnerabilities,
+            or None if no VEX data available.
+        """
+        document = self.sonatype_client.get_vex_document(
+            app_id=app_id,
+            stage_id=stage_id,
+        )
+        if document is None:
+            return None
+        return self.vex_processor.process_vex_document(document)
+
+
 class SonaTypeClient:
     """Client class to interact with SonaType API."""
+
     def __init__(self, config: dict):
-        self.sonatype_host = config.get('SONATYPE_HOST', '')
-        self.sonatype_username = config.get('SONATYPE_USERNAME', '')
-        self.sonatype_password = config.get('SONATYPE_PASSWORD', '')
-        self.cacerts = config.get('SONATYPE_CACERTS', 'certs/ca_bundle.pem')
+        self.sonatype_host = config.get("SONATYPE_HOST", "")
+        self.sonatype_username = config.get("SONATYPE_USERNAME", "")
+        self.sonatype_password = config.get("SONATYPE_PASSWORD", "")
+        self.cacerts = config.get("SONATYPE_CACERTS", "certs/ca_bundle.pem")
         self.session = requests.Session()
         self.session.verify = self.cacerts
         self.session.auth = HTTPBasicAuth(
-            username=self.sonatype_username,
-            password=self.sonatype_password
+            username=self.sonatype_username, password=self.sonatype_password
         )
-        self.api_url = f'https://{self.sonatype_host}/api/v2/'
+        self.api_url = f"https://{self.sonatype_host}/api/v2/"
 
     def get_cyclonedx_sbom(
         self,
         app_id: str,
-        version: str = '1.5',
-        stage_id: str = 'release',
-        headers: Optional[dict] = None) -> Optional[dict]:
+        version: str = "1.5",
+        stage_id: str = "release",
+        headers: Optional[dict] = None,
+    ) -> Optional[dict]:
         """
         Get the CycloneDX SBOM for the given application ID and public ID.
         """
         try:
             if headers is None:
-                headers = {'accept': 'application/json'}
+                headers = {"accept": "application/json"}
             else:
-                headers['accept'] = 'application/json'
+                headers["accept"] = "application/json"
 
             url = (
                 f"{self.api_url}cycloneDx/{urlquote(version, safe='')}"
@@ -316,10 +503,63 @@ class SonaTypeClient:
             return response.json()
         except requests.exceptions.RequestException as e:
             error_message = (
-                    f"Error: Unable to retrieve CycloneDX {version} data for app ID {app_id} on {stage_id}"
-                )
+                f"Error: Unable to retrieve CycloneDX {version} data "
+                f"for app ID {app_id} on {stage_id}"
+            )
             logger.error(error_message)
             raise NotFound(error_message) from e
+
+    def get_vex_document(
+        self,
+        app_id: str,
+        stage_id: str = "release",
+        headers: Optional[dict] = None,
+    ) -> Optional[dict]:
+        """Fetch a VEX document from Sonatype IQ for the given application.
+
+        Args:
+            app_id: The Sonatype application ID.
+            stage_id: The stage to fetch VEX for.
+            headers: Optional HTTP headers.
+
+        Returns:
+            The parsed VEX JSON document, or None if not available.
+        """
+        try:
+            if headers is None:
+                headers = {"accept": "application/json"}
+            else:
+                headers = dict(headers)
+                headers["accept"] = "application/json"
+
+            url = (
+                f"{self.api_url}vulnerabilities/vex/{urlquote(app_id, safe='')}"
+                f"/stages/{urlquote(stage_id, safe='')}"
+            )
+
+            response = self.session.get(url, params=None, headers=headers)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+
+            data = response.json()
+            if not isinstance(data, dict):
+                return None
+            return data
+        except requests.exceptions.RequestException:
+            logger.debug(
+                "VEX document not available for app_id=%s stage_id=%s",
+                app_id,
+                stage_id,
+            )
+            return None
+        except (ValueError, TypeError):
+            logger.debug(
+                "Invalid VEX response for app_id=%s stage_id=%s",
+                app_id,
+                stage_id,
+            )
+            return None
 
 
 def process_release_scan(
@@ -330,24 +570,40 @@ def process_release_scan(
     """
     Process a release scan by fetching and ingesting the CycloneDX SBOM.
 
+    Optionally fetches and processes VEX data (best-effort; failures are
+    non-fatal).
+
     :param app_id: The SonaType application ID
     :param public_id: The SonaType public application ID
     :param config: Application configuration dictionary
     :return: Dictionary with success status and any error message
     """
     try:
-        helper = CycloneDXHelper(config)
-        helper.process_cyclonedx_sbom(app_id=app_id, public_app_id=public_id)
-        return {'success': True}
+        cyclone_helper = CycloneDXHelper(config)
+        cyclone_helper.process_cyclonedx_sbom(app_id=app_id, public_app_id=public_id)
+
+        # Attempt VEX processing (non-blocking)
+        try:
+            vex_helper = VexHelper(config)
+            vex_result = vex_helper.process_vex_for_application(app_id)
+            if vex_result:
+                logger.info(
+                    "VEX processed: %d statements",
+                    vex_result.get("statements_processed", 0),
+                )
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.warning("VEX processing failed for %s (non-fatal)", public_id)
+
+        return {"success": True}
     except (NotFound, RedisError):
         logger.exception("Error processing release scan for %s", public_id)
-        return {'success': False, 'error': 'SBOM processing failed'}
+        return {"success": False, "error": "SBOM processing failed"}
 
 
 # Create the default application instance
 app = create_app()
 
 
-if __name__ == '__main__':
-    debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
-    app.run(debug=debug_mode, host='0.0.0.0', port=5000)
+if __name__ == "__main__":
+    debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    app.run(debug=debug_mode, host="0.0.0.0", port=5000)

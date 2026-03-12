@@ -55,6 +55,12 @@ if _REDIS_SSL:
     _ca_certs = os.environ.get("FALKORDB_CACERTS")
     if _ca_certs:
         _ssl_opts["ssl_ca_certs"] = _ca_certs
+    _client_cert = os.environ.get("FALKORDB_CLIENT_CERT")
+    _client_key = os.environ.get("FALKORDB_CLIENT_KEY")
+    if _client_cert:
+        _ssl_opts["ssl_certfile"] = _client_cert
+    if _client_key:
+        _ssl_opts["ssl_keyfile"] = _client_key
     app.conf.update(
         broker_use_ssl=_ssl_opts,
         redis_backend_use_ssl=_ssl_opts,
@@ -64,11 +70,18 @@ _ENRICHMENT_INTERVAL = int(os.environ.get("ENRICHMENT_INTERVAL", "3600"))
 _TRUST_SCORE_INTERVAL = int(os.environ.get("TRUST_SCORE_INTERVAL", "7200"))
 _TRUST_SCORE_ENABLED = os.environ.get("TRUST_SCORE_ENABLED", "true").lower() == "true"
 
+_ENRICHMENT_SOURCES_RAW = os.environ.get("ENRICHMENT_SOURCES", "")
+try:
+    import json as _json
+    _ENRICHMENT_SOURCES: list[str] | None = _json.loads(_ENRICHMENT_SOURCES_RAW) if _ENRICHMENT_SOURCES_RAW else None
+except (ValueError, TypeError):
+    _ENRICHMENT_SOURCES = None
+
 app.conf.beat_schedule = {
     "scheduled-enrichment": {
         "task": "sbom_graph_enrichment.tasks.enrich_all_packages",
         "schedule": _ENRICHMENT_INTERVAL,
-        "args": (),
+        "args": (_ENRICHMENT_SOURCES,),
     },
 }
 
@@ -96,7 +109,11 @@ class _RedactSecretsFilter(logging.Filter):
         if record.args:
             if isinstance(record.args, dict):
                 record.args = {
-                    k: _REDIS_URL_RE.sub(r"\1:*****@", str(v)) if isinstance(v, str) else v
+                    k: (
+                        _REDIS_URL_RE.sub(r"\1:*****@", str(v))
+                        if isinstance(v, str)
+                        else v
+                    )
                     for k, v in record.args.items()
                 }
             elif isinstance(record.args, tuple):

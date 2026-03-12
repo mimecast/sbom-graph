@@ -8,12 +8,21 @@ import logging
 import os
 from datetime import timedelta
 
-from flask import Flask, Response, jsonify, redirect, render_template, session, url_for
+from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
 from flask_jwt_extended import JWTManager
 from flask_wtf.csrf import CSRFError, CSRFProtect
 
 from sbom_graph_api.config import get_config
-from sbom_graph_api.routes import api_v1, auth, exports, ingest, reports, schemas, visualizations
+from sbom_graph_api.routes import (
+    admin,
+    api_v1,
+    auth,
+    exports,
+    ingest,
+    reports,
+    schemas,
+    visualizations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +81,8 @@ def create_app() -> Flask:
     app.config["JWT_ALGORITHM"] = config.jwt.algorithm
     app.config["JWT_TOKEN_LOCATION"] = config.jwt.token_location
     app.config["JWT_COOKIE_SECURE"] = config.tls.enabled  # Only send cookies over HTTPS
-    app.config["JWT_COOKIE_CSRF_PROTECT"] = False  # Disable CSRF for cookies (session handles CSRF)
+    # CSRF for cookies handled by session; disable JWT-cookie CSRF
+    app.config["JWT_COOKIE_CSRF_PROTECT"] = False
     app.config["JWT_COOKIE_SAMESITE"] = "Lax"
 
     # Session configuration
@@ -111,6 +121,7 @@ def create_app() -> Flask:
     app.config.setdefault("MAX_CONTENT_LENGTH", 50 * 1024 * 1024)
 
     # Register blueprints
+    app.register_blueprint(admin.bp)
     app.register_blueprint(auth.bp)
     app.register_blueprint(visualizations.bp)
     app.register_blueprint(exports.bp)
@@ -130,11 +141,58 @@ def create_app() -> Flask:
 
     @app.after_request
     def _set_security_headers(response: Response) -> Response:
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault(
+            "X-Content-Type-Options", "nosniff"
+        )
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault(
-            "Referrer-Policy", "strict-origin-when-cross-origin"
+            "Referrer-Policy",
+            "strict-origin-when-cross-origin",
         )
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "geolocation=(), microphone=(), camera=()",
+        )
+        return response
+
+    @app.after_request
+    def _inject_home_button(response: Response) -> Response:
+        """Inject a floating home button into HTML pages for session-authenticated users.
+
+        Only visible when the user is browsing via the UI (active Flask session),
+        not when the response is served to a programmatic API client. Skips the
+        home page itself, login/auth pages, and non-HTML responses.
+        """
+        if (
+            response.content_type
+            and "text/html" in response.content_type
+            and session.get("authenticated")
+            and response.status_code == 200
+            and request.path != "/"
+            and not request.path.startswith("/auth/")
+            and not request.path.startswith("/health")
+            and not request.path.startswith("/ready")
+        ):
+            home_btn = (
+                '<a id="sbom-home-btn" href="/" title="Back to Home" style="'
+                "position:fixed;top:14px;left:14px;z-index:10000;"
+                "width:40px;height:40px;border-radius:50%;"
+                "background:#2c3e50;color:#fff;display:flex;"
+                "align-items:center;justify-content:center;"
+                "text-decoration:none;font-size:20px;"
+                "box-shadow:0 2px 8px rgba(0,0,0,0.25);"
+                "transition:background 0.2s,transform 0.2s;"
+                '"'
+                ' onmouseenter="this.style.background=\'#3498db\';this.style.transform=\'scale(1.1)\'"'
+                ' onmouseleave="this.style.background=\'#2c3e50\';this.style.transform=\'scale(1)\'"'
+                ">"
+                "&#8962;"
+                "</a>"
+            )
+            data = response.get_data(as_text=True)
+            if "</body>" in data:
+                data = data.replace("</body>", f"{home_btn}</body>", 1)
+                response.set_data(data)
         return response
 
     # Health check endpoint (no auth, no CSRF)
@@ -175,15 +233,6 @@ def create_app() -> Flask:
             is_admin=session.get("is_admin", False),
             ldap_enabled=config.ldap.enabled,
         )
-
-    @app.after_request
-    def set_security_headers(response):
-        """Add security headers to every response."""
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-        return response
 
     @app.errorhandler(CSRFError)
     def handle_csrf_error(e):  # pylint: disable=unused-argument

@@ -23,19 +23,20 @@ spec:
             - name: redis
               containerPort: 6379
               protocol: TCP
-          {{- /* Wrapper: pass --requirepass from secret and explicitly load the FalkorDB module (path changed to /var/lib/falkordb/bin/ in v4+) */}}
+          {{- /* Entrypoint auto-loads *.so from /usr/local/lib/redis/modules/; we just pass redis-server args */}}
           command: ["sh", "-c"]
           args:
             - |
               set -e
               exec /usr/local/bin/docker-entrypoint.sh redis-server \
                 --loadmodule /var/lib/falkordb/bin/falkordb.so \
+                --dir /data \
                 --requirepass "${FALKORDB_PASSWORD}" \
-                --save "" \
-                --stop-writes-on-bgsave-error no{{ if .Values.falkordb.tls.enabled }} \
+                --save 60 1 \
+                --save 300 100{{ if .Values.falkordb.tls.enabled }} \
                 --tls-port 6379 --port 0 \
-                --tls-auth-clients no \
-                --tls-cert-file /tls/tls.crt --tls-key-file /tls/tls.key --tls-ca-cert-file /tls/ca.crt{{ end }}
+                --tls-cert-file /tls/tls.crt --tls-key-file /tls/tls.key --tls-ca-cert-file /tls/ca.crt \
+                --tls-auth-clients {{ if .Values.falkordb.tls.requireClientAuth }}yes{{ else }}no{{ end }}{{ end }}
           env:
             - name: FALKORDB_PASSWORD
               valueFrom:

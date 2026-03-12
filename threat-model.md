@@ -89,7 +89,8 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | Enrichment Worker -> ClearlyDefined API | License queries | HTTPS (connection-pooled httpx.Client) |
 | Enrichment Worker -> Scorecard API | Scorecard queries | HTTPS (connection-pooled httpx.Client) |
 | Enrichment Worker -> OSS Index API | Vulnerability queries | HTTPS (connection-pooled httpx.Client) |
-| Enrichment Worker -> deps.dev API | Package metadata queries | HTTPS (connection-pooled httpx.Client) |
+| Enrichment Worker -> deps.dev API | Package metadata and source repo queries | HTTPS (connection-pooled httpx.Client) |
+| Enrichment Worker -> endoflife.date API | EOL product lifecycle queries | HTTPS (connection-pooled httpx.Client) |
 | Enrichment Beat -> Redis | Task scheduling | Redis protocol |
 | Init Job -> FalkorDB | Demo data load | Redis protocol |
 
@@ -113,7 +114,7 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | S12 | Denial of service via oversized SBOM upload | D | sbom-graph-api | **Medium** | **Medium** | **Medium** | **MITIGATED** | Large CycloneDX payloads could exhaust memory or CPU during parsing. Mitigated by Flask `MAX_CONTENT_LENGTH` (50 MB), Gunicorn worker timeouts, and Kubernetes resource limits. |
 | S13 | Information disclosure in SBOM processing errors | I | sbom-graph-api | **Low** | **Low** | **Low** | **MITIGATED** | SBOM processing errors could leak internal paths or database details. Mitigated by generic error messages for 500 responses (only `CycloneDXValidationError` details are returned to the client at 422). |
 | S14 | Mass assignment via extra JSON fields in ingest request | T | sbom-graph-api | **Low** | **Medium** | **Low** | **MITIGATED** | Attacker could include extra fields (e.g., `role`, `is_admin`) in the ingest JSON body. Mitigated by: (1) JSON Schema validation (Draft-07) with `additionalProperties: false` on all POST endpoints, rejecting unexpected fields before processing; (2) explicit field extraction: only `sbom`, `app_id`, `public_app_id`, and `project_url` are read from the request body. |
-| S15 | Enrichment worker SSRF via crafted purl | S, T | sbom-graph-enrichment -> OSV/ClearlyDefined | **Low** | **Medium** | **Low** | **MITIGATED** | A malicious purl stored in the graph could cause the enrichment worker to construct requests to unintended hosts. Mitigated by: (1) hardcoded API base URLs in certifiers (`OSV_API_URL`, `CLEARLY_DEFINED_API`) — purl only populates the URL path, (2) `_purl_to_coordinates` rejects unknown package types via `provider_map` allowlist, (3) 30 s `httpx.Client` timeout prevents slow-loris, (4) opt-in NetworkPolicy restricts egress to port 443 on public IPs only. Design decision documented in `certifiers/license.py` module docstring. |
+| S15 | Enrichment worker SSRF via crafted purl | S, T | sbom-graph-enrichment -> OSV/ClearlyDefined | **Low** | **Medium** | **Low** | **MITIGATED** | A malicious purl stored in the graph could cause the enrichment worker to construct requests to unintended hosts. Mitigated by: (1) hardcoded API base URLs in certifiers (`OSV_API_URL`, `CLEARLY_DEFINED_API`) — purl only populates the URL path, (2) `_purl_to_coordinates` rejects unknown package types via `provider_map` allowlist, (3) 30 s `httpx.Client` timeout prevents slow-loris, (4) opt-in NetworkPolicy restricts egress to port 443 on public IPs only. The source_repo certifier additionally enforces a host allowlist (github.com, gitlab.com, bitbucket.org, sourcehut.org, codeberg.org) on URLs extracted from deps.dev responses before persisting or using them. Design decision documented in `certifiers/license.py` module docstring. |
 | S16 | Enrichment worker DoS via unbounded fan-out | D | sbom-graph-enrichment | **Medium** | **Medium** | **Medium** | **MITIGATED** | `enrich_all_packages` dispatches a task per purl in the graph. For very large graphs (100K+ packages) this could overwhelm the Redis broker. Mitigated by batched dispatch (`_DISPATCH_BATCH_SIZE = 500`), Celery `worker_prefetch_multiplier=1`, `task_acks_late=True`, and `result_expires=86400` to prevent indefinite Redis key accumulation. |
 | S17 | Graph poisoning via compromised external API response | T | OSV/ClearlyDefined -> sbom-graph-enrichment -> FalkorDB | **Low** | **High** | **Medium** | **PARTIALLY MITIGATED** | If OSV.dev or ClearlyDefined returns malicious data, it is persisted to the graph. Mitigated by: HTTPS transport validation, explicit field extraction from API responses (only expected keys), and `LicenseRiskCategory.from_str()` validation. Residual risk: structurally valid but semantically misleading data cannot be detected. |
 | S18 | Redis password exposure in Celery broker URL | I | sbom-graph-enrichment | **Medium** | **Medium** | **Medium** | **PARTIALLY MITIGATED** | The Redis password is embedded in the Celery broker URL string. Celery's standard Redis transport requires this — `broker_transport_options` only supports password separation for Redis Sentinel, which is not used here. Mitigated by: a `_RedactSecretsFilter` logging filter on `celery` and `kombu` loggers that replaces `redis://:password@` patterns with `redis://:*****@` in all log messages, tuple args, and dict args. Residual: password remains in the process-internal URL string and may appear in core dumps, tracebacks printed to stderr, or debugger inspection. |
@@ -129,6 +130,7 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | S28 | Denial-of-service via Scorecard/deps.dev API rate exhaustion | D | sbom-graph-enrichment | **Medium** | **Medium** | **Medium** | **MITIGATED** | The trust score computation queries up to 4 external APIs per package. For large graphs (100K+ packages), this could generate millions of API calls, exhausting rate limits and potentially triggering IP bans. Mitigated by: per-certifier token-bucket rate limiting (30 req/min Scorecard, 60/120 req/min OSS Index, 150 req/min deps.dev), batched dispatch, configurable TRUST_SCORE_INTERVAL (default 7200s). |
 | S29 | Misleading effective scores from manipulated dependency graphs | T | sbom-graph-enrichment propagation task -> FalkorDB | **Low** | **High** | **Medium** | **PARTIALLY MITIGATED** | An attacker who can inject false dependency edges (via poisoned SBOMs -- see S1, S11, S24) could manipulate the inherited risk propagation, artificially raising or lowering effective scores for target packages. A single low-scoring fake dependency could drag down an entire application's effective score (denial of service on the trust metric), or a fake high-scoring dependency could mask inherited risk. Mitigated by: SBOM ingestion authentication (S11), alpha blending limits pure inheritance influence, min_path_score exposes the weakest link regardless of blending, SBOM format validation. Residual: authenticated users can still inject misleading dependency data. |
 | S30 | OSS Index credential leakage | I | sbom-graph-enrichment | **Low** | **Medium** | **Low** | **MITIGATED** | OSSINDEX_USER and OSSINDEX_TOKEN are passed as environment variables from a Kubernetes Secret. If leaked, an attacker could use the credentials for their own OSS Index queries (limited blast radius -- read-only API). Mitigated by: credentials stored in Kubernetes Secret (not Helm values by default), optional (system works without auth), read-only API access, Secret template gated on non-empty user value. |
+| S31 | endoflife.date API integrity or availability | T, D | sbom-graph-enrichment -> endoflife.date | **Low** | **Medium** | **Low** | **ACCEPTED** | The EOL certifier queries endoflife.date for product lifecycle data. If the API returns manipulated data, EOL metadata in the graph may be incorrect. If the API is unavailable, EOL enrichment fails gracefully (no EOL data stored). Mitigated by: HTTPS transport, 30 req/min rate limiting, explicit field extraction. Residual: community-maintained API with no SLA; EOL data is advisory, not security-critical. |
 
 ### Data Flow Threats
 
@@ -183,7 +185,8 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | Kubernetes Secrets for credentials | Helm charts | **Moderate** -- base64, not encrypted by default |
 | Redis URL log redaction | sbom-graph-enrichment | **Strong** -- `_RedactSecretsFilter` on celery/kombu loggers |
 | NetworkPolicy (opt-in) | Helm chart (enrichment) | **Strong** -- restricts egress to DNS, FalkorDB, HTTPS only |
-| SSRF-safe certifier design | sbom-graph-enrichment | **Strong** -- hardcoded hosts, path-only purl interpolation |
+| SSRF-safe certifier design | sbom-graph-enrichment | **Strong** -- hardcoded hosts, path-only purl interpolation; source_repo certifier enforces host allowlist on extracted URLs |
+| Login rate limiting | sbom-graph-api | **Moderate** -- in-memory per-IP on /auth/login (10 attempts / 15 min per worker) |
 | Auto-generated FalkorDB password | Helm chart | **Strong** -- `falkordb-secret.yaml` generates 32-char random password |
 | Empty password startup warning | sbom-graph-enrichment | **Moderate** -- warns when FALKORDB_PASSWORD env var is empty |
 | JWT auth on policy/enrichment endpoints | sbom-graph-api | **Strong** -- all write endpoints require `@auth_required` |
@@ -210,7 +213,7 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 | FalkorDB ingress NetworkPolicy | High | Umbrella chart |
 | TLS CA distribution | High | Umbrella chart |
 | Application secrets provisioning | Critical | Umbrella chart -> sbom-graph-api |
-| Rate limiting | Medium | sonatype-lifecycle-release-listener, sbom-graph-api |
+| Rate limiting | Medium | sonatype-lifecycle-release-listener, sbom-graph-api (login endpoint has per-IP rate limiting; other endpoints do not) |
 | Structured audit logging | Medium | sonatype-lifecycle-release-listener |
 | Request size limits | Medium | sonatype-lifecycle-release-listener |
 | Image digest pinning | Medium | Umbrella chart |
@@ -295,8 +298,97 @@ Before deploying to production, verify:
 | httpx | 0.x | 0 | Active | BSD-3 | Low (already in enrichment, now used by 3 additional certifiers) |
 | cryptography | 44.x | 2 (patched) | Very active | Apache-2/BSD | Low |
 | Alpine (init) | 3.20 | Varies | Active | MIT | Low |
+| endoflife.date API | N/A | N/A | Community | N/A | **Low** -- Public REST API for product lifecycle data. No authentication required. Community-maintained; no SLA. Used by EOL certifier for advisory EOL metadata. |
 
 All primary dependencies are actively maintained with no unpatched critical vulnerabilities. The main supply chain risk is the unpinned Alpine init container image and the FalkorDB `latest` tag. BusyBox was removed as a dependency; the init-data job now reuses the application image.
+
+## Full License Assessment
+
+This section provides a comprehensive licence analysis of all runtime and development dependencies across the monorepo. The `sbom-graph` project itself is licensed under **MIT**.
+
+### Licence Categories
+
+#### Permissive Licences (No Copyleft Obligations)
+
+These licences impose minimal restrictions: attribution in documentation/notices and inclusion of the licence text in redistributed copies. No source-disclosure or share-alike requirements.
+
+| Licence | Production Dependencies | Dev-Only Dependencies |
+|---------|------------------------|----------------------|
+| **MIT** | FalkorDB (client), Flask-JWT-Extended, Flask-Login, gunicorn, openpyxl, cryptography (dual), jsonschema, redis, SQLAlchemy, httpx (BSD-3), httpcore, h11, celery (BSD-3), kombu (BSD-3), amqp, billiard, vine, click-repl, click-didyoumean, anyio, urllib3, charset-normalizer, PyJWT, PyYAML, six, tzlocal | mypy, ruff, pytest, pytest-cov, isort, tomlkit, pluggy, iniconfig, rich, jedi, parso, pure_eval, executing, stack-data, platformdirs, wcwidth |
+| **BSD-2-Clause** | pyasn1, decorator | Pygments |
+| **BSD-3-Clause** | Flask, Werkzeug, Jinja2, MarkupSafe, itsdangerous, click, blinker, Flask-WTF, WTForms, networkx, pandas, pyvis, idna, numpy | ipython, jsonpickle, pandas-stubs, traitlets, dill |
+| **Apache-2.0** | cryptography (dual), requests, packaging (dual), python-dateutil (dual) | bandit, coverage, stevedore, asttokens, types-* stubs, celery-types, tzdata |
+| **ISC** | — | pexpect, ptyprocess |
+| **PSF-2.0** | typing_extensions | — |
+
+**Compliance obligations**: Include licence notices and copyright statements in documentation or NOTICES file when distributing. No source-disclosure required. All permissive licences are mutually compatible and compatible with the project's MIT licence.
+
+#### Weak Copyleft Licences (File-Level or Library-Level Obligations)
+
+| Licence | Dependencies | Scope | Compliance Obligations | Risk |
+|---------|-------------|-------|----------------------|------|
+| **LGPL-3.0** | `ldap3` | **Production** (sbom-graph-api) | Users must be able to replace the LGPL library with a modified version. For Python packages imported as unmodified modules, this is inherently satisfied (users can `pip install` a replacement). Must include LGPL-3 licence text and copyright notice. Must not statically link or modify the library source without offering the modifications under LGPL-3. | **Accepted** — pure-Python import; no static linking. Distroless container constraint makes MIT alternatives impractical (see Third-Party Component Assessment above). Review with legal if organisation prohibits all copyleft. |
+| **MPL-2.0** | `certifi`, `pathspec` | **Production** (transitive via httpx/requests and ruff) | File-level copyleft: modifications to MPL-licensed **files** must be shared under MPL-2.0. Using the library unmodified (as we do) requires no source disclosure. MPL-2.0 is explicitly compatible with Apache-2.0 and GPL. Must include MPL-2.0 licence text. | **Low** — used unmodified as transitive dependencies. No files modified. |
+| **MPL-2.0** | `pytest-html`, `pytest-metadata` | **Dev-only** (sonatype-lifecycle-release-listener) | Same as above. | **None** — dev-only, not distributed. |
+
+#### Strong Copyleft Licences
+
+| Licence | Dependencies | Scope | Compliance Obligations | Risk |
+|---------|-------------|-------|----------------------|------|
+| **SSPLv1** | FalkorDB (server) | **Infrastructure** (not linked, not distributed) | If FalkorDB is offered as part of a **service to third parties**, the entire service stack (including all management, monitoring, and automation software) must be open-sourced under SSPL. Internal-only deployment is unrestricted. | **High** — internal use is safe; external-facing deployment requires a commercial FalkorDB licence. Deployers must evaluate their deployment model. See README "Licensing" section. |
+| **GPL-2.0-or-later** | `pylint`, `astroid` | **Dev-only** (linting tools) | GPL-2.0+ requires derivative works to be distributed under GPL. | **None** — dev-only tools, never distributed or deployed. Not included in Docker images or Helm charts. |
+| **LGPL-2.1-or-later** | `astroid` (transitive via pylint) | **Dev-only** | Weak copyleft, same category as LGPL-3 but for dev tooling only. | **None** — dev-only, not distributed. |
+
+### Licence Compatibility Matrix
+
+The following matrix confirms compatibility between the project licence (MIT) and all production dependency licences:
+
+| Dependency Licence | Compatible with MIT project? | Can distribute together? | Notes |
+|-------------------|------------------------------|-------------------------|-------|
+| MIT | Yes | Yes | Identical terms |
+| BSD-2-Clause | Yes | Yes | Subset of MIT |
+| BSD-3-Clause | Yes | Yes | Non-endorsement clause only difference |
+| Apache-2.0 | Yes | Yes | Patent grant is additive |
+| ISC | Yes | Yes | Functionally equivalent to MIT |
+| PSF-2.0 | Yes | Yes | Python-specific permissive |
+| MPL-2.0 | Yes | Yes | File-level copyleft; unmodified use has no impact |
+| LGPL-3.0 | Yes (with conditions) | Yes | Must allow library replacement; satisfied by Python import model |
+| SSPLv1 | N/A | N/A | Separate service, not linked or distributed with this project |
+| GPL-2.0+ | N/A | N/A | Dev-only; not distributed |
+
+### Production Dependency Licence Summary
+
+| Sub-Project | Total Prod Deps | Permissive (MIT/BSD/Apache/ISC/PSF) | Weak Copyleft (LGPL/MPL) | Strong Copyleft (GPL/SSPL) |
+|-------------|----------------|--------------------------------------|--------------------------|---------------------------|
+| sbom-graph-model | 1 | 1 (FalkorDB client — MIT) | 0 | 0 |
+| sbom-graph-api | 15 + transitive | All except ldap3 | 1 (ldap3 — LGPL-3) | 0 |
+| sbom-graph-enrichment | 4 + transitive | All | 0 | 0 |
+| sonatype-lifecycle-release-listener | 5 + transitive | All | 0 | 0 |
+| Infrastructure | 1 | 0 | 0 | 1 (FalkorDB server — SSPLv1) |
+
+### Compliance Actions Required
+
+| # | Action | Priority | Status |
+|---|--------|----------|--------|
+| L1 | Include LGPL-3.0 licence text and ldap3 copyright notice in distribution (Docker image `/licences/` or NOTICES file) | **Medium** | **OPEN** |
+| L2 | Include MPL-2.0 licence text for certifi and pathspec in distribution | **Low** | **OPEN** |
+| L3 | Include BSD/MIT/Apache licence notices for all production dependencies in a NOTICES or THIRD-PARTY-LICENCES file | **Low** | **OPEN** |
+| L4 | Document FalkorDB SSPLv1 deployment constraint in operator documentation and Helm chart README | **High** | **DONE** (README "Licensing" section) |
+| L5 | Ensure ldap3 is importable as a replaceable module (LGPL-3 compliance) | **Low** | **DONE** (standard Python import; pip-replaceable) |
+| L6 | Verify GPL-2.0+ tools (pylint, astroid) are excluded from Docker images and production artefacts | **Medium** | **DONE** (dev dependency group only; multi-stage Docker builds exclude dev deps) |
+| L7 | Review with legal counsel if organisation has a blanket copyleft prohibition affecting ldap3 (LGPL-3) or FalkorDB server (SSPLv1) | **Medium** | **OPEN** — organisation-specific |
+
+### Risks and Recommendations
+
+1. **FalkorDB SSPLv1 remains the highest licence risk.** Internal deployment is safe, but any external-facing or SaaS deployment model triggers SSPL's service-provision clause. Recommendation: maintain the documented constraint; obtain commercial FalkorDB licence before any external deployment.
+
+2. **ldap3 LGPL-3 is the only copyleft production library.** Current use (unmodified Python import) satisfies LGPL-3 requirements. If ldap3 source is ever modified and distributed, modifications must be released under LGPL-3. Recommendation: do not fork or modify ldap3; if LDAP support is dropped, remove the dependency entirely.
+
+3. **MPL-2.0 transitive dependencies (certifi, pathspec)** are used unmodified and pose no practical risk. Recommendation: include licence notices in a THIRD-PARTY-LICENCES file for completeness.
+
+4. **All dev-only copyleft tools (pylint, astroid)** are confined to development and CI environments. They are excluded from Docker images by multi-stage builds and from wheel packages by `[dependency-groups] dev`. No distribution risk.
+
+5. **No licence-incompatible combinations detected.** All production dependency licences are compatible with each other and with the project's MIT licence.
 
 ## Risk Heat Map
 
@@ -335,6 +427,8 @@ All primary dependencies are actively maintained with no unpatched critical vuln
 
 | Date | Author | Changes |
 |------|--------|---------|
+| 2026-03-12 | AI-assisted threat model | Added Full License Assessment section: comprehensive licence analysis of all runtime and development dependencies across all sub-projects, licence compatibility matrix, compliance actions (L1-L7), production dependency licence summary per sub-project, and risk recommendations. Covers SSPLv1, LGPL-3, LGPL-2.1, GPL-2.0+, MPL-2.0, MIT, BSD, Apache-2.0, ISC, and PSF-2.0 licences. |
+| 2026-03-12 | AI-assisted threat model | Added EOL certifier (endoflife.date API) and Source Repository certifier (deps.dev API). Added S31 (endoflife.date API integrity/availability). Documented source_repo SSRF mitigation (host allowlist) in S15 and Controls Present. Added login rate limiting (10 attempts / 15 min per IP on /auth/login) to Controls Present. Updated Trust Boundaries and Third-Party Component Assessment. |
 | 2026-02-28 | AI-assisted threat model | Added trust score threats S27-S30 (data poisoning, rate exhaustion, dependency graph manipulation, OSS Index credential leakage). Updated Summary, Assets, Trust Boundaries, Security Controls, Risk Heat Map, Residual Risk, Deployment Checklist, Third-Party Assessment. |
 | 2026-03-01 | AI-assisted threat model | Initial system-level STRIPED analysis |
 | 2026-02-28 | AI-assisted threat model | Added enrichment pipeline data flows and threats (S15-S18) |

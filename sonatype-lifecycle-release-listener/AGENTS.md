@@ -14,8 +14,9 @@ into FalkorDB.
 2. Validate it's a release scan
    (`applicationEvaluation.stage == "release"`)
 3. Extract `application.id` and `application.publicId`
-4. Use `SonaTypeIngestor` from `sbom-graph-model` to fetch and ingest SBOM data
-5. Store dependency graph and vulnerabilities in FalkorDB
+4. Use `CycloneDXHelper` and `SonaTypeClient` to fetch and ingest CycloneDX SBOM data
+5. Optionally fetch and process VEX documents via `VexHelper` (best-effort, non-blocking)
+6. Store dependency graph, vulnerabilities, and VEX statements in FalkorDB
 
 ## Project Structure
 
@@ -29,7 +30,8 @@ sonatype-lifecycle-release-listener/
 │   ├── test_app.py          # Test suite (22 tests)
 │   └── resources/           # Test fixtures
 │       ├── example-message.json      # Sample webhook payload
-│       └── example_cyclonedx.json    # Sample SBOM for mocking
+│       ├── acme_notification_service_sbom.json  # Sample SBOM for mocking
+│       └── example_vex.json          # Sample VEX document for mocking
 ├── helm/sonatype-lifecycle-release-listener/   # Helm chart for Kubernetes
 │   ├── Chart.yaml
 │   ├── values.yaml
@@ -54,10 +56,8 @@ sonatype-lifecycle-release-listener/
 
 The `sbom-graph-model` library is a local dependency. Key classes:
 
-- **`SonaTypeIngestor`**: Main class for ingesting SBOMs
-  - Constructor: `SonaTypeIngestor(sonatype_username, sonatype_password, cacerts)`
-  - Key method: `ingest_dependency_tree(app_id, public_app_id, gitlab_project_url)`
-
+- **`CycloneDXProcessor`**: Processes CycloneDX SBOM JSON and persists to FalkorDB
+- **`VexProcessor`**: Parses OpenVEX documents and persists VEX statements
 - **`Persistence`**: Handles FalkorDB operations
   - Connects via `FALKORDB_HOST`/`FALKORDB_PORT` (default port 6379)
   - Graph: `FALKORDB_GRAPH_NAME` (default `acme-corp`);
@@ -169,36 +169,36 @@ Tests are organized in `tests/test_app.py` with these test classes:
 
 - `TestHealthEndpoint` - Health check endpoint tests
 - `TestWebhookEndpoint` - Webhook validation and routing tests
-- `TestProcessReleaseScan` - Unit tests for the processing function
+- `TestProcessReleaseScan` - Unit tests for the processing function (SBOM + VEX)
 - `TestIntegrationWithMockedSonatype` - End-to-end flow with mocked services
+- `TestSonaTypeClient` - SonaType API client (CycloneDX and VEX endpoints)
+- `TestVexHelper` - VEX document fetch and processing
+- `TestCycloneDXHelper` - CycloneDX SBOM processing
 - `TestFalkorDBIntegration` - Integration tests; FalkorDB at localhost:6379
 - `TestEdgeCases` - Edge case and error handling tests
 
 ### Mocking Patterns
 
-When mocking the `SonaTypeIngestor`:
+When mocking `CycloneDXHelper` or `VexHelper`:
 
 ```python
-@patch('sonatype_lifecycle_release_listener.app.SonaTypeIngestor')
-def test_example(self, mock_ingestor_class):
-    mock_ingestor = MagicMock()
-    mock_ingestor_class.return_value = mock_ingestor
+@patch('sonatype_lifecycle_release_listener.app.CycloneDXHelper')
+def test_example(self, mock_helper_class):
+    mock_helper = MagicMock()
+    mock_helper_class.return_value = mock_helper
     # ... test code
-    mock_ingestor.ingest_dependency_tree.assert_called_once_with(
+    mock_helper.process_cyclonedx_sbom.assert_called_once_with(
         app_id='expected_id',
         public_app_id='expected_public_id',
-        gitlab_project_url=""
     )
 ```
 
-For FalkorDB integration tests, mock `get_existing_data` to bypass file caching:
+For FalkorDB integration tests, mock `SonaTypeClient.get_cyclonedx_sbom`:
 
 ```python
-@patch('sbom_graph_model.sonatype_ingestor.SonaTypeIngestor.get_existing_data')
-@patch('sbom_graph_model.sonatype_ingestor.Lifecycle')
-def test_integration(self, mock_lifecycle_class, mock_get_existing_data,
-                     example_cyclonedx):
-    mock_get_existing_data.return_value = example_cyclonedx
+@patch('sonatype_lifecycle_release_listener.app.SonaTypeClient.get_cyclonedx_sbom')
+def test_integration(self, mock_get_sbom, example_cyclonedx):
+    mock_get_sbom.return_value = example_cyclonedx
     # ... test code
 ```
 
@@ -263,9 +263,9 @@ logging if the config file is not found (useful for testing).
 
 The main processing logic is in `process_release_scan()`. This function:
 
-1. Creates a `SonaTypeIngestor` instance
-2. Calls `ingest_dependency_tree()` with empty `gitlab_project_url`
-3. Returns success/failure status
+1. Creates a `CycloneDXHelper` and processes the CycloneDX SBOM
+2. Optionally creates a `VexHelper` and processes VEX data (best-effort)
+3. Returns success/failure status (VEX failures do not block success)
 
 ### Running Security Scans
 
@@ -285,17 +285,17 @@ snyk code test /path/to/sonatype-lifecycle-release-listener
 2. **MERGE Operations**: DB uses MERGE (idempotent); same data won't
    create duplicates
 
-3. **File Caching**: `SonaTypeIngestor.get_existing_data()` caches SBOM in
-   `data/`. Mock this method in tests to avoid file I/O
-
-4. **Logging Config**: Tests may fail if `logging.conf` is missing. The app
+3. **Logging Config**: Tests may fail if `logging.conf` is missing. The app
    falls back to basic logging gracefully
 
-5. **Stage Matching**: Stage comparison is case-insensitive
+4. **Stage Matching**: Stage comparison is case-insensitive
    (`"RELEASE"`, `"release"`, `"Release"` all match)
 
-6. **Empty gitlab_url**: Per requirements, `ingest_dependency_tree()` is always
-   called with `gitlab_project_url=""`
+5. **Empty gitlab_url**: Per requirements, `process_cyclonedx_sbom()` is always
+   called with `gitlab_project_url=""` (via CycloneDXProcessor)
+
+6. **VEX best-effort**: VEX processing is non-blocking; webhook succeeds even if
+   VEX fetch or processing fails
 
 7. **Distroless Container**: The Docker image has no shell - cannot `exec` in.
    Use `kubectl logs` or a debug sidecar if needed
@@ -303,5 +303,9 @@ snyk code test /path/to/sonatype-lifecycle-release-listener
 8. **Read-Only Filesystem**: Deployment mounts `/tmp` and `/app/data` as
    emptyDir; container root filesystem is read-only
 
-9. **Helm Secrets**: Never commit credentials in `values.yaml`. Use `--set`,
+9. **VEX API**: Sonatype IQ VEX endpoint is
+   `vulnerabilities/vex/{app_id}/stages/{stage_id}`; returns 404 when no VEX
+   data is available
+
+10. **Helm Secrets**: Never commit credentials in `values.yaml`. Use `--set`,
    external secrets, or `existingSecret` reference

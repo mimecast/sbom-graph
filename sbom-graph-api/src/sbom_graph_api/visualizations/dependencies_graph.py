@@ -22,7 +22,9 @@ from sbom_graph_api.services.falkordb_service import (
 )
 from sbom_graph_api.visualizations.kpartite import (
     format_properties_for_tooltip,
+    get_license_risk_color,
     get_partition_color,
+    get_severity_color,
 )
 
 
@@ -134,6 +136,274 @@ def calculate_depths_with_cycles(
     return depths
 
 
+_VEX_SHIELD = "\U0001f6e1"
+_POLICY_BANNED = "\U0001f6ab"
+_POLICY_APPROVED = "\u2705"
+_POLICY_DEPRECATED = "\u26a0\ufe0f"
+_POLICY_LABELS = {
+    "bad": "Banned",
+    "good": "Approved",
+    "hold": "Deprecated",
+}
+
+_SPRING_LAYOUT_OPTIONS = """
+{
+    "physics": {
+        "enabled": true,
+        "solver": "forceAtlas2Based",
+        "forceAtlas2Based": {
+            "gravitationalConstant": -50,
+            "centralGravity": 0.01,
+            "springLength": 150,
+            "springConstant": 0.08,
+            "damping": 0.4,
+            "avoidOverlap": 0.5
+        },
+        "stabilization": {
+            "enabled": true,
+            "iterations": 200,
+            "updateInterval": 25
+        }
+    },
+    "nodes": {
+        "font": {"size": 12},
+        "shape": "box",
+        "borderWidth": 2
+    },
+    "edges": {
+        "arrows": {"to": {"enabled": true, "scaleFactor": 0.8}},
+        "smooth": {
+            "enabled": true,
+            "type": "continuous",
+            "roundness": 0.5
+        }
+    },
+    "interaction": {
+        "hover": true,
+        "navigationButtons": true,
+        "keyboard": true
+    }
+}
+"""
+
+
+class _EnrichmentMaps:  # pylint: disable=too-few-public-methods
+    """Aggregates per-purl enrichment maps queried from the service."""
+
+    __slots__ = (
+        "severity",
+        "license_risk",
+        "vex_status",
+        "policy",
+    )
+
+    def __init__(
+        self,
+        service: FalkorDBService,
+        node_data: dict[str, dict],
+    ) -> None:
+        self.severity: dict[str, str] = {}
+        self.license_risk: dict[str, str] = {}
+        self.vex_status: dict[str, str] = {}
+        self.policy: dict[str, str] = {}
+
+        purls = [
+            d.get("properties", {}).get("package_url")
+            for d in node_data.values()
+            if d.get("properties", {}).get("package_url")
+        ]
+        if purls:
+            self.severity = (
+                service.get_vulnerability_severities_for_versions(
+                    purls
+                )
+            )
+            self.license_risk = (
+                service.get_license_risks_for_versions(purls)
+            )
+            self.vex_status = (
+                service.get_vex_statuses_for_versions(purls)
+            )
+            self.policy = (
+                service.get_policy_annotations_for_purls(purls)
+            )
+
+
+def _build_node_label(
+    safe_project: str,
+    safe_version: str,
+    vex_status: str | None,
+    policy_type: str | None,
+) -> str:
+    """Build the display label for a graph node."""
+    label = f"{safe_project}\n{safe_version}"
+    if vex_status == "not_affected":
+        label += f" {_VEX_SHIELD}"
+    if policy_type == "bad":
+        label += f" {_POLICY_BANNED}"
+    elif policy_type == "good":
+        label += f" {_POLICY_APPROVED}"
+    elif policy_type == "hold":
+        label += f" {_POLICY_DEPRECATED}"
+    return label
+
+
+def _build_node_tooltip(
+    safe_project: str,
+    safe_version: str,
+    depth: int,
+    data: dict,
+    severity: str | None,
+    risk_category: str | None,
+    vex_status: str | None,
+    policy_type: str | None,
+    is_in_cycle: bool,
+) -> str:
+    """Build the hover tooltip for a graph node."""
+    labels_str = escape(
+        ", ".join(data.get("labels", []))
+    )
+    parts = [
+        f"{safe_project}\n",
+        f"Version: {safe_version}\n",
+        f"Depth from root: {depth}\n",
+        f"Labels: {labels_str}\n",
+    ]
+    if severity:
+        parts.append(
+            f"Highest vulnerability severity: {severity}\n"
+        )
+    if risk_category:
+        parts.append(
+            f"License risk: "
+            f"{escape(risk_category.replace('_', ' '))}\n"
+        )
+    if vex_status:
+        parts.append(
+            f"VEX status: "
+            f"{escape(vex_status.replace('_', ' '))}\n"
+        )
+    if policy_type:
+        policy_label = _POLICY_LABELS.get(
+            policy_type, policy_type
+        )
+        parts.append(f"Policy: {escape(policy_label)}\n")
+    if is_in_cycle:
+        parts.append("** HAS CYCLIC DEPENDENCY **\n")
+
+    properties = data.get("properties", {})
+    if properties:
+        parts.append("=======================\n")
+        parts.append("All Properties:\n")
+        parts.append(
+            format_properties_for_tooltip(properties)
+        )
+    return "\n".join(parts)
+
+
+def _add_nodes_to_network(
+    net: Network,
+    node_data: dict[str, dict],
+    depths: dict[str, int],
+    enrichment: _EnrichmentMaps,
+    cycle_edges_set: set[tuple[str, str]],
+    self_loops: set[tuple[str, str]],
+) -> None:
+    """Populate the PyVis network with styled nodes."""
+    all_cycle_members = cycle_edges_set | self_loops
+    for node_id, data in node_data.items():
+        depth = depths.get(node_id, 0)
+        purl = data.get("properties", {}).get("package_url")
+
+        severity = enrichment.severity.get(purl) if purl else None
+        risk_cat = enrichment.license_risk.get(purl) if purl else None
+        vex_status = enrichment.vex_status.get(purl) if purl else None
+        policy_type = enrichment.policy.get(purl) if purl else None
+
+        color = _resolve_node_color(
+            severity, risk_cat, depth
+        )
+        is_in_cycle = any(
+            node_id in (e[0], e[1])
+            for e in all_cycle_members
+        )
+
+        safe_project = escape(data["project_name"])
+        safe_version = escape(data["version"])
+
+        label = _build_node_label(
+            safe_project, safe_version,
+            vex_status, policy_type,
+        )
+        title = _build_node_tooltip(
+            safe_project, safe_version, depth, data,
+            severity, risk_cat, vex_status, policy_type,
+            is_in_cycle,
+        )
+
+        border_width = 4 if is_in_cycle else 2
+        border_color = "#ff0000" if is_in_cycle else color
+        node_color: dict[str, str] = {
+            "background": color,
+            "border": border_color,
+        }
+        net.add_node(
+            node_id,
+            label=label,
+            title=title,
+            color=node_color,  # type: ignore[arg-type]
+            borderWidth=border_width,
+            group=depth,
+        )
+
+
+def _resolve_node_color(
+    severity: str | None,
+    risk_category: str | None,
+    depth: int,
+) -> str:
+    """Choose the node colour based on severity, licence risk, or depth."""
+    if severity:
+        sev_color = get_severity_color(severity)
+        if sev_color:
+            return sev_color
+    if risk_category:
+        lic_color = get_license_risk_color(risk_category)
+        if lic_color:
+            return lic_color
+    return get_partition_color(depth)
+
+
+def _add_edges_to_network(
+    net: Network,
+    edges: list[dict],
+    cycle_edges_set: set[tuple[str, str]],
+) -> None:
+    """Add dependency edges to the PyVis network."""
+    for edge in edges:
+        source = edge["source"]
+        target = edge["target"]
+        is_cycle = (
+            (source, target) in cycle_edges_set
+            or source == target
+        )
+        if is_cycle:
+            net.add_edge(
+                source, target,
+                title=f"{edge['type']} (CYCLE)",
+                arrows="to",
+                color="#ff0000",
+                dashes=True,
+                width=3,
+            )
+        else:
+            net.add_edge(
+                source, target,
+                title=edge["type"],
+                arrows="to",
+            )
+
+
 def create_dependencies_graph_visualization(
     project_name: str,
     version_name: str,
@@ -166,60 +436,43 @@ def create_dependencies_graph_visualization(
     if service is None:
         service = get_falkordb_service()
 
-    # Verify root node exists
-    root = service.find_version(project_name, version_name, project_group)
+    root = service.find_version(
+        project_name, version_name, project_group
+    )
     if not root:
         return None
 
-    root_properties = root["properties"]
-    root_labels = root["labels"]
-
-    # Get dependency graph
     nodes, edges = service.get_transitive_dependencies(
-        project_name,
-        version_name,
-        max_depth,
-        internal_only,
+        project_name, version_name,
+        max_depth, internal_only,
         project_group=project_group,
     )
 
     root_id = f"{project_name}:{version_name}"
-
-    # Build node data dictionary
     node_data = {n["id"]: n for n in nodes}
-
-    # Ensure root is in node_data
     if root_id not in node_data:
         node_data[root_id] = {
             "id": root_id,
             "project_name": project_name,
             "version": version_name,
-            "labels": root_labels,
-            "properties": root_properties,
+            "labels": root["labels"],
+            "properties": root["properties"],
         }
 
-    # Build NetworkX graph
     graph: nx.DiGraph = nx.DiGraph()
-
     for node in node_data.values():
         graph.add_node(node["id"])
-
     for edge in edges:
         graph.add_edge(edge["source"], edge["target"])
 
-    # Use visitor pattern to detect cycles
     visitor = DependencyVisitor()
     visitor.traverse_all(graph, start_node=root_id)
-
     cycle_edges_set = set(visitor.get_cycle_edges())
-
-    # Also detect self-loops (simple cycles)
     self_loops = set(nx.selfloop_edges(graph))
 
-    # Calculate depths for coloring (using BFS for shortest path)
     depths = calculate_depths_with_cycles(graph, root_id)
+    enrichment = _EnrichmentMaps(service, node_data)
 
-    # Create PyVis network with spring layout
     net = Network(
         notebook=False,
         cdn_resources="in_line",
@@ -227,127 +480,14 @@ def create_dependencies_graph_visualization(
         height=height,
         width=width,
     )
+    net.set_options(_SPRING_LAYOUT_OPTIONS)
 
-    # Configure spring layout (force-directed physics)
-    # This layout works well with cyclic graphs as it doesn't require hierarchy
-    net.set_options(
-        """
-    {
-        "physics": {
-            "enabled": true,
-            "solver": "forceAtlas2Based",
-            "forceAtlas2Based": {
-                "gravitationalConstant": -50,
-                "centralGravity": 0.01,
-                "springLength": 150,
-                "springConstant": 0.08,
-                "damping": 0.4,
-                "avoidOverlap": 0.5
-            },
-            "stabilization": {
-                "enabled": true,
-                "iterations": 200,
-                "updateInterval": 25
-            }
-        },
-        "nodes": {
-            "font": {"size": 12},
-            "shape": "box",
-            "borderWidth": 2
-        },
-        "edges": {
-            "arrows": {"to": {"enabled": true, "scaleFactor": 0.8}},
-            "smooth": {
-                "enabled": true,
-                "type": "continuous",
-                "roundness": 0.5
-            }
-        },
-        "interaction": {
-            "hover": true,
-            "navigationButtons": true,
-            "keyboard": true
-        }
-    }
-    """
+    _add_nodes_to_network(
+        net, node_data, depths,
+        enrichment, cycle_edges_set, self_loops,
     )
-
-    # Add nodes
-    for node_id, data in node_data.items():
-        depth = depths.get(node_id, 0)
-        color = get_partition_color(depth)
-
-        # Check if this node has any cycle edges (self-loop or back-edge)
-        is_in_cycle = any(node_id in (e[0], e[1]) for e in cycle_edges_set | self_loops)
-
-        # Escape all user-controlled data to prevent XSS
-        safe_project = escape(data["project_name"])
-        safe_version = escape(data["version"])
-        label = f"{safe_project}\n{safe_version}"
-
-        labels_str = escape(", ".join(data.get("labels", [])))
-        properties = data.get("properties", {})
-
-        title_parts = [
-            f"{safe_project}\n",
-            f"Version: {safe_version}\n",
-            f"Depth from root: {depth}\n",
-            f"Labels: {labels_str}\n",
-        ]
-
-        if is_in_cycle:
-            title_parts.append("** HAS CYCLIC DEPENDENCY **\n")
-
-        if properties:
-            title_parts.append("=======================\n")
-            title_parts.append("All Properties:\n")
-            title_parts.append(format_properties_for_tooltip(properties))
-
-        title = "\n".join(title_parts)
-
-        # Highlight nodes involved in cycles with a thick border
-        border_width = 4 if is_in_cycle else 2
-        border_color = "#ff0000" if is_in_cycle else None
-
-        node_color: dict[str, str] | str = {
-            "background": color,
-            "border": border_color if border_color else color,
-        }
-        net.add_node(
-            node_id,
-            label=label,
-            title=title,
-            color=node_color,  # type: ignore[arg-type]
-            borderWidth=border_width,
-            group=depth,
-        )
-
-    # Add edges with special styling for cycle edges
-    for edge in edges:
-        source = edge["source"]
-        target = edge["target"]
-        edge_key = (source, target)
-
-        is_cycle_edge = edge_key in cycle_edges_set
-        is_self_loop = source == target
-
-        if is_cycle_edge or is_self_loop:
-            # Highlight cycle edges in red with dashed lines
-            net.add_edge(
-                source,
-                target,
-                title=f"{edge['type']} (CYCLE)",
-                arrows="to",
-                color="#ff0000",
-                dashes=True,
-                width=3,
-            )
-        else:
-            net.add_edge(
-                source,
-                target,
-                title=edge["type"],
-                arrows="to",
-            )
+    _add_edges_to_network(
+        net, edges, cycle_edges_set,
+    )
 
     return net.generate_html()

@@ -13,6 +13,7 @@ from flask.typing import ResponseReturnValue
 
 from sbom_graph_api.routes.auth import auth_required
 from sbom_graph_api.utils.validation import (
+    sanitize_content_disposition,
     validate_boolean,
     validate_format,
     validate_project_name,
@@ -37,7 +38,10 @@ def _build_json_response(data: dict[str, Any], filename: str) -> Response:
         Flask Response with JSON content
     """
     response = jsonify(data)
-    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    safe_disp = sanitize_content_disposition(
+        f'attachment; filename="{filename}"',
+    )
+    response.headers["Content-Disposition"] = safe_disp
     return response
 
 

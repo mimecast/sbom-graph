@@ -10,7 +10,9 @@ from sbom_graph_enrichment.celery_app import _RedactSecretsFilter
 class TestRedactSecretsFilter:
     """Tests for the log redaction filter."""
 
-    def _make_record(self, msg: str, args: tuple | dict | None = None) -> logging.LogRecord:
+    def _make_record(
+        self, msg: str, args: tuple | dict | None = None
+    ) -> logging.LogRecord:
         record = logging.LogRecord(
             name="celery",
             level=logging.INFO,

@@ -1,6 +1,6 @@
 # sbom-graph-model
 
-A Python library for parsing CycloneDX Software Bill of Materials (SBOM) files and persisting the extracted data into a [FalkorDB](https://www.falkordb.com/) graph database. Designed as a reusable component for both bulk importers and webhook-driven microservices that process SBOMs produced during release pipelines.
+A Python library for parsing CycloneDX, SPDX, and OpenVEX documents and persisting the extracted data into a [FalkorDB](https://www.falkordb.com/) graph database. Designed as a reusable component for both bulk importers and webhook-driven microservices that process SBOMs produced during release pipelines.
 
 ## Architecture
 
@@ -9,16 +9,23 @@ The library models software supply-chain data as a property graph with the follo
 ```
 Project ──HAS_VERSION──▶ Version ──DEPENDENCY_VERSION──▶ Version
                              │
-                             └──VERSION_DEFECT──▶ Defect
+                             ├──VERSION_DEFECT──▶ Defect
+                             ├──VERSION_VEX──▶ VexStatement
+                             ├──VERSION_SOURCE──▶ SourceRepository
+                             ├──HAS_TRUST_SCORE──▶ TrustScore
+                             └──PRODUCED_BY_SBOM──▶ SBOMRecord
 ```
 
 ### Modules
 
 | Module | Purpose |
 |---|---|
-| `sbom_graph_model.model` | Data models — enums (`RiskStatus`, `DefectType`, `ProjectType`), node classes (`Project`, `Version`, `Defect`, `License`), and edge classes (`VersionDefect`, `DependencyVersion`, `HasVersion`). |
+| `sbom_graph_model.model` | Data models — enums (`RiskStatus`, `DefectType`, `ProjectType`, `VexStatus`), node classes (`Project`, `Version`, `Defect`, `License`, `SBOMRecord`, `VexStatement`, `PolicyAnnotation`, `PointOfContact`, `SourceRepository`, `TrustScore`), and edge classes. |
 | `sbom_graph_model.persistence` | FalkorDB persistence layer — parameterised Cypher queries for creating nodes, edges, indexes, and computing centrality scores. |
 | `sbom_graph_model.cyclonedx` | CycloneDX SBOM processor — parses CycloneDX JSON, extracts components, dependencies, and vulnerabilities, then persists them via the persistence layer. |
+| `sbom_graph_model.spdx` | SPDX SBOM processor — parses SPDX 2.3 JSON, extracts packages, relationships, licenses, and source repositories. |
+| `sbom_graph_model.vex` | OpenVEX processor — parses OpenVEX documents and persists VEX statements linked to defects and versions. |
+| `sbom_graph_model.vcs` | VCS utilities — `parse_repo_url`, `is_known_git_host`, `KNOWN_GIT_HOSTS` for normalising and validating repository URLs. |
 
 ## Requirements
 
@@ -108,7 +115,9 @@ if persistence.is_internal(project):
 - **`parse_internal_prefixes(env_value)`** — Static method to parse a comma-separated string like `"group:com.acme,name:acme-"` into the list format expected by the constructor.
 - **`is_internal(project)`** — Returns `True` if the project matches any configured internal prefix.
 
-### Processing a CycloneDX SBOM
+### Processing SBOMs (CycloneDX, SPDX, OpenVEX)
+
+**CycloneDX:**
 
 ```python
 import json
@@ -126,6 +135,10 @@ projects, dependencies, defects = processor.process_cyclone_dx_json(
     json_data=sbom_data,
 )
 ```
+
+**SPDX:** Use `sbom_graph_model.spdx.SPDXProcessor` for SPDX 2.3 JSON documents.
+
+**OpenVEX:** Use `sbom_graph_model.vex.VexProcessor` to parse OpenVEX documents and persist VEX statements.
 
 ### Working with models directly
 
@@ -173,9 +186,13 @@ sbom-graph-model/
 │       ├── __init__.py              # Public API exports
 │       ├── model.py                 # Data models (nodes, edges, enums)
 │       ├── persistence.py           # FalkorDB persistence layer
-│       └── cyclonedx/
-│           ├── __init__.py
-│           └── processor.py         # CycloneDX SBOM parser
+│       ├── cyclonedx/
+│       │   ├── __init__.py
+│       │   └── processor.py         # CycloneDX SBOM parser
+│       ├── spdx/
+│       │   └── processor.py        # SPDX 2.3 processor
+│       ├── vex.py                   # OpenVEX processor
+│       └── vcs.py                   # VCS utilities (parse_repo_url, etc.)
 ├── tests/
 ├── pyproject.toml                   # Project metadata and dependencies
 ├── Jenkinsfile                      # CI/CD pipeline
@@ -197,17 +214,28 @@ from sbom_graph_model import (
     RiskStatus,
     DefectType,
     ProjectType,
+    VexStatus,
     # Node models
     Version,
     Project,
     Defect,
     License,
+    SBOMRecord,
+    VexStatement,
+    PolicyAnnotation,
+    PointOfContact,
+    SourceRepository,
+    TrustScore,
     # Edge models
     VersionDefect,
     DependencyVersion,
     HasVersion,
     # Persistence
     Persistence,
+    # VCS utilities
+    KNOWN_GIT_HOSTS,
+    is_known_git_host,
+    parse_repo_url,
 )
 ```
 

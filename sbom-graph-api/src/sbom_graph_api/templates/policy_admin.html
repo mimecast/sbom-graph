@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Policy Admin - AppSec Data Views</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/report.css') }}">
+    <style>
+        .container { max-width: 1400px; }
+        .nav-links { margin-bottom: 20px; }
+        .nav-links a { margin-right: 15px; }
+        .section { margin-bottom: 30px; }
+        .section h2 { font-size: 1.2em; margin-bottom: 15px; }
+        .filters { display: flex; gap: 15px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+        .filters input[type="text"] { padding: 8px 12px; width: 250px; }
+        .filters select { padding: 8px 12px; min-width: 120px; }
+        .filters button { padding: 8px 16px; }
+        .stats { display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap; }
+        .stat-item { background: #e3f2fd; padding: 10px 15px; border-radius: 5px; }
+        .stat-item strong { color: #1565c0; }
+        .policy-table { width: 100%; border-collapse: collapse; background: white; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .policy-table th { background: #366092; color: white; padding: 12px 15px; text-align: left; }
+        .policy-table td { padding: 12px 15px; border-bottom: 1px solid #e0e0e0; }
+        .policy-table tr:hover { background: #f8f9fa; }
+        .policy-table .purl-cell { font-family: monospace; font-size: 12px; max-width: 400px; overflow: hidden; text-overflow: ellipsis; }
+        .add-form { background: #f5f5f5; padding: 20px; border-radius: 8px; margin-bottom: 25px; max-width: 600px; }
+        .add-form label { display: block; margin-bottom: 5px; font-weight: 600; }
+        .add-form input, .add-form select, .add-form textarea { width: 100%; padding: 8px 12px; margin-bottom: 15px; box-sizing: border-box; }
+        .add-form textarea { min-height: 80px; resize: vertical; }
+        .add-form button { padding: 10px 20px; }
+        .badge { display: inline-block; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+        .badge-banned { background: #ffebee; color: #c62828; }
+        .badge-approved { background: #e8f5e9; color: #2e7d32; }
+        .badge-deprecated { background: #fff3e0; color: #e65100; }
+        .btn-remove { padding: 4px 10px; font-size: 12px; }
+        .violations-summary { background: #ffebee; padding: 15px; border-radius: 6px; margin-bottom: 15px; }
+        .violations-summary h3 { margin: 0 0 10px 0; color: #c62828; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav-links">
+            <a href="/">&larr; Back to API</a>
+            <a href="{{ url_for('reports.policy_violations') }}">Policy Violations Report</a>
+            {% if session.get('authenticated') %}
+            <a href="{{ url_for('auth.logout') }}">Logout</a>
+            {% endif %}
+        </div>
+
+        <h1>Policy Annotation Admin</h1>
+
+        {% if request.args.get('added') %}
+        <div class="success-message">Policy annotation added successfully.</div>
+        {% endif %}
+
+        <div class="stats">
+            {% for key, value in stats.items() %}
+            <span class="stat-item"><strong>{{ key }}:</strong> {{ value }}</span>
+            {% endfor %}
+        </div>
+
+        <div class="section" id="add-form">
+            <h2>Add Policy Annotation</h2>
+            <form method="POST" action="{{ url_for('admin.add_policy_annotation') }}" class="add-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <label for="purl">Package URL (PURL)</label>
+                <input type="text" id="purl" name="purl" placeholder="e.g. pkg:maven/org.example/lib@1.0.0" required>
+                <label for="annotation_type">Type</label>
+                <select id="annotation_type" name="annotation_type" required>
+                    <option value="">-- Select --</option>
+                    {% for opt in type_options %}
+                    <option value="{{ opt }}">{{ opt|capitalize }}</option>
+                    {% endfor %}
+                </select>
+                <label for="justification">Justification</label>
+                <textarea id="justification" name="justification" maxlength="500" placeholder="Reason for this annotation..." required></textarea>
+                <span class="char-count"><span id="justification-count">0</span>/500</span>
+                <button type="submit" class="btn">Add Annotation</button>
+            </form>
+        </div>
+
+        <div class="section" id="violations">
+            <h2>Policy Violations (Banned Packages Still in Use)</h2>
+            {% if violations %}
+            <div class="violations-summary">
+                <h3>{{ violations|length }} banned package(s) still in use as dependencies</h3>
+                <p>These packages have been marked as banned but are still present in dependency trees.</p>
+            </div>
+            <table class="policy-table">
+                <thead>
+                    <tr>
+                        <th>PURL</th>
+                        <th>Justification</th>
+                        <th>Created By</th>
+                        <th>Dependant Count</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for v in violations %}
+                    <tr>
+                        <td class="purl-cell">{{ v.purl }}</td>
+                        <td>{{ v.justification }}</td>
+                        <td>{{ v.created_by }}</td>
+                        <td>{{ v.dependant_count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p>No policy violations. All banned packages have been removed from use.</p>
+            {% endif %}
+        </div>
+
+        <div class="section" id="annotations">
+            <h2>All Annotations</h2>
+            <form method="GET" action="{{ url_for('admin.policy_admin_page') }}" class="filters">
+                <input type="text" name="search" value="{{ search }}" placeholder="Search PURL or justification...">
+                <select name="type">
+                    <option value="">All types</option>
+                    {% for opt in type_options %}
+                    <option value="{{ opt }}" {% if type_filter == opt %}selected{% endif %}>{{ opt|capitalize }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn">Filter</button>
+            </form>
+
+            {% if annotations %}
+            <table class="policy-table">
+                <thead>
+                    <tr>
+                        <th>PURL</th>
+                        <th>Type</th>
+                        <th>Justification</th>
+                        <th>Created By</th>
+                        <th>Created At</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for a in annotations %}
+                    <tr data-purl="{{ a.purl }}">
+                        <td class="purl-cell" title="{{ a.purl }}">{{ a.purl }}</td>
+                        <td>
+                            {% if a.type == 'bad' %}
+                            <span class="badge badge-banned">Banned</span>
+                            {% elif a.type == 'good' %}
+                            <span class="badge badge-approved">Approved</span>
+                            {% elif a.type == 'hold' %}
+                            <span class="badge badge-deprecated">Deprecated</span>
+                            {% else %}
+                            {{ a.type }}
+                            {% endif %}
+                        </td>
+                        <td>{{ a.justification }}</td>
+                        <td>{{ a.created_by }}</td>
+                        <td>{{ a.created_at or '-' }}</td>
+                        <td>
+                            <button type="button" class="btn btn-danger btn-remove remove-btn" data-purl="{{ a.purl }}" title="Remove annotation">Remove</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p>No policy annotations found.{% if search or type_filter %} Try adjusting your search or filter.{% endif %}</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('justification').addEventListener('input', function() {
+            document.getElementById('justification-count').textContent = this.value.length;
+        });
+        document.getElementById('justification').dispatchEvent(new Event('input'));
+
+        document.querySelectorAll('.remove-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var purl = this.getAttribute('data-purl');
+                if (!confirm('Remove policy annotation for ' + purl + '?')) return;
+                var row = this.closest('tr');
+                var xhr = new XMLHttpRequest();
+                xhr.open('DELETE', '/admin/policies/' + encodeURIComponent(purl));
+                xhr.setRequestHeader('X-CSRFToken', document.querySelector('meta[name="csrf-token"]').getAttribute('content'));
+                xhr.setRequestHeader('Accept', 'application/json');
+                xhr.onload = function() {
+                    if (xhr.status === 200) {
+                        row.remove();
+                    } else {
+                        var resp = JSON.parse(xhr.responseText || '{}');
+                        alert(resp.error || 'Failed to remove annotation');
+                    }
+                };
+                xhr.onerror = function() { alert('Request failed'); };
+                xhr.send();
+            });
+        });
+    </script>
+</body>
+</html>

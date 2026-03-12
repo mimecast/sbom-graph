@@ -1,5 +1,18 @@
 /* report.css - Shared styles for report and data table templates */
 
+/* Policy annotation badges */
+.policy-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+.policy-badge-banned { background: #ffebee; color: #c62828; }
+.policy-badge-approved { background: #e8f5e9; color: #2e7d32; }
+.policy-badge-deprecated { background: #fff3e0; color: #e65100; }
+
 body {
     margin: 20px;
     padding: 0;
@@ -194,6 +207,104 @@ tbody tr:hover {
 .severity-badge.medium { background-color: #fbc02d; color: #333; }
 .severity-badge.low { background-color: #388e3c; }
 
+/* Enrichment coverage status badges */
+.status-badge.recent { background-color: #388e3c; }
+.status-badge.stale { background-color: #f57c00; }
+.status-badge.never { background-color: #d32f2f; }
+
+.status-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+/* Horizontal stacked coverage bar */
+.coverage-bar {
+    display: flex;
+    height: 24px;
+    border-radius: 4px;
+    overflow: hidden;
+    background-color: #e0e0e0;
+    margin: 15px 0;
+}
+
+.coverage-bar .segment {
+    transition: width 0.3s ease;
+}
+
+.coverage-bar .segment.recent { background-color: #388e3c; }
+.coverage-bar .segment.stale { background-color: #f57c00; }
+.coverage-bar .segment.never { background-color: #d32f2f; }
+
+/* License risk colour-coding (dashboard and tables) */
+.license-risk-permissive { color: #388e3c; }
+.license-risk-weak-copyleft { color: #f57c00; }
+.license-risk-strong-copyleft { color: #d32f2f; }
+.license-risk-proprietary { color: #7b1fa2; }
+.license-risk-unknown { color: #757575; }
+
+/* Horizontal stacked license risk bar */
+.license-risk-bar {
+    display: flex;
+    height: 24px;
+    border-radius: 4px;
+    overflow: hidden;
+    background-color: #e0e0e0;
+    margin: 15px 0;
+}
+
+.license-risk-bar .segment {
+    transition: width 0.3s ease;
+}
+
+.license-risk-bar .segment.license-risk-permissive { background-color: #388e3c; }
+.license-risk-bar .segment.license-risk-weak-copyleft { background-color: #fbc02d; }
+.license-risk-bar .segment.license-risk-strong-copyleft { background-color: #d32f2f; }
+.license-risk-bar .segment.license-risk-proprietary { background-color: #7b1fa2; }
+.license-risk-bar .segment.license-risk-unknown { background-color: #757575; }
+
+/* VEX status badges (vulnerabilities report) */
+.vex-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+.vex-badge.vex-not-affected { background-color: #388e3c; }
+.vex-badge.vex-affected { background-color: #d32f2f; }
+.vex-badge.vex-under-investigation { background-color: #f57c00; }
+.vex-badge.vex-fixed { background-color: #1976d2; }
+.vex-badge.vex-no-vex { background-color: #757575; }
+
+/* VEX filter dropdown */
+.vex-filter-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.vex-filter-select {
+    padding: 6px 10px;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+    font-size: 14px;
+}
+
+/* Highlight rows with under_investigation VEX status */
+tr.vex-highlight-under-investigation {
+    background-color: #fff3e0 !important;
+}
+
+tr.vex-highlight-under-investigation:hover {
+    background-color: #ffe0b2 !important;
+}
+
 /* Back link */
 
 .back-link {
@@ -207,4 +318,125 @@ tbody tr:hover {
 
 .back-link a:hover {
     text-decoration: underline;
+}
+
+/* Incident response / blast radius */
+.blast-radius-container {
+    background: white;
+    border-radius: 5px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
+    overflow: hidden;
+    min-height: 620px;
+}
+
+.blast-radius-container iframe {
+    border: none;
+    width: 100%;
+    height: 600px;
+}
+
+.patch-plan-table {
+    margin-top: 10px;
+}
+
+.patch-plan-table th {
+    background-color: #366092;
+    color: white;
+}
+
+.priority-badge.critical {
+    background-color: #d32f2f;
+}
+
+.priority-badge.high {
+    background-color: #f57c00;
+}
+
+.priority-badge.medium {
+    background-color: #fbc02d;
+    color: #333;
+}
+
+.priority-badge.low {
+    background-color: #388e3c;
+}
+
+.priority-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: bold;
+    color: white;
+}
+
+/* SBOM inventory filter form */
+.sbom-inventory-filters {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.filter-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.filter-row label {
+    font-weight: bold;
+    color: #333;
+}
+
+.filter-row input[type="text"],
+.filter-row select {
+    padding: 6px 10px;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+    font-size: 14px;
+}
+
+.filter-row button {
+    padding: 6px 16px;
+    background-color: #366092;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.filter-row button:hover {
+    background-color: #254a73;
+}
+
+.recent-days-note {
+    font-size: 12px;
+    color: #666;
+    margin: 5px 0 15px 0;
+}
+
+/* Trust score colour coding (0-3 red, 4-6 amber, 7-10 green) */
+.trust-score {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-weight: bold;
+    color: white;
+    min-width: 30px;
+    text-align: center;
+}
+.trust-score-high { background-color: #388e3c; }
+.trust-score-medium { background-color: #f57c00; }
+.trust-score-low { background-color: #d32f2f; }
+
+.confidence-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-size: 11px;
+    background-color: #e0e0e0;
+    color: #333;
 }

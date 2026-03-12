@@ -169,7 +169,8 @@ def self_dependencies() -> ResponseReturnValue:
     if output_format == "excel":
         buf = create_self_dependency_report_excel(data)
         return excel_response(
-            buf, "self_dependencies.xlsx",
+            buf,
+            "self_dependencies.xlsx",
         )
 
     if output_format == "json":
@@ -294,9 +295,7 @@ def multi_version_deps(
             status=404,
         )
 
-    base_url = (
-        f"/reports/multi-version-deps/{project_name}"
-    )
+    base_url = f"/reports/multi-version-deps/{project_name}"
 
     if output_format == "excel":
         buf = create_multi_version_deps_excel(data)
@@ -369,11 +368,7 @@ def _flatten_multi_version_deps(
 
         if dependants:
             for dep in dependants:
-                internal_marker = (
-                    " [INTERNAL]"
-                    if dep.get("is_internal")
-                    else ""
-                )
+                internal_marker = " [INTERNAL]" if dep.get("is_internal") else ""
                 dep_name = dep.get("project_name", "")
                 rows.append(
                     [
@@ -472,10 +467,7 @@ def multi_version_dependency_sources(
 
         html = render_template(
             TABLE_TEMPLATE,
-            title=(
-                "Multi-Version Dependencies: "
-                f"{project_name}@{version_name}"
-            ),
+            title=(f"Multi-Version Dependencies: {project_name}@{version_name}"),
             internal_only=internal_only,
             headers=[],
             data=[],
@@ -491,12 +483,11 @@ def multi_version_dependency_sources(
         )
 
     multi_deps = data.get(
-        "multi_version_dependencies", [],
+        "multi_version_dependencies",
+        [],
     )
     target = data.get("target", {})
-    total_versions = sum(
-        dep["version_count"] for dep in multi_deps
-    )
+    total_versions = sum(dep["version_count"] for dep in multi_deps)
 
     all_apps: set[str] = set()
     for dep in multi_deps:
@@ -509,10 +500,12 @@ def multi_version_dependency_sources(
             data,
         )
         safe_n = project_name.replace("/", "_").replace(
-            ":", "_",
+            ":",
+            "_",
         )
         safe_v = version_name.replace("/", "_").replace(
-            ":", "_",
+            ":",
+            "_",
         )
         fn = f"multi_version_deps_{safe_n}_{safe_v}.xlsx"
         return excel_response(buf, fn)
@@ -531,17 +524,11 @@ def multi_version_dependency_sources(
     # HTML table — flatten data for display
     table_data = _flatten_multi_version_sources(multi_deps)
 
-    base_url = (
-        "/reports/multi-version-sources"
-        f"/{project_name}/{version_name}"
-    )
+    base_url = f"/reports/multi-version-sources/{project_name}/{version_name}"
 
     html = render_template(
         TABLE_TEMPLATE,
-        title=(
-            "Multi-Version Dependencies: "
-            f"{project_name}@{version_name}"
-        ),
+        title=(f"Multi-Version Dependencies: {project_name}@{version_name}"),
         internal_only=internal_only,
         headers=[
             "Dependency Project",
@@ -644,17 +631,11 @@ def non_semver_versions() -> ResponseReturnValue:
     reason_counts: dict[str, int] = {}
     for record in data:
         reason = record["reason"]
-        reason_counts[reason] = (
-            reason_counts.get(reason, 0) + 1
-        )
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
     if output_format == "excel":
         buf = create_non_semver_report_excel(data)
-        filename = (
-            "non_semver_internal.xlsx"
-            if internal_only
-            else "non_semver_versions.xlsx"
-        )
+        filename = "non_semver_internal.xlsx" if internal_only else "non_semver_versions.xlsx"
         return excel_response(buf, filename)
 
     if output_format == "json":
@@ -671,9 +652,7 @@ def non_semver_versions() -> ResponseReturnValue:
         reason_counts.items(),
         key=lambda x: -x[1],
     )[:3]
-    top_reasons_str = ", ".join(
-        f"{r[0]} ({r[1]})" for r in top_reasons
-    )
+    top_reasons_str = ", ".join(f"{r[0]} ({r[1]})" for r in top_reasons)
 
     base_url = "/reports/non-semver-versions"
     html = render_template(
@@ -698,11 +677,7 @@ def non_semver_versions() -> ResponseReturnValue:
         stats={
             "Total Non-SemVer Versions": len(data),
             "Affected Projects": unique_projects,
-            "Top Reasons": (
-                top_reasons_str
-                if top_reasons_str
-                else "N/A"
-            ),
+            "Top Reasons": (top_reasons_str if top_reasons_str else "N/A"),
         },
         excel_url=build_url_with_params(
             base_url,
@@ -779,11 +754,9 @@ def version_dependencies_report(
 
     service = get_falkordb_service()
 
-    is_semver_compliant, non_compliant_versions = (
-        service.is_project_semver_compliant(
-            project_name,
-            internal_only,
-        )
+    is_semver_compliant, non_compliant_versions = service.is_project_semver_compliant(
+        project_name,
+        internal_only,
     )
     latest_version = None
     if is_semver_compliant:
@@ -825,14 +798,12 @@ def version_dependencies_report(
     if error_resp is not None:
         return error_resp
 
-    dependencies = (
-        service.get_transitive_dependencies_for_report(
-            project_name,
-            resolved_version,
-            max_depth,
-            internal_only,
-            project_group=project_group,
-        )
+    dependencies = service.get_transitive_dependencies_for_report(
+        project_name,
+        resolved_version,
+        max_depth,
+        internal_only,
+        project_group=project_group,
     )
 
     return _render_version_deps(
@@ -880,10 +851,7 @@ def _handle_latest_resolution(
 
         html = render_template(
             TABLE_TEMPLATE,
-            title=(
-                "Version Dependencies: "
-                f"{project_name}@latest"
-            ),
+            title=(f"Version Dependencies: {project_name}@latest"),
             internal_only=internal_only,
             headers=[],
             data=[],
@@ -893,13 +861,13 @@ def _handle_latest_resolution(
             schema_url=None,
         )
         return Response(
-            html, mimetype="text/html", status=400,
+            html,
+            mimetype="text/html",
+            status=400,
         )
 
     if latest_version is None:
-        error_msg = (
-            f"No versions found for project {project_name}"
-        )
+        error_msg = f"No versions found for project {project_name}"
         if output_format == "json":
             return jsonify(
                 {
@@ -909,10 +877,7 @@ def _handle_latest_resolution(
             ), 404
         html = render_template(
             TABLE_TEMPLATE,
-            title=(
-                "Version Dependencies: "
-                f"{project_name}@latest"
-            ),
+            title=(f"Version Dependencies: {project_name}@latest"),
             internal_only=internal_only,
             headers=[],
             data=[],
@@ -922,7 +887,9 @@ def _handle_latest_resolution(
             schema_url=None,
         )
         return Response(
-            html, mimetype="text/html", status=404,
+            html,
+            mimetype="text/html",
+            status=404,
         )
 
     return None
@@ -947,10 +914,7 @@ def _check_version_exists(
             ), 404
         html = render_template(
             TABLE_TEMPLATE,
-            title=(
-                "Version Dependencies: "
-                f"{project_name}@{version_name}"
-            ),
+            title=(f"Version Dependencies: {project_name}@{version_name}"),
             internal_only=internal_only,
             headers=[],
             data=[],
@@ -960,7 +924,9 @@ def _check_version_exists(
             schema_url=None,
         )
         return Response(
-            html, mimetype="text/html", status=404,
+            html,
+            mimetype="text/html",
+            status=404,
         )
 
     if resolved_version not in all_versions:
@@ -975,24 +941,21 @@ def _check_version_exists(
             ), 404
         html = render_template(
             TABLE_TEMPLATE,
-            title=(
-                "Version Dependencies: "
-                f"{project_name}@{resolved_version}"
-            ),
+            title=(f"Version Dependencies: {project_name}@{resolved_version}"),
             internal_only=internal_only,
             headers=[],
             data=[],
             stats={
-                "Error": (
-                    f"Version '{resolved_version}' not found"
-                ),
+                "Error": (f"Version '{resolved_version}' not found"),
             },
             excel_url=None,
             json_url=None,
             schema_url=None,
         )
         return Response(
-            html, mimetype="text/html", status=404,
+            html,
+            mimetype="text/html",
+            status=404,
         )
 
     return None
@@ -1011,15 +974,9 @@ def _render_version_deps(  # noqa: PLR0913
     non_compliant_versions: list[str],
 ) -> ResponseReturnValue:
     """Render version-dependencies in the requested format."""
-    title = (
-        f"Version Dependencies: "
-        f"{project_name}@{resolved_version}"
-    )
+    title = f"Version Dependencies: {project_name}@{resolved_version}"
     if version_name.lower() == "latest":
-        title = (
-            f"Version Dependencies: "
-            f"{project_name}@latest ({resolved_version})"
-        )
+        title = f"Version Dependencies: {project_name}@latest ({resolved_version})"
 
     unique_dependencies = (
         len(
@@ -1035,19 +992,10 @@ def _render_version_deps(  # noqa: PLR0913
         else 0
     )
 
-    max_depth_reached = (
-        max(d["depth"] for d in dependencies)
-        if dependencies
-        else 0
-    )
-    direct_deps = sum(
-        1 for d in dependencies if d["depth"] == 1
-    )
+    max_depth_reached = max(d["depth"] for d in dependencies) if dependencies else 0
+    direct_deps = sum(1 for d in dependencies if d["depth"] == 1)
 
-    base_url = (
-        "/reports/version-dependencies"
-        f"/{project_name}/{version_name}"
-    )
+    base_url = f"/reports/version-dependencies/{project_name}/{version_name}"
 
     if output_format == "excel":
         buf = create_version_dependencies_report_excel(
@@ -1060,10 +1008,12 @@ def _render_version_deps(  # noqa: PLR0913
             max_depth,
         )
         safe_n = project_name.replace("/", "_").replace(
-            ":", "_",
+            ":",
+            "_",
         )
         safe_v = resolved_version.replace("/", "_").replace(
-            ":", "_",
+            ":",
+            "_",
         )
         fn = f"{safe_n}_{safe_v}_dependencies.xlsx"
         return excel_response(buf, fn)
@@ -1093,11 +1043,7 @@ def _render_version_deps(  # noqa: PLR0913
                     d["depth"],
                     d["dependency_project"],
                     d["dependency_version"],
-                    (
-                        "Yes"
-                        if d.get("is_internal", False)
-                        else "No"
-                    ),
+                    ("Yes" if d.get("is_internal", False) else "No"),
                 ],
             )
     else:
@@ -1120,9 +1066,7 @@ def _render_version_deps(  # noqa: PLR0913
         stats["SemVer Compliant"] = "Yes"
     elif not is_semver_compliant:
         nc_count = len(non_compliant_versions)
-        stats["SemVer Compliant"] = (
-            f"No ({nc_count} non-compliant)"
-        )
+        stats["SemVer Compliant"] = f"No ({nc_count} non-compliant)"
 
     html = render_template(
         TABLE_TEMPLATE,
@@ -1227,10 +1171,7 @@ def dependants_report(
 
         html = render_template(
             TABLE_TEMPLATE,
-            title=(
-                "Dependants Report: "
-                f"{project_name}@{version_name}"
-            ),
+            title=(f"Dependants Report: {project_name}@{version_name}"),
             internal_only=internal_only,
             headers=[],
             data=[],
@@ -1247,15 +1188,13 @@ def dependants_report(
             status=404,
         )
 
-    report_data = (
-        service.get_dependants_with_partitions_and_paths(
-            project_name,
-            version_name,
-            max_depth,
-            internal_only,
-            longest_only,
-            project_group=project_group,
-        )
+    report_data = service.get_dependants_with_partitions_and_paths(
+        project_name,
+        version_name,
+        max_depth,
+        internal_only,
+        longest_only,
+        project_group=project_group,
     )
 
     if output_format == "excel":
@@ -1264,14 +1203,14 @@ def dependants_report(
             longest_only,
         )
         safe_n = project_name.replace("/", "_").replace(
-            ":", "_",
+            ":",
+            "_",
         )
         safe_v = version_name.replace("/", "_").replace(
-            ":", "_",
+            ":",
+            "_",
         )
-        suffix = (
-            "_longest" if longest_only else "_all_paths"
-        )
+        suffix = "_longest" if longest_only else "_all_paths"
         fn = f"dependants_{safe_n}_{safe_v}{suffix}.xlsx"
         return excel_response(buf, fn)
 
@@ -1286,10 +1225,7 @@ def dependants_report(
         return build_json_response(payload, fn)
 
     # HTML — custom dependants template
-    base_url = (
-        f"/reports/dependants"
-        f"/{project_name}/{version_name}"
-    )
+    base_url = f"/reports/dependants/{project_name}/{version_name}"
     dependants = report_data.get("dependants", [])
     stats = report_data.get("stats", {})
 
@@ -1352,9 +1288,7 @@ def _purl_redirect(
 
     target = url_for(endpoint, **kwargs)  # type: ignore[arg-type]
     if params:
-        qs = "&".join(
-            f"{k}={v}" for k, v in params.items()
-        )
+        qs = "&".join(f"{k}={v}" for k, v in params.items())
         target = f"{target}?{qs}"
 
     return redirect(target, code=307)

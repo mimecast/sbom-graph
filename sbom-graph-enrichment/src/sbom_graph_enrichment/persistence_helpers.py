@@ -43,6 +43,8 @@ def create_persistence() -> Persistence:
     password = os.environ.get("FALKORDB_PASSWORD", "")
     ssl = os.environ.get("FALKORDB_SSL", "false").lower() == "true"
     ssl_ca_certs = os.environ.get("FALKORDB_CACERTS") or None
+    ssl_certfile = os.environ.get("FALKORDB_CLIENT_CERT") or None
+    ssl_keyfile = os.environ.get("FALKORDB_CLIENT_KEY") or None
 
     if not password:
         logger.warning(
@@ -58,6 +60,8 @@ def create_persistence() -> Persistence:
         password=password,
         ssl=ssl,
         ssl_ca_certs=ssl_ca_certs,
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
         internal_prefixes=internal_prefixes,
     )
 
@@ -68,7 +72,7 @@ def get_persistence() -> Persistence:
     Falls back to :func:`create_persistence` if called outside a Celery
     worker (e.g. during tests or in the beat scheduler).
     """
-    global _process_persistence  # noqa: PLW0603
+    global _process_persistence  # noqa: PLW0603  # pylint: disable=global-statement
     if _process_persistence is None:
         logger.debug("No cached Persistence found; creating a new instance")
         _process_persistence = create_persistence()
@@ -81,7 +85,7 @@ def get_http_client() -> httpx.Client:
     Connection pooling across certifier calls avoids repeated TCP/TLS
     handshakes when enriching thousands of packages.
     """
-    global _process_http_client  # noqa: PLW0603
+    global _process_http_client  # noqa: PLW0603  # pylint: disable=global-statement
     if _process_http_client is None:
         logger.debug("No cached httpx.Client found; creating a new instance")
         _process_http_client = httpx.Client(timeout=_HTTP_TIMEOUT)
@@ -95,7 +99,7 @@ def _on_worker_process_init(**_kwargs: object) -> None:
     for this worker child process immediately after the fork, so they
     are ready before the first task runs.
     """
-    global _process_persistence, _process_http_client  # noqa: PLW0603
+    global _process_persistence, _process_http_client  # noqa: PLW0603  # pylint: disable=global-statement
     logger.info("Initialising per-process connections (pid=%d)", os.getpid())
     _process_persistence = create_persistence()
     _process_http_client = httpx.Client(timeout=_HTTP_TIMEOUT)
@@ -103,7 +107,7 @@ def _on_worker_process_init(**_kwargs: object) -> None:
 
 def _reset_persistence() -> None:
     """Clear the cached instances (for testing only)."""
-    global _process_persistence, _process_http_client  # noqa: PLW0603
+    global _process_persistence, _process_http_client  # noqa: PLW0603  # pylint: disable=global-statement
     _process_persistence = None
     if _process_http_client is not None:
         _process_http_client.close()

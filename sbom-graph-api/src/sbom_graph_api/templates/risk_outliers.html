@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/common.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/report.css') }}">
+</head>
+<body>
+    <h1>{{ title }}</h1>
+
+    <div class="controls">
+        <div class="download-links">
+            {% if json_url %}
+            <a href="{{ json_url }}" class="download-link">Download as JSON</a>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if stats %}
+    <div class="stats">
+        {% for key, value in stats.items() %}
+        <span>{{ key }}: {{ value }}</span>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if data %}
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Package</th>
+                    <th>Version</th>
+                    <th>Effective Score</th>
+                    <th>Dependants Count</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in data %}
+                <tr>
+                    <td>{{ row.package }}</td>
+                    <td>{{ row.version }}</td>
+                    <td>{{ row.score_cell }}</td>
+                    <td>{{ row.dependants_count }}</td>
+                    <td><a href="{{ url_for('reports.risk_path_explorer', purl=row.purl) }}">View Risk Path</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-message">No risk outliers found (packages with score &lt; 4 and &ge; 3 dependants)</div>
+    {% endif %}
+</body>
+</html>
