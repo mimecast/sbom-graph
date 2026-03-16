@@ -31,7 +31,7 @@ falkordb:
 sbomGraphApi:
   image:
     repository: sbom-graph-api
-    tag: mtls-fix
+    tag: 0.2.0-alpha
     pullPolicy: Never
   replicas: 1
   gunicornWorkers: "2"
@@ -81,7 +81,7 @@ enrichment:
   enabled: true
   image:
     repository: sbom-graph-enrichment
-    tag: row-fix2
+    tag: 0.2.0-alpha
     pullPolicy: Never
   replicas: 1
   interval: "3600"
