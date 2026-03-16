@@ -301,7 +301,7 @@ database. FalkorDB is licensed under the **Server Side Public License v1
 
 | Deployment Scenario | SSPLv1 Obligation |
 |---------------------|-------------------|
-| **Internal use** (not offered as a service to third parties) | No restrictions. Use freely. |
+| **Internal use** (not offered as a service to third parties) | No restrictions. Use freely. Enterprise Support packages or FalkorDB managed solution are available if preferred |
 | **Offered as a service to external users** (e.g., SaaS, hosted API) | You must open-source the **entire service stack** under SSPLv1 — or obtain a [commercial licence](https://www.falkordb.com/) from FalkorDB. |
 | **Distributing this source code** (without FalkorDB binary) | No SSPL obligation. MIT applies to this code. |
 
