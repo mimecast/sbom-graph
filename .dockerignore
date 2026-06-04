@@ -1,0 +1,71 @@
+# Root-level .dockerignore for monorepo Docker builds.
+# All images are built with the repo root as context:
+#   docker build -f <subproject>/Dockerfile .
+
+# Version control
+.git
+.gitignore
+
+# IDE and editor files
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+
+# CI/CD
+.github/
+Jenkinsfile
+
+# Python bytecode
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+**/*.egg-info/
+.eggs/
+*.egg
+
+# Virtual environments
+**/.venv/
+**/venv/
+**/ENV/
+**/env/
+
+# Testing and coverage (not needed in images)
+**/tests/
+**/.pytest_cache/
+**/.coverage
+**/htmlcov/
+.tox/
+**/coverage.xml
+**/coverage-reports/
+**/xunit-reports/
+**/nosetests.xml
+
+# Helm charts (deployed separately)
+helm/
+
+# Build/utility scripts
+build-images.sh
+sync-helm-tags.sh
+inventory.yaml
+
+# Local configuration and certificates
+.env
+*.local
+certs/
+
+# Scanner artifacts
+.scannerwork/
+.sonar/
+getIqOrganization*
+
+# macOS
+.DS_Store
+._*
+
+# Jupyter
+*.ipynb
+.ipynb_checkpoints/

@@ -1,6 +1,6 @@
 [project]
 name = "sbom-graph-enrichment"
-version = "0.2.0-alpha"
+version = "0.2.0-beta.5"
 description = "Celery-based enrichment pipeline for sbom-graph"
 authors = [
     {name = "Brett Crawley"}
@@ -8,7 +8,7 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.14,<4"
 dependencies = [
-    "sbom-graph-model",
+    "sbom-graph-model>=0.2.0-beta.4",
     "celery>=5.4.0",
     "redis>=5.0.0",
     "httpx>=0.28.0",
@@ -25,7 +25,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-sbom-graph-model = { path = "../sbom-graph-model", editable = true }
+# sbom-graph-model = { path = "../sbom-graph-model", editable = true }
 
 
 [tool.pytest.ini_options]

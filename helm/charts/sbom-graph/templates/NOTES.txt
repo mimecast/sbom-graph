@@ -1,7 +1,7 @@
 sbom-graph has been deployed successfully.
 
 Components:
-  - FalkorDB:          {{ include "sbom-graph.falkordb.fullname" . }} (port 6379)
+  - FalkorDB:          {{ include "sbom-graph.falkordb.connectHost" . }}:6379 (Service {{ include "sbom-graph.falkordb.fullname" . }}; DNS name {{ include "sbom-graph.falkordb.clusterHostname" . }})
   - SBOM Graph API: {{ include "sbom-graph.sbomGraphApi.fullname" . }} (port {{ .Values.sbomGraphApi.service.port }})
   - Release Listener:  {{ include "sbom-graph.releaseListener.fullname" . }} (port {{ .Values.releaseListener.service.port }})
 {{- if .Values.enrichment.enabled }}

@@ -38,30 +38,26 @@ The primary risks identified were around credential management (hardcoded defaul
 
 ### Trust Boundaries
 
-```
-+--------------------------------------------------------------+
-| Kubernetes Cluster                                           |
-|  +--------------------+    +-----------------------------+   |
-|  | Ingress Controller |----> SBOM Graph API Pod       |   |
-|  | (TLS termination)  |    | +-------------------------+ |   |
-|  +--------------------+    | | Gunicorn + Flask App    | |   |
-|                            | | (non-root, port 8080)  | |   |
-|  +--------------------+    | +-----------+-------------+ |   |
-|  | LDAP Server        |<---+             |               |   |
-|  | (corporate AD)     |    | +-----------v-------------+ |   |
-|  +--------------------+    | | /data/tokens.db         | |   |
-|                            | | (PVC, encrypted)        | |   |
-|  +--------------------+    | +-------------------------+ |   |
-|  | FalkorDB           |<---+                             |   |
-|  | (Redis protocol)   |    +-----------------------------+   |
-|  +--------------------+                                      |
-+--------------------------------------------------------------+
-         ^
-         | HTTPS
-+---------+---------+
-|  Browser / API    |
-|  Client           |
-+-------------------+
+```mermaid
+flowchart TB
+  browser["Browser / API Client"]
+
+  subgraph cluster["Kubernetes Cluster"]
+    ingress["Ingress Controller<br/>(TLS termination)"]
+
+    subgraph pod["SBOM Graph API Pod"]
+      app["Gunicorn + Flask App<br/>(non-root, port 8080)"]
+      tokens["/data/tokens.db<br/>(PVC, encrypted)"]
+      app --> tokens
+    end
+
+    ldap["LDAP Server<br/>(corporate AD)"]
+    falkordb["FalkorDB<br/>(Redis protocol)"]
+  end
+
+  browser -->|HTTPS| ingress --> app
+  app <--> ldap
+  app <--> falkordb
 ```
 
 ## Threat Analysis

@@ -104,8 +104,22 @@ class TestAllVulnerabilitiesRoute:
         assert response.status_code == 200
         assert b"0.0%" in response.data or b"0%" in response.data
 
+    def test_defect_id_match_passed_to_service(self, client):
+        """defect_id_match query param is forwarded when valid."""
+        mock_service = MagicMock()
+        mock_service.get_all_vulnerabilities.return_value = []
 
-class TestVulnerabilityDependants:
+        with patch(
+            "sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service",
+            return_value=mock_service,
+        ):
+            client.get("/reports/vulnerabilities?defect_id_match=CVE-2024")
+
+        mock_service.get_all_vulnerabilities.assert_called_with(
+            False,
+            "CVE-2024",
+        )
+
     """Tests for GET /reports/vulnerability-dependants/<defect_id>."""
 
     def test_invalid_defect_id_returns_400(self, client):
@@ -171,15 +185,10 @@ class TestVulnerabilityDependants:
             "sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service",
             return_value=mock_service,
         ):
-            resp = client.get(
-                "/reports/vulnerability-dependants/CVE-1?format=excel"
-            )
+            resp = client.get("/reports/vulnerability-dependants/CVE-1?format=excel")
 
         assert resp.status_code == 200
-        assert (
-            "spreadsheet" in resp.content_type
-            or "excel" in resp.content_type
-        )
+        assert "spreadsheet" in resp.content_type or "excel" in resp.content_type
 
     def test_json_format_returns_json(self, client):
         """format=json returns JSON payload."""
@@ -196,9 +205,7 @@ class TestVulnerabilityDependants:
             "sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service",
             return_value=mock_service,
         ):
-            resp = client.get(
-                "/reports/vulnerability-dependants/CVE-1?format=json"
-            )
+            resp = client.get("/reports/vulnerability-dependants/CVE-1?format=json")
 
         assert resp.status_code == 200
         data = resp.get_json()

@@ -6,6 +6,8 @@ from flask import Flask
 from sbom_graph_api.utils.validation import (
     build_url_params,
     build_url_with_params,
+    defect_id_match_prefix_for_starts_with,
+    defect_id_match_uses_glob,
     get_safe_redirect_url,
     is_safe_redirect_url,
     sanitize_content_disposition,
@@ -13,6 +15,7 @@ from sbom_graph_api.utils.validation import (
     validate_boolean,
     validate_css_dimension,
     validate_defect_id,
+    validate_defect_id_match_filter,
     validate_float_param,
     validate_format,
     validate_int_param,
@@ -558,6 +561,10 @@ class TestBuildUrlParams:
         result = build_url_params(vex_filter="all")
         assert "vex_filter" not in result
 
+    def test_defect_id_match_included(self):
+        result = build_url_params(defect_id_match="CVE-2024")
+        assert "defect_id_match=CVE-2024" in result or "defect_id_match=CVE%2D2024" in result
+
 
 class TestValidateVexFilter:
     """Tests for validate_vex_filter function."""
@@ -1053,3 +1060,26 @@ class TestValidateDefectId:
 
     def test_injection_rejected(self):
         assert validate_defect_id("CVE'; DROP TABLE--") is None
+
+
+class TestDefectIdMatchFilter:
+    """Tests for optional vulnerability list defect-id filter."""
+
+    def test_validate_accepts_prefix(self):
+        assert validate_defect_id_match_filter("  CVE-2024  ") == "CVE-2024"
+
+    def test_validate_accepts_glob(self):
+        assert validate_defect_id_match_filter("GHSA-*-abc") == "GHSA-*-abc"
+
+    def test_validate_rejects_star_only(self):
+        assert validate_defect_id_match_filter("*") is None
+
+    def test_validate_rejects_invalid_chars(self):
+        assert validate_defect_id_match_filter("CVE (2024)") is None
+
+    def test_prefix_for_starts_with(self) -> None:
+        assert defect_id_match_prefix_for_starts_with("CVE-2024") == "cve-2024"
+
+    def test_uses_glob(self) -> None:
+        assert defect_id_match_uses_glob("CVE-2024-*") is True
+        assert defect_id_match_uses_glob("CVE-2024") is False

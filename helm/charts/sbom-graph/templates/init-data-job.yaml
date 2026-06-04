@@ -26,8 +26,15 @@ spec:
         runAsUser: 65532
         runAsGroup: 65532
         fsGroup: 65532
+      # Disable kubelet service-link env vars (e.g. SBOM_GRAPH_FALKORDB_SERVICE_HOST).
+      # Required when TLS to FalkorDB is enabled: the Python redis client validates the
+      # TLS cert against the host in the connection URL; service links would inject the
+      # ClusterIP which is not in the cert SAN and breaks the handshake.
+      enableServiceLinks: false
+      {{- if (.Values.falkordb.waitForReady | default true) }}
       initContainers:
         {{- include "sbom-graph.falkordb.waitContainer" (dict "ctx" . "tlsVolume" "tls-ca") | nindent 8 }}
+      {{- end }}
       containers:
         - name: populate
           image: "{{ .Values.sbomGraphApi.image.repository }}:{{ .Values.sbomGraphApi.image.tag }}"
@@ -37,7 +44,7 @@ spec:
             - /app/scripts/populate_acme_corp.py
           env:
             - name: FALKORDB_HOST
-              value: {{ include "sbom-graph.falkordb.fullname" . | quote }}
+              value: {{ include "sbom-graph.falkordb.connectHost" . | quote }}
             - name: FALKORDB_PORT
               value: "6379"
             - name: FALKORDB_GRAPH_NAME

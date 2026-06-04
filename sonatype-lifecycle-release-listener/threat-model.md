@@ -28,29 +28,24 @@ The primary risks center on the **unauthenticated webhook endpoint**, **SSRF pot
 
 ### Trust Boundaries
 
-```
-+--------------------------------------------------------------------+
-| Kubernetes Cluster                                                  |
-|                                                                     |
-|  +--------------------+     +--------------------------------+      |
-|  | Ingress / LB       |---->| Release Listener Pod           |      |
-|  | (external traffic) |     | +----------------------------+ |      |
-|  +--------------------+     | | Gunicorn + Flask App       | |      |
-|                              | | (non-root, port 8000)     | |      |
-|  +--------------------+     | +--------+-------------------+ |      |
-|  | SonaType IQ Server |<----+          |                     |      |
-|  | (external HTTPS)   |     |          | Redis protocol      |      |
-|  +--------------------+     | +--------v-------------------+ |      |
-|                              | | FalkorDB (ClusterIP:6379) | |      |
-|                              | +----------------------------+ |      |
-|                              +--------------------------------+      |
-+--------------------------------------------------------------------+
-       ^
-       | Webhook POST (untrusted)
-+------+------+
-| SonaType IQ |
-| Server      |
-+--------------+
+```mermaid
+flowchart TB
+  ext_sonatype["SonaType IQ Server"]
+  ext_sonatype_api["SonaType IQ Server<br/>(external HTTPS API)"]
+
+  subgraph cluster["Kubernetes Cluster"]
+    ingress["Ingress / LB<br/>(external traffic)"]
+
+    subgraph pod["Release Listener Pod"]
+      app["Gunicorn + Flask App<br/>(non-root, port 8000)"]
+    end
+
+    falkordb["FalkorDB<br/>(ClusterIP:6379)"]
+  end
+
+  ext_sonatype -->|"Webhook POST (untrusted)"| ingress --> app
+  app -->|"HTTPS"| ext_sonatype_api
+  app -->|"Redis protocol"| falkordb
 ```
 
 **Trust boundary crossings:**

@@ -23,6 +23,7 @@ from flask.typing import ResponseReturnValue
 from flask_jwt_extended import (
     create_access_token,
     create_refresh_token,
+    get_jwt,
     get_jwt_identity,
     jwt_required,
     set_access_cookies,
@@ -164,6 +165,41 @@ def get_current_user() -> str | None:
         return session.get("username")
 
     return None
+
+
+def caller_is_admin() -> bool:
+    """Whether the active principal has admin privileges (JWT claim or session)."""
+    config = get_config()
+    if not config.auth_enabled:
+        return True
+    try:
+        verify_jwt_in_request(optional=True)
+        if get_jwt_identity():
+            claims = get_jwt()
+            if claims.get("is_admin") is True:
+                return True
+    except Exception:  # nosec B110  # pylint: disable=broad-exception-caught
+        pass
+
+    if session.get("authenticated") and session.get("is_admin"):
+        return True
+
+    return False
+
+
+def api_admin_required(fn: Callable) -> Callable:
+    """Require admin privileges for programmatic JSON/API routes."""
+
+    @wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        cfg = get_config()
+        if not cfg.auth_enabled:
+            return fn(*args, **kwargs)
+        if not caller_is_admin():
+            return jsonify({"error": "Admin privileges required"}), 403
+        return fn(*args, **kwargs)
+
+    return wrapper
 
 
 def admin_required(fn: Callable) -> Callable:
@@ -429,7 +465,14 @@ def refresh() -> ResponseReturnValue:
     identity = get_jwt_identity()
     if not identity:
         return jsonify({"error": "Invalid identity"}), 401
-    access_token = create_access_token(identity=identity)
+    refreshed_claims: dict[str, Any] = {}
+    if session.get("authenticated") and session.get("username") == identity:
+        refreshed_claims["is_admin"] = bool(session.get("is_admin"))
+
+    access_token = create_access_token(
+        identity=identity,
+        additional_claims=refreshed_claims,
+    )
 
     if request.is_json:
         return jsonify({"access_token": access_token})
@@ -513,14 +556,15 @@ def create_token() -> ResponseReturnValue:
                 expires_at = (datetime.now(UTC) + timedelta(days=expires_days)).replace(tzinfo=None)
 
             # Create the JWT token
-            additional_claims = {
+            api_claims = {
                 "type": "api_token",
                 "token_name": token_name,
+                "is_admin": bool(session.get("is_admin")),
             }
             access_token = create_access_token(
                 identity=identity,
                 expires_delta=timedelta(days=expires_days) if expires_days else False,
-                additional_claims=additional_claims,
+                additional_claims=api_claims,
             )
 
             # Store the token

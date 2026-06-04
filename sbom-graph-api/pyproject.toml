@@ -1,6 +1,6 @@
 [project]
 name = "sbom-graph-api"
-version = "0.2.0-alpha2"
+version = "0.2.0-beta.5"
 description = "SBOM Graph API - Flask application for FalkorDB graph data visualizations"
 authors = [
     {name = "Brett Crawley"}
@@ -23,7 +23,15 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "werkzeug>=3.1.6",
     "jsonschema>=4.20.0",
-    "sbom-graph-model",
+    "sbom-graph-model>=0.2.0-beta.4",
+    # Thin Celery + Redis client surface used purely to enqueue jobs onto
+    # the dedicated ``ingest`` queue and to read back AsyncResult state for
+    # ``GET /ingest/jobs/<id>``.  The API never imports any
+    # ``sbom-graph-enrichment`` symbols; the worker's task name + queue is
+    # the only contract between the two packages.  See
+    # ``docs/ingest-pipeline.md`` for the full rationale.
+    "celery>=5.4.0",
+    "redis>=5.0.0",
 ]
 
 [dependency-groups]
@@ -50,7 +58,7 @@ sbom-graph-api = "sbom_graph_api.app:main"
 
 
 [tool.uv.sources]
-sbom-graph-model = { path = "../sbom-graph-model", editable = true }
+# sbom-graph-model = { path = "../sbom-graph-model", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -8,6 +8,24 @@ import os
 from dataclasses import dataclass, field
 from datetime import timedelta
 
+from sbom_graph_model.k8s_service_host import resolve_k8s_service_link_host
+
+
+def secret_from_env_or_file(env_var: str, default: str | None = None) -> str | None:
+    """Load a secret from ``{ENV}_FILE`` when set, otherwise from ``ENV``.
+
+    Kubernetes Secrets-as-files and the AWS Secrets Store CSI driver mount material
+    under paths referenced by ``*_FILE``. Plain ``ENV`` keeps backward compatibility
+    with ``secretKeyRef`` injection.
+    """
+    path = os.environ.get(f"{env_var}_FILE")
+    if path:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    if env_var in os.environ:
+        return os.environ[env_var]
+    return default
+
 
 @dataclass
 class FalkorDBConfig:
@@ -22,15 +40,17 @@ class FalkorDBConfig:
     internal_label: str
     ssl: bool
     ssl_ca_certs: str | None
-    ssl_certfile: str | None
-    ssl_keyfile: str | None
+    ssl_certfile: str | None = None
+    ssl_keyfile: str | None = None
 
     @classmethod
     def from_env(cls) -> "FalkorDBConfig":
         """Load FalkorDB configuration from environment variables.
 
         Environment variables:
-        - FALKORDB_HOST: FalkorDB server hostname (default: localhost)
+        - FALKORDB_HOST: FalkorDB server hostname or FQDN (default: localhost).
+          In Kubernetes, when Cluster DNS fails but service links are enabled,
+          the effective host falls back to ``<name>_SERVICE_HOST`` (ClusterIP).
         - FALKORDB_PORT: FalkorDB server port (default: 6379)
         - FALKORDB_PASSWORD: FalkorDB password (optional)
         - FALKORDB_GRAPH_NAME: Name of the graph to use (default: acme_corp)
@@ -43,10 +63,11 @@ class FalkorDBConfig:
         - FALKORDB_CLIENT_CERT: Path to client certificate for mTLS (optional)
         - FALKORDB_CLIENT_KEY: Path to client private key for mTLS (optional)
         """
+        raw_host = os.environ.get("FALKORDB_HOST", "localhost") or "localhost"
         return cls(
-            host=os.environ.get("FALKORDB_HOST", "localhost"),
+            host=resolve_k8s_service_link_host(raw_host),
             port=int(os.environ.get("FALKORDB_PORT", "6379")),
-            password=os.environ.get("FALKORDB_PASSWORD"),
+            password=secret_from_env_or_file("FALKORDB_PASSWORD"),
             graph_name=os.environ.get("FALKORDB_GRAPH_NAME", "acme_corp"),
             socket_timeout=float(os.environ.get("FALKORDB_SOCKET_TIMEOUT", "30.0")),
             socket_connect_timeout=float(os.environ.get("FALKORDB_CONNECT_TIMEOUT", "10.0")),
@@ -94,7 +115,10 @@ class JWTConfig:
         access_hours = int(os.environ.get("JWT_ACCESS_TOKEN_EXPIRES_HOURS", "1"))
         refresh_days = int(os.environ.get("JWT_REFRESH_TOKEN_EXPIRES_DAYS", "30"))
         return cls(
-            secret_key=os.environ.get("JWT_SECRET_KEY", "jwt-secret-key-change-in-production"),
+            secret_key=(
+                secret_from_env_or_file("JWT_SECRET_KEY")
+                or "jwt-secret-key-change-in-production"
+            ),
             access_token_expires=timedelta(hours=access_hours),
             refresh_token_expires=timedelta(days=refresh_days),
             algorithm=os.environ.get("JWT_ALGORITHM", "HS256"),
@@ -112,6 +136,7 @@ class LDAPConfig:
     use_ssl: bool
     base_dn: str
     user_dn_template: str
+    # Optional: used only by LDAPService.test_connection(), not user login.
     bind_dn: str | None
     bind_password: str | None
     search_filter: str
@@ -125,6 +150,10 @@ class LDAPConfig:
     @classmethod
     def from_env(cls) -> "LDAPConfig":
         """Load LDAP configuration from environment variables.
+
+        User sign-in uses LDAP_USER_DN_TEMPLATE and the password from the login request
+        (see LDAPService.authenticate). LDAP_BIND_DN / LDAP_BIND_PASSWORD are optional
+        and used only for LDAPService.test_connection(), not for end-user authentication.
 
         Group-based authorization:
         - LDAP_ADMIN_GROUPS: Comma-separated list of groups that grant admin access
@@ -167,7 +196,7 @@ class LDAPConfig:
                 "LDAP_USER_DN_TEMPLATE", "uid={username},ou=users,dc=example,dc=com"
             ),
             bind_dn=os.environ.get("LDAP_BIND_DN"),
-            bind_password=os.environ.get("LDAP_BIND_PASSWORD"),
+            bind_password=secret_from_env_or_file("LDAP_BIND_PASSWORD"),
             search_filter=os.environ.get("LDAP_SEARCH_FILTER", "(uid={username})"),
             group_search_base=os.environ.get("LDAP_GROUP_SEARCH_BASE"),
             required_group=required_group,
@@ -193,8 +222,9 @@ class DatabaseConfig:
         """Load database configuration from environment variables."""
         return cls(
             path=os.environ.get("TOKEN_DB_PATH", "/data/tokens.db"),
-            encryption_key=os.environ.get(
-                "TOKEN_DB_ENCRYPTION_KEY", "db-encryption-key-change-in-production"
+            encryption_key=(
+                secret_from_env_or_file("TOKEN_DB_ENCRYPTION_KEY")
+                or "db-encryption-key-change-in-production"
             ),
         )
 
@@ -224,7 +254,10 @@ class AppConfig:
                 "0.0.0.0",
             ),
             port=int(os.environ.get("FLASK_PORT", "8080")),
-            secret_key=os.environ.get("FLASK_SECRET_KEY", "dev-secret-key-change-in-production"),
+            secret_key=(
+                secret_from_env_or_file("FLASK_SECRET_KEY")
+                or "dev-secret-key-change-in-production"
+            ),
             falkordb=FalkorDBConfig.from_env(),
             tls=TLSConfig.from_env(),
             jwt=JWTConfig.from_env(),

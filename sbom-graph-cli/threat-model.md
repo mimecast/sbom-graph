@@ -30,26 +30,29 @@ sbom-graph-cli is a thin HTTP client that provides a command-line interface for 
 
 ### Trust Boundaries
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         UNTRUSTED / SEMI-TRUSTED                             │
-│  User (operator)  │  Local files  │  API responses  │  Dependencies          │
-└────────┬─────────┴───────┬───────┴────────┬────────┴────────────┬────────────┘
-         │                 │                │                     │
-         ▼                 ▼                ▼                     ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              sbom-graph-cli                                  │
-│  • Click (CLI parsing)                                                       │
-│  • httpx (HTTP client)                                                       │
-│  • Rich (terminal output)                                                    │
-│  • Input validation, path handling, error handling                           │
-└────────┬────────────────────────────────────────────────────────────────────┘
-         │
-         │  HTTPS (trusted when cert verified)
-         ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         sbom-graph-api (trusted)                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+  user["User (operator)"]
+  files["Local files<br/>(SBOMs, config)"]
+  responses["API responses"]
+  deps["Dependencies<br/>(click, httpx, rich, ...)"]
+
+  subgraph cli["sbom-graph-cli"]
+    parsing["Click (CLI parsing)"]
+    http["httpx (HTTP client)"]
+    output["Rich (terminal output)"]
+    validation["Input validation / path handling / error handling"]
+  end
+
+  api["sbom-graph-api (trusted)"]
+
+  user --> cli
+  files --> cli
+  responses --> cli
+  deps --> cli
+
+  cli -->|"HTTPS (trusted when cert verified)"| api
+  api --> responses
 ```
 
 ---

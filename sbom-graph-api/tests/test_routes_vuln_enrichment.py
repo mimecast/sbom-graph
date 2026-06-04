@@ -166,22 +166,55 @@ class TestTriggerEnrichment:
         assert resp.status_code == 400
 
     def test_enrichment_unavailable_returns_503(self, client) -> None:
-        """When enrichment module is not available, returns 503."""
-        import builtins
+        """When the enrichment package can't be imported the route returns 503.
 
-        real_import = builtins.__import__
+        The route does ``from sbom_graph_enrichment.tasks import ...`` inside
+        a ``try``.  Patching ``builtins.__import__`` does NOT reliably
+        intercept this form because Python's import machinery short-circuits
+        for already-loaded submodules.  We instead clear the relevant entries
+        from ``sys.modules`` and install a ``MetaPathFinder`` that refuses
+        the package -- the same shape Python uses internally to express a
+        missing dependency, which is what production hits when the
+        enrichment image isn't deployed.
+        """
+        # Drop any pre-loaded copies so the route's import attempt actually
+        # exercises the meta-path finder we install below.
+        preloaded = {
+            name: sys.modules.pop(name)
+            for name in list(sys.modules)
+            if name == "sbom_graph_enrichment"
+            or name.startswith("sbom_graph_enrichment.")
+        }
 
-        def mock_import(name: str, *args: object, **kwargs: object) -> object:
-            if name == "sbom_graph_enrichment":
-                raise ImportError("No module named 'sbom_graph_enrichment'")
-            return real_import(name, *args, **kwargs)  # type: ignore[misc]
+        class _RefuseEnrichmentFinder:
+            """Meta-path finder that simulates the package being absent."""
 
-        with patch.object(builtins, "__import__", side_effect=mock_import):
+            def find_spec(
+                self, fullname: str, _path: object = None, _target: object = None
+            ) -> None:
+                if (
+                    fullname == "sbom_graph_enrichment"
+                    or fullname.startswith("sbom_graph_enrichment.")
+                ):
+                    raise ImportError(
+                        f"No module named {fullname!r} (test fixture)"
+                    )
+                return None
+
+        finder = _RefuseEnrichmentFinder()
+        sys.meta_path.insert(0, finder)
+        try:
             resp = client.post(
                 "/api/v1/enrich/vulnerabilities",
                 json={},
                 content_type="application/json",
             )
+        finally:
+            sys.meta_path.remove(finder)
+            # Restore any modules we evicted so the rest of the test suite
+            # keeps its expected import cache.
+            sys.modules.update(preloaded)
+
         assert resp.status_code == 503
 
 

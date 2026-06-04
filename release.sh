@@ -9,31 +9,54 @@ REGISTRY="${REGISTRY:-}"
 PUSH=false
 FORCE_BUILD=false
 LOAD_MINIKUBE=false
+# Replace an existing image in minikube when loading (minikube image load --overwrite).
+MINIKUBE_IMAGE_OVERWRITE="${MINIKUBE_IMAGE_OVERWRITE:-1}"
+# Empty = auto-select docker (prefer buildx) or podman — exported for build-images.sh.
+DOCKER="${DOCKER:-}"
+# Override single-arch platform for the LOCAL/minikube build (e.g. linux/arm64).
+# Empty = build-images.sh default (linux/amd64). The registry/push build is always multi-arch.
+LOCAL_PLATFORM="${LOCAL_PLATFORM:-}"
 DRY_RUN=false
 
 usage() {
     cat <<'EOF'
 Usage: release.sh [options]
 
-Read sub-project versions from pyproject.toml files, build Docker images for
+Read sub-project versions from pyproject.toml files, build container images for
 any that have changed, and update the Helm chart values.
+
+Uses Docker or Podman automatically (prefers docker when buildx works; otherwise
+podman). Override by exporting DOCKER=podman or DOCKER=docker.
 
 Options:
   --registry REGISTRY   Docker registry prefix (e.g. ghcr.io/org).
                         Also accepted via REGISTRY env var.
-  --push                Push built images to the remote registry.
-  --force-build         Rebuild all images from scratch (--no-cache),
-                        overwriting any existing local tags.
-  --load-minikube       Load built images into minikube's container runtime.
-                        Overwrites previously loaded images at the same tag.
+  --push                Push multi-arch images (linux/amd64 + linux/arm64) to the
+                        registry during build (login first). With --minikube, runs a
+                        second single-arch local build for loading into the cluster.
+  --force-build         Rebuild all images from scratch (--no-cache).
+  --load-minikube       Load images into minikube after building locally (single-arch).
+                        Default: replace existing tags (--overwrite).
+  --minikube            Same as --load-minikube (short).
+  --overwrite-minikube  Replace images already in minikube (default).
+  --no-overwrite-minikube
+                        Load without --overwrite.
+  --platform PLATFORM   Single-arch platform (e.g. linux/arm64, linux/amd64) for the LOCAL/minikube
+                        build. Use this when your local container runtime (Podman/Docker on
+                        Apple Silicon, minikube on a different arch, etc.) cannot load a
+                        manifest list. The --push (multi-arch) build to the registry is unaffected.
   --dry-run             Print what would happen without executing.
   -h, --help            Show this help.
 
 Examples:
-  ./release.sh                                    # Build changed, local only
-  ./release.sh --force-build                      # Full clean rebuild
-  ./release.sh --registry ghcr.io/org --push      # Build & push to registry
-  ./release.sh --force-build --load-minikube      # Rebuild all + load minikube
+  ./release.sh --registry ghcr.io/org --push
+  ./release.sh --minikube
+  ./release.sh --minikube --platform linux/arm64
+  ./release.sh --registry ghcr.io/org --push --minikube --platform linux/arm64
+
+Environment:
+  MINIKUBE_IMAGE_OVERWRITE   1 (default) = minikube image load --overwrite
+  LOCAL_PLATFORM             Same as --platform (single-arch for local/minikube build)
 EOF
 }
 
@@ -42,12 +65,43 @@ while [[ $# -gt 0 ]]; do
         --registry)      REGISTRY="$2"; shift 2 ;;
         --push)          PUSH=true; shift ;;
         --force-build)   FORCE_BUILD=true; shift ;;
-        --load-minikube) LOAD_MINIKUBE=true; shift ;;
+        --load-minikube|--minikube) LOAD_MINIKUBE=true; shift ;;
+        --overwrite-minikube)    MINIKUBE_IMAGE_OVERWRITE=1; shift ;;
+        --no-overwrite-minikube) MINIKUBE_IMAGE_OVERWRITE=0; shift ;;
+        --platform)
+            if [[ $# -lt 2 || -z "${2:-}" ]]; then
+                echo "ERROR: --platform requires a value (e.g. linux/arm64)" >&2
+                exit 1
+            fi
+            if [[ "$2" == *","* ]]; then
+                echo "ERROR: --platform takes a single platform; multi-arch is implicit on --push." >&2
+                exit 1
+            fi
+            LOCAL_PLATFORM="$2"
+            shift 2
+            ;;
         --dry-run)       DRY_RUN=true; shift ;;
         -h|--help)       usage; exit 0 ;;
         *)               echo "Unknown option: $1"; usage; exit 1 ;;
     esac
 done
+
+if [[ -z "${DOCKER:-}" ]]; then
+    if docker buildx version >/dev/null 2>&1; then
+        DOCKER=docker
+    elif podman buildx version >/dev/null 2>&1; then
+        DOCKER=podman
+    elif command -v docker >/dev/null 2>&1; then
+        DOCKER=docker
+    elif command -v podman >/dev/null 2>&1; then
+        DOCKER=podman
+    else
+        echo "ERROR: install Docker or Podman." >&2
+        exit 1
+    fi
+fi
+export DOCKER
+echo "==> Container CLI: ${DOCKER}"
 
 # ---------------------------------------------------------------------------
 # Read versions
@@ -85,7 +139,7 @@ declare -a BUILT_IMAGES=()
 # Helpers
 # ---------------------------------------------------------------------------
 image_exists_locally() {
-    docker image inspect "$1" >/dev/null 2>&1
+    "${DOCKER}" image inspect "$1" >/dev/null 2>&1
 }
 
 run() {
@@ -110,6 +164,16 @@ if $LOAD_MINIKUBE; then
     fi
 fi
 
+# Normalise MINIKUBE_IMAGE_OVERWRITE (env may be set before invocation).
+case "${MINIKUBE_IMAGE_OVERWRITE:-1}" in
+    1|true|TRUE|yes|YES) MINIKUBE_IMAGE_OVERWRITE=1 ;;
+    0|false|FALSE|no|NO) MINIKUBE_IMAGE_OVERWRITE=0 ;;
+    *)
+        echo "WARNING: invalid MINIKUBE_IMAGE_OVERWRITE=${MINIKUBE_IMAGE_OVERWRITE}; using 1 (overwrite)." >&2
+        MINIKUBE_IMAGE_OVERWRITE=1
+        ;;
+esac
+
 # ---------------------------------------------------------------------------
 # Build model wheel (all images depend on it)
 # ---------------------------------------------------------------------------
@@ -131,49 +195,108 @@ if $needs_build; then
 fi
 
 # ---------------------------------------------------------------------------
-# Determine build args
+# Build args: registry pass (multi-arch push) vs local pass (single-arch, loadable)
 # ---------------------------------------------------------------------------
-BUILD_EXTRA_ARGS=()
+REGISTRY_ARGS=( )
+LOCAL_ARGS=( )
 if $FORCE_BUILD; then
-    BUILD_EXTRA_ARGS+=(--no-cache)
+    REGISTRY_ARGS+=(--no-cache)
+    LOCAL_ARGS+=(--no-cache)
+fi
+
+if [[ -n "${LOCAL_PLATFORM}" ]]; then
+    LOCAL_ARGS+=(--platform "${LOCAL_PLATFORM}")
+fi
+
+IMAGES_PUSHED_WITH_BUILDX=false
+if $PUSH; then
+    REGISTRY_ARGS+=(--multi-arch --push)
+    IMAGES_PUSHED_WITH_BUILDX=true
 fi
 
 # ---------------------------------------------------------------------------
 # Build each image
 # ---------------------------------------------------------------------------
-build_if_needed() {
+_tag_flags=( --adv-tag "$API_REF" --rl-tag "$LIS_REF" --enr-tag "$ENR_REF" )
+
+registry_build_if_needed() {
     local ref="$1"
     local target="$2"
+    $PUSH || return 0
+
+    if $FORCE_BUILD; then
+        echo "==> [registry] Force-building $ref (multi-arch)..."
+        run ./build-images.sh "${REGISTRY_ARGS[@]}" "${_tag_flags[@]}" "$target"
+        BUILT_IMAGES+=("$ref")
+    elif image_exists_locally "$ref"; then
+        echo "==> [registry] SKIP $ref (already exists locally)"
+    else
+        echo "==> [registry] Building $ref (multi-arch push)..."
+        run ./build-images.sh "${REGISTRY_ARGS[@]}" "${_tag_flags[@]}" "$target"
+        BUILT_IMAGES+=("$ref")
+    fi
+}
+
+local_build_if_needed() {
+    local ref="$1"
+    local target="$2"
+    local force_local="${3:-false}"
+
+    if $PUSH && ! $LOAD_MINIKUBE; then
+        return 0
+    fi
+
+    if [[ "${force_local}" == "true" ]]; then
+        echo "==> [local] Building $ref for minikube (single-arch)..."
+        run ./build-images.sh "${LOCAL_ARGS[@]}" "${_tag_flags[@]}" "$target"
+        return
+    fi
 
     if $FORCE_BUILD; then
         echo "==> Force-building $ref ..."
-        run ./build-images.sh "${BUILD_EXTRA_ARGS[@]}" --adv-tag "$API_REF" --rl-tag "$LIS_REF" --enr-tag "$ENR_REF" "$target"
+        run ./build-images.sh "${LOCAL_ARGS[@]}" "${_tag_flags[@]}" "$target"
         BUILT_IMAGES+=("$ref")
     elif image_exists_locally "$ref"; then
         echo "==> SKIP $ref (already exists locally)"
     else
         echo "==> Building $ref ..."
-        run ./build-images.sh --adv-tag "$API_REF" --rl-tag "$LIS_REF" --enr-tag "$ENR_REF" "$target"
+        run ./build-images.sh "${LOCAL_ARGS[@]}" "${_tag_flags[@]}" "$target"
         BUILT_IMAGES+=("$ref")
     fi
 }
 
-build_if_needed "$API_REF" "sbom-graph-api"
-build_if_needed "$LIS_REF" "sonatype-lifecycle-release-listener"
-build_if_needed "$ENR_REF" "sbom-graph-enrichment"
+registry_build_if_needed "$API_REF" "sbom-graph-api"
+registry_build_if_needed "$LIS_REF" "sonatype-lifecycle-release-listener"
+registry_build_if_needed "$ENR_REF" "sbom-graph-enrichment"
+
+_fl="false"
+if $PUSH && $LOAD_MINIKUBE; then
+    _fl="true"
+fi
+
+local_build_if_needed "$API_REF" "sbom-graph-api" "$_fl"
+local_build_if_needed "$LIS_REF" "sonatype-lifecycle-release-listener" "$_fl"
+local_build_if_needed "$ENR_REF" "sbom-graph-enrichment" "$_fl"
 
 # ---------------------------------------------------------------------------
-# Push
+# Push (only when images were not already pushed by buildx --push)
 # ---------------------------------------------------------------------------
 if $PUSH; then
     echo ""
+    if $IMAGES_PUSHED_WITH_BUILDX; then
+        echo "==> Registry push completed during multi-arch build (${DOCKER} buildx --push)."
+        if [[ ${#BUILT_IMAGES[@]} -eq 0 ]]; then
+            echo "    No builds ran (images skipped as already present locally)."
+        fi
+    else
     echo "==> Pushing images to registry..."
     for ref in "${BUILT_IMAGES[@]}"; do
-        echo "    docker push $ref"
-        run docker push "$ref"
+            echo "    ${DOCKER} push $ref"
+            run "${DOCKER}" push "$ref"
     done
     if [[ ${#BUILT_IMAGES[@]} -eq 0 ]]; then
         echo "    Nothing to push (no images were built)."
+    fi
     fi
 fi
 
@@ -183,10 +306,20 @@ fi
 if $LOAD_MINIKUBE; then
     echo ""
     echo "==> Loading images into minikube..."
+    if [[ "${MINIKUBE_IMAGE_OVERWRITE}" == "1" ]]; then
+        echo "    (replacing existing tags: --overwrite)"
+    else
+        echo "    (not overwriting: omit --overwrite)"
+    fi
     for ref in "$API_REF" "$ENR_REF" "$LIS_REF"; do
         if image_exists_locally "$ref"; then
+            if [[ "${MINIKUBE_IMAGE_OVERWRITE}" == "1" ]]; then
             echo "    minikube image load $ref --overwrite"
             run minikube image load "$ref" --overwrite
+        else
+                echo "    minikube image load $ref"
+                run minikube image load "$ref"
+            fi
         else
             echo "    SKIP $ref (not present locally)"
         fi
@@ -197,9 +330,9 @@ fi
 # Update Helm values.yaml
 # ---------------------------------------------------------------------------
 echo ""
-echo "==> Updating helm/sbom-graph/values.yaml..."
+echo "==> Updating helm/charts/sbom-graph/values.yaml..."
 
-VALUES="helm/sbom-graph/values.yaml"
+VALUES="helm/charts/sbom-graph/values.yaml"
 
 update_helm_value() {
     local path="$1"
@@ -232,12 +365,26 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== Release Summary ==="
+echo "  CLI          : ${DOCKER}"
 echo "  sbom-graph-api                       : $API_REF"
 echo "  sbom-graph-enrichment                : $ENR_REF"
 echo "  sonatype-lifecycle-release-listener   : $LIS_REF"
 echo "  Images built : ${#BUILT_IMAGES[@]}"
-echo "  Pushed       : $PUSH"
-echo "  Minikube     : $LOAD_MINIKUBE"
+if $PUSH && $IMAGES_PUSHED_WITH_BUILDX; then
+    echo "  Pushed       : $PUSH (multi-arch during buildx)"
+else
+    echo "  Pushed       : $PUSH"
+fi
+if $LOAD_MINIKUBE; then
+    echo "  Minikube     : $LOAD_MINIKUBE (overwrite=${MINIKUBE_IMAGE_OVERWRITE})"
+else
+    echo "  Minikube     : $LOAD_MINIKUBE"
+fi
+if [[ -n "${LOCAL_PLATFORM}" ]]; then
+    echo "  Local arch   : ${LOCAL_PLATFORM} (override)"
+else
+    echo "  Local arch   : default (build-images.sh: linux/amd64)"
+fi
 echo "  Helm updated : $VALUES"
 if $DRY_RUN; then
     echo "  ** DRY RUN — no changes were made **"

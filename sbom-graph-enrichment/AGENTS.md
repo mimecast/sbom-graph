@@ -7,7 +7,7 @@ Celery-based asynchronous enrichment pipeline that queries external APIs to enri
 ```
 src/sbom_graph_enrichment/
 ├── celery_app.py          # Celery configuration, beat schedule, log redaction
-├── tasks.py               # Celery shared tasks (enrich_package, compute_trust_score, propagate_effective_scores)
+├── tasks.py               # Celery shared tasks (enrich_package, compute_trust_score, propagate_effective_scores, refresh_internal_centrality)
 ├── persistence_helpers.py # Per-worker Persistence and httpx.Client caching
 └── certifiers/
     ├── base.py            # Abstract Certifier base, Finding dataclass, FindingKind enum
@@ -74,10 +74,20 @@ A shared `httpx.Client` is passed in for connection pooling. Rate limiting is in
 ## Environment Variables
 | Variable | Default | Description |
 |----------|---------|-------------|
-| FALKORDB_HOST | localhost | FalkorDB host |
+| **INTERNAL_PREFIXES** | "" | Comma-separated `field:prefix` pairs (`group`, `name`, `purl`) so matching packages are treated as internal in FalkorDB; same format as API / release listener. Umbrella Helm: `global.internalPrefixes`. |
+| FALKORDB_HOST | localhost | FalkorDB / Redis host |
 | FALKORDB_PORT | 6379 | FalkorDB port |
+| FALKORDB_GRAPH_NAME | acme-corp | Graph name |
+| **FALKORDB_INTERNAL_LABEL** | INTERNAL | Secondary label on internal `Version` nodes; must match API. Used when refreshing stored degree centrality. Helm: `sbomGraphApi.falkordbInternalLabel`. |
 | FALKORDB_PASSWORD | "" | FalkorDB password |
+| FALKORDB_SSL | false | TLS for graph client (`persistence_helpers`) |
+| FALKORDB_CACERTS | "" | CA path for graph TLS |
+| CELERY_BROKER_DB | 1 | Redis DB for Celery broker |
+| CELERY_RESULT_DB | 2 | Redis DB for Celery results |
+| CELERY_REDIS_SSL | false | Use `rediss://` for broker and result backend |
 | ENRICHMENT_INTERVAL | 3600 | Seconds between enrichment cycles |
+| **CENTRALITY_REFRESH_ENABLED** | true | When true, Celery beat schedules `refresh_internal_centrality` |
+| **CENTRALITY_REFRESH_INTERVAL** | 7200 | Seconds between centrality refresh runs (default 2 hours) |
 | TRUST_SCORE_ENABLED | true | Enable trust score computation |
 | TRUST_SCORE_INTERVAL | 7200 | Seconds between propagation runs |
 | TRUST_SCORE_ALPHA | 0.4 | Blend weight (own vs inherited) |

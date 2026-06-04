@@ -16,6 +16,7 @@ OPTIMIZATION NOTES:
   3. Uses reasonable default depth limits
 """
 
+import fnmatch
 import re
 import ssl
 from collections.abc import Generator
@@ -23,9 +24,22 @@ from contextlib import contextmanager
 from typing import Any
 
 from falkordb import FalkorDB, Graph
+from redis.exceptions import ResponseError
 from sbom_graph_model import LicenseRiskCategory
 
 from sbom_graph_api.config import FalkorDBConfig, get_config
+from sbom_graph_api.utils.validation import (
+    defect_id_match_prefix_for_starts_with,
+    defect_id_match_uses_glob,
+)
+
+# FalkorDB returns this error when a read query targets a graph key that does
+# not yet exist in Redis.  An empty graph is a valid initial state for a fresh
+# deployment, so callers must treat it as an empty result set rather than a
+# server error.  Match on a substring to be resilient to FalkorDB version
+# wording changes (the canonical message is "Invalid graph operation on empty
+# key").
+_EMPTY_GRAPH_ERROR_FRAGMENT = "empty key"
 
 # Default maximum depth for transitive queries to prevent runaway traversals
 # Set high enough to capture deep dependency chains (some graphs have 20+ levels)
@@ -121,27 +135,57 @@ class FalkorDBService:
     def execute_query(self, query: str, params: dict[str, Any] | None = None) -> list[Any]:
         """Execute a read-only query and return results.
 
+        An empty graph (no nodes ever written) is treated as a valid empty
+        result set rather than a server error -- a freshly-deployed instance
+        with no SBOMs ingested yet must not return 500s on read endpoints.
+
         Args:
             query: Cypher query string
             params: Query parameters
 
         Returns:
-            List of result rows
+            List of result rows.  Returns ``[]`` when the target graph key
+            does not yet exist in FalkorDB.
+
+        Raises:
+            redis.exceptions.ResponseError: For any FalkorDB error other than
+                the "empty graph key" condition (e.g. syntax errors, auth
+                failures, server-side faults).
         """
-        result = self.graph.ro_query(query, params or {})
+        try:
+            result = self.graph.ro_query(query, params or {})
+        except ResponseError as exc:
+            if _EMPTY_GRAPH_ERROR_FRAGMENT in str(exc).lower():
+                return []
+            raise
         return result.result_set
 
     def execute_write(self, query: str, params: dict[str, Any] | None = None) -> list[Any]:
         """Execute a write query (MERGE, CREATE, DELETE, SET) and return results.
 
+        ``CREATE`` / ``MERGE`` against an empty graph implicitly create the
+        graph key, but pure ``MATCH ... DELETE`` / ``MATCH ... SET`` queries
+        will surface the same "empty graph key" error as reads do.  Treat
+        that as a no-op (nothing matched, nothing changed).
+
         Args:
             query: Cypher query string
             params: Query parameters
 
         Returns:
-            List of result rows
+            List of result rows.  Returns ``[]`` when the target graph key
+            does not yet exist in FalkorDB.
+
+        Raises:
+            redis.exceptions.ResponseError: For any FalkorDB error other than
+                the "empty graph key" condition.
         """
-        result = self.graph.query(query, params or {})
+        try:
+            result = self.graph.query(query, params or {})
+        except ResponseError as exc:
+            if _EMPTY_GRAPH_ERROR_FRAGMENT in str(exc).lower():
+                return []
+            raise
         return result.result_set if hasattr(result, "result_set") else []
 
     def find_version(
@@ -684,9 +728,7 @@ class FalkorDBService:
                 purls.append(p)
         return purls
 
-    def get_transitive_dependant_purls(
-        self, purl: str, max_depth: int | None = None
-    ) -> list[str]:
+    def get_transitive_dependant_purls(self, purl: str, max_depth: int | None = None) -> list[str]:
         """Get transitive dependant purls (packages that depend on this one).
 
         Resolves purl to project/version, runs reverse BFS, returns list of
@@ -2130,7 +2172,24 @@ class FalkorDBService:
 
         return list(nodes_dict.values()), edges
 
-    def get_all_vulnerabilities(self, internal_only: bool = False) -> list[dict[str, Any]]:
+    @staticmethod
+    def _filter_vulnerabilities_defect_glob(
+        items: list[dict[str, Any]],
+        pattern: str,
+    ) -> list[dict[str, Any]]:
+        """Case-insensitive fnmatch on ``defect_id`` (FalkorDB has no ``=~``)."""
+        pat = pattern.strip().lower()
+        return [
+            v
+            for v in items
+            if fnmatch.fnmatch((v.get("defect_id") or "").strip().lower(), pat)
+        ]
+
+    def get_all_vulnerabilities(
+        self,
+        internal_only: bool = False,
+        defect_id_match: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Get all vulnerabilities with their affected versions and VEX status.
 
         Includes vex_status (most recent VEX statement status, or null) per
@@ -2139,14 +2198,30 @@ class FalkorDBService:
         Args:
             internal_only: If True, only include vulnerabilities affecting
                           internal-labeled nodes
+            defect_id_match: Optional validated prefix or ``*``-glob filter
+                (matched case-insensitively against defect id / primary id).
 
         Returns:
             List of vulnerability dicts with severity, affected versions,
             vex_status, etc.
         """
+        where_prefix = ""
+        query_params: dict[str, Any] = {}
+        use_glob_postfilter = False
+        if defect_id_match:
+            use_glob_postfilter = defect_id_match_uses_glob(defect_id_match)
+            if not use_glob_postfilter:
+                where_prefix = """
+                WHERE toLower(toString(COALESCE(d.defect_id, d.id, ''))) STARTS WITH $defect_id_prefix
+"""
+                query_params["defect_id_prefix"] = (
+                    defect_id_match_prefix_for_starts_with(defect_id_match)
+                )
+
+        version_label = self.get_node_label(internal_only)
         if internal_only:
             query = f"""
-                MATCH (v:{self.internal_label})-[:VERSION_DEFECT]->(d:Defect)
+                MATCH (v:{version_label})-[:VERSION_DEFECT]->(d:Defect)
                 OPTIONAL MATCH (v)-[:HAS_VEX]->(s:VexStatement)-[:REFERS_TO]->(d)
                 WITH d,
                      collect(DISTINCT {{
@@ -2158,7 +2233,7 @@ class FalkorDBService:
                          status: s.status,
                          timestamp: s.timestamp
                      }}) AS vex_statements
-                RETURN COALESCE(d.defect_id, d.id) AS defect_id,
+{where_prefix}                RETURN COALESCE(d.defect_id, d.id) AS defect_id,
                        COALESCE(d.title, d.description) AS title,
                        d.description AS description,
                        d.severity AS severity,
@@ -2185,20 +2260,20 @@ class FalkorDBService:
                     COALESCE(d.cvss_score, d.cvss) DESC
             """
         else:
-            query = """
+            query = f"""
                 MATCH (v:Version)-[:VERSION_DEFECT]->(d:Defect)
                 OPTIONAL MATCH (v)-[:HAS_VEX]->(s:VexStatement)-[:REFERS_TO]->(d)
                 WITH d,
-                     collect(DISTINCT {
+                     collect(DISTINCT {{
                          project_name: v.project_name,
                          version: v.name,
                          project_group: v.project_group
-                     }) AS affected_versions,
-                     collect(DISTINCT {
+                     }}) AS affected_versions,
+                     collect(DISTINCT {{
                          status: s.status,
                          timestamp: s.timestamp
-                     }) AS vex_statements
-                RETURN COALESCE(d.defect_id, d.id) AS defect_id,
+                     }}) AS vex_statements
+{where_prefix}                RETURN COALESCE(d.defect_id, d.id) AS defect_id,
                        COALESCE(d.title, d.description) AS title,
                        d.description AS description,
                        d.severity AS severity,
@@ -2225,7 +2300,7 @@ class FalkorDBService:
                     COALESCE(d.cvss_score, d.cvss) DESC
             """
 
-        result = self.execute_query(query, {})
+        result = self.execute_query(query, query_params)
 
         vulnerabilities = []
         for row in result:
@@ -2247,6 +2322,12 @@ class FalkorDBService:
                     "affected_versions": row[10] if row[10] else [],
                     "vex_status": vex_status,
                 }
+            )
+
+        if defect_id_match and use_glob_postfilter:
+            vulnerabilities = self._filter_vulnerabilities_defect_glob(
+                vulnerabilities,
+                defect_id_match,
             )
 
         return vulnerabilities
@@ -2289,15 +2370,16 @@ class FalkorDBService:
         Returns:
             Vulnerability dict or None if not found
         """
-        if internal_only:
-            query = f"""
-                MATCH (d:Defect {{defect_id: $defect_id}})
-                OPTIONAL MATCH (v:{self.internal_label})-[:VERSION_DEFECT]->(d)
-                RETURN d.defect_id as defect_id,
+        version_label = self.get_node_label(internal_only)
+        query = f"""
+                MATCH (d:Defect)
+                WHERE d.defect_id = $defect_id OR d.id = $defect_id
+                OPTIONAL MATCH (v:{version_label})-[:VERSION_DEFECT]->(d)
+                RETURN COALESCE(d.defect_id, d.id) as defect_id,
                        d.title as title,
                        d.description as description,
                        d.severity as severity,
-                       d.cvss_score as cvss_score,
+                       COALESCE(d.cvss_score, d.cvss) as cvss_score,
                        d.cwe_id as cwe_id,
                        d.published_date as published_date,
                        collect(DISTINCT {{
@@ -2305,23 +2387,6 @@ class FalkorDBService:
                            version: v.name,
                            project_group: v.project_group
                        }}) as affected_versions
-            """
-        else:
-            query = """
-                MATCH (d:Defect {defect_id: $defect_id})
-                OPTIONAL MATCH (v:Version)-[:VERSION_DEFECT]->(d)
-                RETURN d.defect_id as defect_id,
-                       d.title as title,
-                       d.description as description,
-                       d.severity as severity,
-                       d.cvss_score as cvss_score,
-                       d.cwe_id as cwe_id,
-                       d.published_date as published_date,
-                       collect(DISTINCT {
-                           project_name: v.project_name,
-                           version: v.name,
-                           project_group: v.project_group
-                       }) as affected_versions
             """
 
         result = self.execute_query(query, {"defect_id": defect_id})
@@ -2442,9 +2507,11 @@ class FalkorDBService:
     ) -> list[dict[str, Any]]:
         """Get centrality metrics for internal libraries.
 
-        Returns inDegree and outDegree for all internal nodes, suitable for
-        analyzing which libraries are most depended upon (high inDegree) or
-        have the most dependencies (high outDegree).
+        Returns inDegree and outDegree for all internal ``Version`` nodes,
+        suitable for analyzing which libraries are most depended upon (high
+        inDegree) or have the most dependencies (high outDegree). Counts are
+        derived from live relationship patterns (``size``), so they do not
+        rely on precomputed ``inDegree`` / ``outDegree`` node properties.
 
         Args:
             sort_by: Field to sort by - "inDegree" or "outDegree" (default: inDegree)
@@ -2463,24 +2530,25 @@ class FalkorDBService:
         # Validate sort_order
         sort_direction = "DESC" if sort_order.lower() == "desc" else "ASC"
 
-        # Map sort_by to the actual property name in the query
+        # Map sort_by to aliases / properties (degrees computed per query)
         sort_field_map = {
-            "inDegree": "v.inDegree",
-            "outDegree": "v.outDegree",
+            "inDegree": "inDegree",
+            "outDegree": "outDegree",
             "project_name": "v.project_name",
             "version_name": "v.name",
         }
-        sort_field = sort_field_map.get(sort_by, "v.inDegree")
+        sort_field = sort_field_map.get(sort_by, "inDegree")
 
+        version_label = self.get_node_label(True)
         query = f"""
-            MATCH (v:Version:{self.internal_label})
-            WHERE v.inDegree IS NOT NULL OR v.outDegree IS NOT NULL
+            MATCH (v:{version_label})
+            WITH v, size((v)<--()) AS inDegree, size((v)-->()) AS outDegree
             RETURN
                 v.project_group AS project_group,
                 v.project_name AS project_name,
                 v.name AS version_name,
-                COALESCE(v.inDegree, 0) AS inDegree,
-                COALESCE(v.outDegree, 0) AS outDegree
+                inDegree,
+                outDegree
             ORDER BY {sort_field} {sort_direction}, v.project_name ASC, v.name ASC
             LIMIT $limit
         """
@@ -3874,18 +3942,12 @@ class FalkorDBService:
                     "partition": 0,
                 }
             )
-            graph_edges.append(
-                {"source": defect_node_id, "target": nid, "type": "VERSION_DEFECT"}
-            )
+            graph_edges.append({"source": defect_node_id, "target": nid, "type": "VERSION_DEFECT"})
 
         for dep in deps:
             nid = f"{dep['project_name']}:{dep['version']}"
             if not any(n.get("id") == nid for n in graph_nodes):
-                dtype = (
-                    "application"
-                    if "Application" in dep.get("labels", [])
-                    else "transitive"
-                )
+                dtype = "application" if "Application" in dep.get("labels", []) else "transitive"
                 graph_nodes.append(
                     {
                         "id": nid,
@@ -4521,10 +4583,7 @@ class FalkorDBService:
             RETURN purl, fan_in ORDER BY fan_in DESC LIMIT $limit
         """
         result = self.execute_query(query, {"limit": limit})
-        return [
-            {"purl": row[0] or "", "fan_in": row[1] or 0}
-            for row in result
-        ]
+        return [{"purl": row[0] or "", "fan_in": row[1] or 0} for row in result]
 
     def get_remediation_priorities(self, limit: int = 20) -> list[dict[str, Any]]:
         """Return packages ranked by remediation priority.
@@ -4958,9 +5017,7 @@ class FalkorDBService:
         """
         from datetime import UTC, datetime, timedelta
 
-        cutoff = (
-            datetime.now(UTC) - timedelta(days=recent_days)
-        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cutoff = (datetime.now(UTC) - timedelta(days=recent_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
         node_label = self.get_node_label(internal_only)
 
         query = f"""
@@ -4982,11 +5039,7 @@ class FalkorDBService:
             key = (proj or "", ver or "", grp)
             existing = version_to_latest.get(key)
             if existing is None or (
-                ingested
-                and (
-                    not existing["ingested_at"]
-                    or ingested > existing["ingested_at"]
-                )
+                ingested and (not existing["ingested_at"] or ingested > existing["ingested_at"])
             ):
                 version_to_latest[key] = {
                     "project_name": proj,

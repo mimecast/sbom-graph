@@ -18,6 +18,9 @@ serviceAccount:
   create: true
   # Annotations to add to the service account
   annotations: {}
+  # Optional EKS IRSA: IAM role ARN for the pod (required for AWS Secrets Manager CSI).
+  # Adds eks.amazonaws.com/role-arn when set.
+  irsaRoleArn: ""
   # The name of the service account to use.
   # If not set and create is true, a name is generated using the fullname template
   name: ""
@@ -114,7 +117,10 @@ config:
     # Password is loaded from secret if existingSecret is set
     existingSecret: ""
     secretKey: "password"
-  
+
+  # Comma-separated INTERNAL_PREFIXES passed to ingestion (same as umbrella chart)
+  internalPrefixes: ""
+
   # TLS configuration
   tls:
     enabled: false
@@ -150,20 +156,34 @@ config:
       allowedGroups: ""             # Legacy: combined allowed groups (use adminGroups/userGroups instead)
       requiredGroup: ""             # Legacy: single required group (deprecated)
       requireGroupMembership: false # Set to true to enforce group membership checks
-      # Bind credentials loaded from secret
-      existingSecret: ""
-      bindDnKey: "bind-dn"
-      bindPasswordKey: "bind-password"
-  
+      # User sign-in uses userDnTemplate + password from the login form (not Helm).
+
   # Token storage configuration
   tokenStorage:
     # Encryption key loaded from secret
     existingSecret: ""
     encryptionKeyKey: "encryption-key"
 
-# Secrets to be created (if not using existingSecret)
-# These values should be provided via --set or a separate values file
+# How application secrets (Flask session, JWT signing, token DB encryption) are injected:
+# - env: Kubernetes secretKeyRef into container env (default).
+# - kubernetesVolume: mount a Secret as files under secrets.mountPath; app reads *_FILE paths.
+# - awsSecretsManagerCsi: AWS Secrets Store CSI driver volumes + SecretProviderClass; use IRSA (serviceAccount.irsaRoleArn).
 secrets:
+  delivery: env
+  mountPath: /etc/sbom-graph-api/secrets
+  fileNames:
+    flaskSecretKey: flask-secret-key
+    jwtSecretKey: jwt-secret
+    tokenDbEncryptionKey: token-db-encryption-key
+  kubernetesVolume:
+    # Secret to mount when delivery is kubernetesVolume (defaults to chart Secret).
+    secretName: ""
+  awsSecretsManagerCsi:
+    secretProviderClassName: ""
+    volumeName: secrets-store
+    # Required when delivery is awsSecretsManagerCsi — provider: aws, parameters.objects, etc.
+    # See: https://docs.aws.amazon.com/secretsmanager/latest/userguide/integrate_csi_driver.html
+    secretProviderSpec: {}
   # Set to true to create the secrets from values below
   create: false
   # Flask secret key (for sessions)
@@ -174,9 +194,6 @@ secrets:
   tokenDbEncryptionKey: ""
   # FalkorDB password
   falkordbPassword: ""
-  # LDAP bind credentials
-  ldapBindDn: ""
-  ldapBindPassword: ""
 
 # Persistent volume for token storage
 persistence:

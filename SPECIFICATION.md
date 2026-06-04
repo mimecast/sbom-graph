@@ -463,7 +463,7 @@ Trust scores propagate bottom-up through the dependency graph:
 
 ### 3.5 Umbrella Helm Chart
 
-Located at `helm/sbom-graph/`, this chart deploys the full platform into Kubernetes.
+Located at `helm/charts/sbom-graph/`, this chart deploys the full platform into Kubernetes.
 
 **Chart name:** `sbom-graph`
 **Chart version:** `0.1.0`
@@ -1250,15 +1250,23 @@ graph TB
 
 ### 7.2 Docker Builds
 
-All images are built from the repository root because Dockerfiles reference sibling directories.
+Each image is built with that **subproject directory** as the Docker build
+context (CI `working-directory`, local `build-images.sh`, and manual
+`docker build` from `sbom-graph-api/`, `sonatype-lifecycle-release-listener/`,
+or `sbom-graph-enrichment/`).
 
 ```bash
 ./build-images.sh                  # Build all (model wheel + all images)
 ./build-images.sh model            # Build sbom-graph-model wheel only
 ./build-images.sh sbom-graph-api   # Build API image
 ./build-images.sh sonatype-lifecycle-release-listener  # Build release listener image
-./build-images.sh enrichment       # Build enrichment worker image
+./build-images.sh sbom-graph-enrichment  # Build enrichment worker image
 ```
+
+Default image tags are `<component>:<safe-pyproject-version>` and
+`<component>:latest` (safe = PEP 440 version with `+` mapped to `-` for OCI).
+`PYTHON_PACKAGE_VERSION` passed into Docker remains the raw `pyproject.toml`
+version.
 
 **Image details:**
 
@@ -1272,24 +1280,24 @@ All images are built from the repository root because Dockerfiles reference sibl
 
 ```bash
 # Deploy full platform
-helm install sbom-graph ./helm/sbom-graph
+helm install sbom-graph ./helm/charts/sbom-graph
 
 # With custom internal prefixes
-helm install sbom-graph ./helm/sbom-graph \
+helm install sbom-graph ./helm/charts/sbom-graph \
   --set global.internalPrefixes="group:com.myorg,name:myorg-"
 
 # With trust score and OSS Index credentials
-helm install sbom-graph ./helm/sbom-graph \
+helm install sbom-graph ./helm/charts/sbom-graph \
   --set enrichment.trustScore.enabled=true \
   --set enrichment.trustScore.ossindex.user="my-user" \
   --set enrichment.trustScore.ossindex.token="my-token"
 
 # Disable demo data preloading
-helm install sbom-graph ./helm/sbom-graph \
+helm install sbom-graph ./helm/charts/sbom-graph \
   --set initData.enabled=false
 
 # Enable network policies for enrichment
-helm install sbom-graph ./helm/sbom-graph \
+helm install sbom-graph ./helm/charts/sbom-graph \
   --set enrichment.networkPolicy.enabled=true
 ```
 

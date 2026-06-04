@@ -1,6 +1,6 @@
 [project]
 name = "sbom-graph-model"
-version = "0.2.0-alpha"
+version = "0.2.0-beta.4"
 description = "CycloneDX SBOM processing model"
 authors = [
     {name = "Brett Crawley"}

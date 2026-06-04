@@ -4,6 +4,36 @@
 
 The enrichment pipeline is a Celery-based asynchronous system that queries six external APIs (OSV.dev, ClearlyDefined, OpenSSF Scorecard, Sonatype OSS Index, deps.dev, endoflife.date) to enrich package metadata in the FalkorDB graph database. It also computes composite trust scores and propagates inherited risk through the dependency graph. Key risks include external API data integrity, credential management for OSS Index, rate limiting exhaustion, and stale/incorrect scoring data.
 
+## Enrichment Architecture
+
+```mermaid
+flowchart TB
+  subgraph cluster["Kubernetes Cluster"]
+    beat["Celery Beat (scheduler)"]
+    worker["Celery Worker(s)"]
+    broker["Redis (Celery broker/result backend)"]
+    falkordb["FalkorDB (graph database)"]
+  end
+
+  osv["OSV.dev API"]
+  clearly["ClearlyDefined API"]
+  scorecard["OpenSSF Scorecard API"]
+  ossindex["Sonatype OSS Index API"]
+  depsdev["deps.dev API"]
+  eol["endoflife.date API"]
+
+  beat --> broker
+  worker --> broker
+  worker --> falkordb
+
+  worker --> osv
+  worker --> clearly
+  worker --> scorecard
+  worker --> ossindex
+  worker --> depsdev
+  worker --> eol
+```
+
 ## Assets and Trust Boundaries
 
 ### Assets

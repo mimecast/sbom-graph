@@ -60,3 +60,25 @@ Create the name of the service account to use
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+Kubernetes Secret name holding Flask/JWT/token DB material when using chart-managed secret.
+*/}}
+{{- define "sbom-graph-api.chartApplicationSecretName" -}}
+{{- printf "%s-secret" (include "sbom-graph-api.fullname" .) }}
+{{- end }}
+
+{{/*
+Secret used for file-based delivery (single Secret or CSI volume with matching filenames).
+*/}}
+{{- define "sbom-graph-api.applicationSecretName" -}}
+{{- if .Values.secrets.kubernetesVolume.secretName }}
+{{- .Values.secrets.kubernetesVolume.secretName }}
+{{- else }}
+{{- include "sbom-graph-api.chartApplicationSecretName" . }}
+{{- end }}
+{{- end }}
+
+{{- define "sbom-graph-api.awsSecretProviderClassName" -}}
+{{- default (printf "%s-aws-secrets" (include "sbom-graph-api.fullname" .)) .Values.secrets.awsSecretsManagerCsi.secretProviderClassName }}
+{{- end }}

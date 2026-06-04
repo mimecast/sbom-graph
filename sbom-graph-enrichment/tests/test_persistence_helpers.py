@@ -136,6 +136,8 @@ class TestCreatePersistence:
             password="s3cret",
             ssl=True,
             ssl_ca_certs="/tls/ca.crt",
+            ssl_certfile=None,
+            ssl_keyfile=None,
             internal_prefixes=["group:com.acme"],
         )
 

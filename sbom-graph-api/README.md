@@ -486,6 +486,8 @@ See [TLS Setup](#tls-setup) for detailed configuration instructions.
 
 ### LDAP Configuration
 
+Sign-in **always** uses `LDAP_USER_DN_TEMPLATE` and the **password the user enters at login** (direct bind). The optional `LDAP_BIND_*` variables are only for internal LDAP connectivity tests (`test_connection`); do not set an end-user password in Kubernetes for authentication.
+
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `LDAP_ENABLED` | Enable LDAP authentication | `false` |
@@ -494,8 +496,8 @@ See [TLS Setup](#tls-setup) for detailed configuration instructions.
 | `LDAP_USE_SSL` | Use SSL for LDAP connection | `false` |
 | `LDAP_BASE_DN` | Base DN for LDAP searches | `dc=example,dc=com` |
 | `LDAP_USER_DN_TEMPLATE` | Template for user DN (use `{username}`) | `uid={username},ou=users,dc=example,dc=com` |
-| `LDAP_BIND_DN` | DN for LDAP bind (for searches) | (none) |
-| `LDAP_BIND_PASSWORD` | Password for LDAP bind | (none) |
+| `LDAP_BIND_DN` | Optional: service account DN for `test_connection()` only (not for user login) | (none) |
+| `LDAP_BIND_PASSWORD` | Optional: password for that service account (not the end-user sign-in password) | (none) |
 | `LDAP_SEARCH_FILTER` | LDAP search filter (use `{username}`) | `(uid={username})` |
 | `LDAP_GROUP_SEARCH_BASE` | Base DN for group searches (required for group auth) | (none) |
 | `LDAP_ADMIN_GROUPS` | Comma-separated list of groups that grant admin access | (none) |
@@ -539,6 +541,16 @@ export LDAP_USER_GROUPS="appsec-users,developers,security-team"
 |----------|-------------|---------|
 | `TOKEN_DB_PATH` | Path to SQLite token database | `/data/tokens.db` |
 | `TOKEN_DB_ENCRYPTION_KEY` | Encryption key for token storage | `db-encryption-key-change-in-production` |
+| `TOKEN_DB_ENCRYPTION_KEY_FILE` | Path to a file containing the key (if set, used instead of `TOKEN_DB_ENCRYPTION_KEY`) | (none) |
+
+### Secret material (`*_FILE` and Helm `secrets.delivery`)
+
+For Flask session, JWT signing, and token DB encryption, the app reads either a plain environment value or, when set, a path from `FLASK_SECRET_KEY_FILE`, `JWT_SECRET_KEY_FILE`, or `TOKEN_DB_ENCRYPTION_KEY_FILE`. Optional `FALKORDB_PASSWORD_FILE` applies the same pattern to the FalkorDB password.
+
+The Helm chart defaults to `secrets.delivery: env` (`secretKeyRef`). Alternatives:
+
+- **`kubernetesVolume`**: mount an existing Kubernetes `Secret` as files under `secrets.mountPath`; the chart sets the `*_FILE` variables.
+- **`awsSecretsManagerCsi`**: mount the AWS Secrets Store CSI driver volume (requires the driver on the cluster, a populated `secrets.awsSecretsManagerCsi.secretProviderSpec`, and typically **`serviceAccount.irsaRoleArn`** on EKS so the pod can assume an IAM role—no long-lived AWS keys in the manifest).
 
 ## Authentication
 
@@ -605,8 +617,9 @@ When LDAP is disabled, the application uses local user storage:
 
 ### Build
 
-The Dockerfile must be built from the **repository root** because it references
-paths relative to the monorepo. Use the build script provided in the repo root:
+The Docker **build context** must be the **`sbom-graph-api/`** directory
+(`COPY` paths are relative to that folder). Use `build-images.sh` from the
+monorepo root (it runs `docker build` inside that subproject):
 
 ```bash
 # From the repository root (sbom-graph/)
@@ -615,8 +628,11 @@ paths relative to the monorepo. Use the build script provided in the repo root:
 # Or with a custom tag
 ./build-images.sh --adv-tag myrepo/sbom-graph-api:v1
 
-# Or directly with docker build
-docker build -t sbom-graph-api:latest -f sbom-graph-api/Dockerfile .
+# Or directly with docker build (run from sbom-graph-api/; PYTHON_PACKAGE_VERSION must match [project].version)
+cd sbom-graph-api
+docker build -t sbom-graph-api:latest -f Dockerfile \
+  --build-arg "PYTHON_PACKAGE_VERSION=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)" \
+  .
 ```
 
 ### Run
@@ -810,6 +826,12 @@ config:
 
 A Helm chart is provided in `helm/sbom-graph-api/`.
 
+### TLS and certificates (EKS and Kubernetes)
+
+- **TLS served by this app** (`TLS_ENABLED=true`, `TLS_CERT_FILE` / `TLS_KEY_FILE`): PEM files mounted read-only (Kubernetes `Secret`, CSI, or synced External Secrets). Functionally the same **files-on-disk** pattern as `*_FILE` for symmetric keys—avoid putting PEM bodies in Helm values.
+- **Ingress or AWS load balancer termination**: Very common on EKS—terminate TLS at **ACM-backed ALB/NLB** or **Ingress** (often **cert-manager** for issuance/renewal); pods behind the balancer often use HTTP inside the mesh.
+- **In-cluster renewal**: **cert-manager** (Let’s Encrypt or private CA) is the usual pattern when the workload must terminate HTTPS itself.
+
 ### Install
 
 ```bash
@@ -827,7 +849,6 @@ helm install sbom-graph-api ./helm/sbom-graph-api \
   --set config.auth.ldap.enabled=true \
   --set config.auth.ldap.server=ldap.example.com \
   --set config.auth.ldap.baseDn="dc=example,dc=com" \
-  --set config.auth.ldap.existingSecret=ldap-credentials \
   --set config.auth.jwt.existingSecret=jwt-secrets \
   --set config.tokenStorage.existingSecret=token-db-secrets \
   --set persistence.enabled=true
@@ -865,7 +886,7 @@ config:
       useSsl: "false"
       baseDn: ""
       userDnTemplate: "uid={username},ou=users,dc=example,dc=com"
-      existingSecret: ""  # Secret containing bind-dn and bind-password
+      # User password at sign-in is used for the LDAP bind (not Helm).
   
   # Token storage configuration
   tokenStorage:
@@ -878,8 +899,6 @@ secrets:
   jwtSecretKey: ""
   tokenDbEncryptionKey: ""
   falkordbPassword: ""
-  ldapBindDn: ""
-  ldapBindPassword: ""
 
 # Persistent storage for token database
 persistence:

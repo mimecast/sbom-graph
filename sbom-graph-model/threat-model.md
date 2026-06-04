@@ -31,29 +31,23 @@ Existing mitigations are strong: parameterized Cypher queries, a node label allo
 
 ### Trust Boundaries
 
-```
-+-------------------------------------------------------------------+
-| Consumer Service (e.g., release-listener)                         |
-|                                                                    |
-|  Config (env vars) ──> Persistence.__init__(host, pw, ssl, ...)   |
-|                                                                    |
-|  Untrusted JSON ──> CycloneDXProcessor.process_cyclone_dx_json()  |
-|                         │                                          |
-|          ┌──────────────┘                                          |
-|          ▼                                                         |
-|  [sbom-graph-model]                                                |
-|  ┌──────────────────────┐     ┌──────────────────────────────┐    |
-|  │ CycloneDX Processor  │────>│ Persistence Layer            │    |
-|  │ - Validates structure │     │ - Parameterized queries      │    |
-|  │ - Parses components   │     │ - Label allowlist validation │    |
-|  │ - Parses vulns        │     │ - FalkorDB connection        │    |
-|  └──────────────────────┘     └──────────────┬───────────────┘    |
-|                                               │                    |
-+-----------------------------------------------│--------------------+
-                                                │ Redis protocol
-                                        ┌───────▼───────┐
-                                        │   FalkorDB    │
-                                        └───────────────┘
+```mermaid
+flowchart TB
+  consumer["Consumer Service<br/>(e.g., release-listener)"]
+  config["Config (env vars)"]
+  untrusted["Untrusted JSON<br/>(CycloneDX SBOM)"]
+
+  subgraph model["sbom-graph-model"]
+    processor["CycloneDX Processor<br/>- Validates structure<br/>- Parses components<br/>- Parses vulns"]
+    persistence["Persistence Layer<br/>- Parameterized queries<br/>- Label allowlist validation<br/>- FalkorDB connection"]
+    processor --> persistence
+  end
+
+  falkordb["FalkorDB"]
+
+  config -->|"Persistence.__init__(host, pw, ssl, ...)"| persistence
+  untrusted -->|"CycloneDXProcessor.process_cyclone_dx_json()"| processor
+  persistence -->|"Redis protocol"| falkordb
 ```
 
 ## Threat Analysis (STRIDE)

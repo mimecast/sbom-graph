@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+import time
+from typing import Any, Callable
 from urllib.parse import quote
 
 import httpx
@@ -69,27 +70,160 @@ class SBOMGraphClient:
             msg = response.text or response.reason_phrase or "Request failed"
         raise APIError(msg, status_code=response.status_code)
 
-    def ingest_sbom(self, file_path: str) -> dict[str, Any]:
+    def ingest_sbom(
+        self,
+        file_path: str,
+        *,
+        wait: bool = True,
+        sync: bool = False,
+        poll_interval: float = 1.0,
+        poll_timeout: float = 600.0,
+        on_poll: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         """Upload and parse an SBOM file (CycloneDX or SPDX).
+
+        The server defaults to **asynchronous** ingestion (see
+        ``docs/sbom-graph-api-troubleshooting.md`` §10.6): the API
+        validates the payload, enqueues the heavy parse-and-persist
+        work onto a dedicated Celery worker pool, and returns ``202``
+        with a ``job_id``.  This method's default behaviour
+        (``wait=True``) preserves the historical "submit and get a
+        summary back" UX by polling the job-status endpoint until
+        terminal -- so CI/CD scripts that were written against the
+        older synchronous API keep working without modification.
 
         Args:
             file_path: Path to the SBOM JSON file.
+            wait: When ``True`` (default) poll until the worker reaches
+                a terminal state and return the worker's summary dict.
+                When ``False`` return the raw ``202`` envelope
+                (``status``, ``record_id``, ``job_id``, ``status_url``)
+                immediately so the caller can poll on its own schedule.
+            sync: When ``True`` request the legacy synchronous path
+                (``?sync=true``) -- the server processes inline and
+                returns ``201`` with the summary directly.  Use only
+                when the deployment has the dedicated ingest worker
+                pool disabled, or for very small SBOMs in scripts that
+                need the simplest possible code path.
+            poll_interval: Seconds between status polls (default 1s).
+            poll_timeout: Seconds to wait for terminal state before
+                giving up with :class:`APIError` (default 10 min).
+            on_poll: Optional callback invoked with each non-terminal
+                status dict; used by the CLI to drive a progress
+                spinner.
 
         Returns:
-            Summary dict with record_id, projects_count, dependencies_count,
-            defects_count.
+            * ``wait=True`` (default): The worker's terminal summary
+              dict (same shape as the legacy ``201`` response):
+              ``status``, ``record_id``, ``format``, ``projects_count``,
+              etc.
+            * ``wait=False``: The ``202`` envelope from the server.
+            * ``sync=True``: The legacy ``201`` summary dict.
 
         Raises:
-            APIError: On HTTP error or validation failure.
+            APIError: On HTTP error, validation failure, worker
+                failure, or polling timeout.
         """
         with open(file_path, encoding="utf-8") as f:
             sbom = json.load(f)
 
         body = {"sbom": sbom}
         client = self._get_client()
-        response = client.post("/ingest/sbom", json=body)
+
+        params: dict[str, str] = {}
+        if sync:
+            params["sync"] = "true"
+
+        response = client.post("/ingest/sbom", json=body, params=params)
+        self._raise_for_status(response)
+        envelope = response.json()
+
+        # Sync path (or accidental 201 from a stale server): return as-is.
+        if sync or response.status_code == 201:
+            return envelope
+
+        # Async path -- envelope should carry job_id.  If the server
+        # returned 200 with a summary (some test doubles do this) just
+        # pass it through; real servers return 202.
+        job_id = envelope.get("job_id")
+        if not job_id or not wait:
+            return envelope
+
+        return self._poll_ingest_job(
+            job_id=job_id,
+            envelope=envelope,
+            poll_interval=poll_interval,
+            poll_timeout=poll_timeout,
+            on_poll=on_poll,
+        )
+
+    def get_ingest_job_status(self, job_id: str) -> dict[str, Any]:
+        """Fetch the current status of an async ingest job.
+
+        Args:
+            job_id: The ``job_id`` returned by an async ``POST
+                /ingest/*`` call.
+
+        Returns:
+            Status dict with ``job_id``, ``state``, ``terminal``, and
+            (for SUCCESS / FAILURE states) ``result``.
+
+        Raises:
+            APIError: On HTTP error (e.g. 400 for malformed id, 503 if
+                the ingest pipeline is not installed in the API image).
+        """
+        client = self._get_client()
+        response = client.get(f"/ingest/jobs/{quote(job_id, safe='-')}")
         self._raise_for_status(response)
         return response.json()
+
+    def _poll_ingest_job(
+        self,
+        job_id: str,
+        envelope: dict[str, Any],
+        poll_interval: float,
+        poll_timeout: float,
+        on_poll: Callable[[dict[str, Any]], None] | None,
+    ) -> dict[str, Any]:
+        """Poll ``/ingest/jobs/<id>`` until terminal or timeout.
+
+        Returns the worker's summary dict (same shape as the legacy
+        synchronous ``201``).  On worker FAILURE raises :class:`APIError`
+        with the sanitised error message the server provides.
+        """
+        deadline = time.monotonic() + poll_timeout
+        while True:
+            status = self.get_ingest_job_status(job_id)
+            if on_poll is not None:
+                on_poll(status)
+
+            if status.get("terminal"):
+                result = status.get("result") or {}
+                if status.get("state") == "SUCCESS" and result.get("status") == "ok":
+                    return result
+                # FAILURE / REVOKED or SUCCESS with an error payload from
+                # the worker's own try/except.  Surface the sanitised
+                # message; never propagate internal exception details.
+                message = (
+                    result.get("error")
+                    if isinstance(result, dict)
+                    else None
+                ) or f"Ingest job ended in state {status.get('state')!r}"
+                raise APIError(message, status_code=500)
+
+            if time.monotonic() >= deadline:
+                # Returning the envelope on timeout would silently hide
+                # the failure; raise so callers (and exit codes) catch it.
+                raise APIError(
+                    f"Ingest job {job_id} did not complete within "
+                    f"{poll_timeout:.0f}s "
+                    f"(last state: {status.get('state', 'unknown')}). "
+                    f"Poll {envelope.get('status_url', '/ingest/jobs/' + job_id)} "
+                    f"to check progress.",
+                    status_code=504,
+                )
+
+            time.sleep(poll_interval)
 
     def get_vulnerabilities(self, purl: str) -> list[dict[str, Any]]:
         """Get vulnerabilities for a package and optionally its dependencies.

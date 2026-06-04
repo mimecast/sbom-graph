@@ -3,20 +3,28 @@
 All endpoints return JSON and require JWT authentication.
 """
 
+import logging
+import os
 import uuid
 from datetime import UTC, datetime
 
 from flask import Blueprint, Response, jsonify, request
+from sbom_graph_model import Persistence
 
-from sbom_graph_api.routes.auth import auth_required
+from sbom_graph_api.config import get_config
+from sbom_graph_api.routes.auth import api_admin_required, auth_required
 from sbom_graph_api.schemas.inbound import (
     CONTACT_CREATE_SCHEMA,
     ENRICHMENT_REQUEST_SCHEMA,
+    INTERNAL_APPLY_INTERNAL_LABEL_SCHEMA,
+    INTERNAL_PREFIX_OVERLAY_EXTEND_SCHEMA,
+    INTERNAL_PREFIX_OVERLAY_PUT_SCHEMA,
     PATCH_PLAN_EVALUATE_SCHEMA,
     POLICY_ANNOTATION_SCHEMA,
     VEX_AUTO_STUB_SCHEMA,
 )
 from sbom_graph_api.services.falkordb_service import get_falkordb_service
+from sbom_graph_api.services.ingestion_persistence import create_ingestion_persistence
 from sbom_graph_api.utils.api_helpers import (
     api_response,
     make_pagination,
@@ -36,6 +44,9 @@ from sbom_graph_api.utils.validation import (
 )
 
 bp = Blueprint("api_v1", __name__, url_prefix="/api/v1")
+
+
+logger = logging.getLogger(__name__)
 
 
 def _purl_error(purl: str) -> tuple[Response, int] | None:
@@ -890,6 +901,205 @@ def package_metadata(purl: str) -> tuple[Response, int]:
     }
 
     return api_response(data)
+
+
+def _serialize_internal_rules(
+    rules: list[tuple[str, str]],
+) -> list[dict[str, str]]:
+    return [{"field": field, "prefix": prefix} for field, prefix in rules]
+
+
+@bp.route("/config/internal-prefixes", methods=["GET"])
+@auth_required
+def internal_prefixes_get() -> tuple[Response, int]:
+    """Return INTERNAL_PREFIXES split into env overlay and merged effective rule list."""
+    env_csv = os.environ.get("INTERNAL_PREFIXES", "") or ""
+
+    try:
+        env_rules = Persistence.parse_internal_prefixes(env_csv.strip())
+        persistence = create_ingestion_persistence()
+    except ValueError:
+        return jsonify({"error": "INTERNAL_PREFIXES environment configuration is invalid"}), 503
+
+    overlay_raw = persistence.get_internal_prefixes_overlay_raw()
+    overlay_rules: list[tuple[str, str]] = []
+    overlay_parse_error = False
+    if overlay_raw.strip():
+        try:
+            overlay_rules = Persistence.parse_internal_prefixes(
+                overlay_raw.strip(),
+            )
+        except ValueError:
+            overlay_parse_error = True
+
+    return jsonify(
+        {
+            "env_csv": env_csv.strip(),
+            "env_rules": _serialize_internal_rules(env_rules),
+            "overlay_csv": overlay_raw,
+            "overlay_rules": _serialize_internal_rules(overlay_rules),
+            "overlay_parse_error": overlay_parse_error,
+            "effective_rules": _serialize_internal_rules(persistence.internal_prefixes),
+            "effective_csv": Persistence.format_internal_prefixes_csv(
+                persistence.internal_prefixes,
+            ),
+        }
+    ), 200
+
+
+@bp.route("/config/internal-prefixes/overlay", methods=["PUT"])
+@auth_required
+@api_admin_required
+def internal_prefix_overlay_put() -> tuple[Response, int]:
+    """Replace the FalkorDB-only prefix overlay (Helm INTERNAL_PREFIXES is unchanged)."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+
+    errors = validate_json_body(body, INTERNAL_PREFIX_OVERLAY_PUT_SCHEMA)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
+
+    try:
+        persistence = create_ingestion_persistence()
+        persistence.set_internal_prefixes_overlay_raw(body["overlay"])
+    except ValueError:
+        logger.warning("Rejected internal-prefix overlay (validation failed)")
+        return jsonify({"error": "Invalid overlay format or constraints"}), 400
+    except Exception:
+        logger.exception("Failed storing internal-prefix overlay")
+        return jsonify({"error": "Failed updating internal-prefix overlay"}), 500
+
+    refreshed = create_ingestion_persistence()
+    return jsonify(
+        {
+            "overlay_csv": refreshed.get_internal_prefixes_overlay_raw(),
+            "effective_rules": _serialize_internal_rules(refreshed.internal_prefixes),
+            "effective_csv": Persistence.format_internal_prefixes_csv(
+                refreshed.internal_prefixes,
+            ),
+        }
+    ), 200
+
+
+@bp.route("/config/internal-prefixes/overlay", methods=["POST"])
+@auth_required
+@api_admin_required
+def internal_prefix_overlay_extend() -> tuple[Response, int]:
+    """Append ``field:prefix`` tokens onto the FalkorDB overlay CSV."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+
+    errors = validate_json_body(body, INTERNAL_PREFIX_OVERLAY_EXTEND_SCHEMA)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
+
+    try:
+        additional_rules = Persistence.parse_internal_prefixes(
+            body["additional"].strip(),
+        )
+        persistence = create_ingestion_persistence()
+    except ValueError:
+        return jsonify({"error": "Invalid additional overlay tokens"}), 400
+    except Exception:
+        logger.exception("Failed extending internal-prefix overlay")
+        return jsonify({"error": "Unable to extend internal-prefix overlay"}), 500
+
+    overlay_raw = persistence.get_internal_prefixes_overlay_raw()
+    try:
+        current = (
+            Persistence.parse_internal_prefixes(overlay_raw.strip()) if overlay_raw.strip() else []
+        )
+    except ValueError:
+        current = []
+
+    merged_only = Persistence.merge_internal_prefix_rule_lists(
+        current,
+        additional_rules,
+    )
+
+    try:
+        persistence.set_internal_prefixes_overlay_raw(
+            Persistence.format_internal_prefixes_csv(merged_only),
+        )
+    except ValueError:
+        return jsonify({"error": "Merged overlay violates size or format limits"}), 400
+    except Exception:
+        logger.exception("Persisting extended overlay failed")
+        return jsonify({"error": "Failed saving extended overlay"}), 500
+
+    refreshed = create_ingestion_persistence()
+    return jsonify(
+        {
+            "overlay_csv": refreshed.get_internal_prefixes_overlay_raw(),
+            "effective_rules": _serialize_internal_rules(refreshed.internal_prefixes),
+            "effective_csv": Persistence.format_internal_prefixes_csv(
+                refreshed.internal_prefixes,
+            ),
+        }
+    ), 200
+
+
+@bp.route("/graph/apply-internal-label", methods=["POST"])
+@auth_required
+@api_admin_required
+def apply_internal_graph_label() -> tuple[Response, int]:
+    """Add the configured internal secondary label onto existing Version rows.
+
+    Matches each ``(field, prefix)`` against Version properties (same as ingest).
+    """
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "Request body must be a JSON object"}), 400
+
+    errors = validate_json_body(body, INTERNAL_APPLY_INTERNAL_LABEL_SCHEMA)
+    if errors:
+        return jsonify({"error": "Validation failed", "details": errors}), 400
+
+    cfg = get_config()
+    internal_label_raw = body.get("internal_label")
+    internal_label = (
+        internal_label_raw.strip() if isinstance(internal_label_raw, str) else None
+    ) or cfg.falkordb.internal_label
+
+    use_effective = body.get("use_effective_prefixes") is True
+    raw_rules = body.get("prefixes")
+    prefixes: list[tuple[str, str]]
+
+    try:
+        if use_effective:
+            persistence_snapshot = create_ingestion_persistence()
+            prefixes = list(persistence_snapshot.internal_prefixes)
+        else:
+            if not isinstance(raw_rules, list) or not raw_rules:
+                return jsonify(
+                    {"error": "prefixes required unless use_effective_prefixes is true"},
+                ), 400
+            prefixes = [
+                (
+                    str(item["field"]),
+                    str(item["prefix"]),
+                )
+                for item in raw_rules
+            ]
+            for field, _ in prefixes:
+                if field not in {"group", "name", "purl"}:
+                    return jsonify({"error": "Invalid prefix field"}), 400
+        persistence = create_ingestion_persistence()
+        result = persistence.apply_internal_label_for_prefix_rules(
+            internal_label,
+            prefixes,
+        )
+    except ValueError:
+        logger.warning("apply-internal-label rejected (bad label or prefixes)")
+        return jsonify({"error": "Invalid label or prefix specification"}), 400
+    except Exception:
+        logger.exception("Failed applying internal label in graph batch")
+        return jsonify({"error": "Unable to apply internal label"}), 500
+
+    result["effective_prefixes_used"] = _serialize_internal_rules(prefixes)
+    return jsonify(result), 200
 
 
 @bp.route("/openapi.json")

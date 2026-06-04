@@ -11,7 +11,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, LiteralString, Optional, cast
 from falkordb import FalkorDB, Graph
 
-from .model import LicenseRiskCategory, Project, ProjectType, Version, Defect, VersionDefect
+from .model import (
+    LicenseRiskCategory,
+    Project,
+    ProjectType,
+    Version,
+    Defect,
+    VersionDefect,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +47,22 @@ class _DictQueryResult:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._raw, name)
 
+
 INTERNAL_PREFIX_FIELDS: frozenset[str] = frozenset({"group", "name", "purl"})
+
+# Singleton config node (FalkorDB) storing dynamic internal-prefix additions.
+_SBOM_GRAPH_CONFIG_LABEL = "SbomGraphConfig"
+_SBOM_GRAPH_CONFIG_ID_KEY = "graph_config_id"
+_SBOM_GRAPH_CONFIG_ID_VALUE = "__sbom_graph__"
+INTERNAL_PREFIX_OVERLAY_PROP = "internal_prefixes_overlay"
+_MAX_INTERNAL_PREFIX_OVERLAY_CHARS = 16_384
+
+# Maps SBOM-derived rule fields onto Version-node property names used in Cypher.
+INTERNAL_RULE_FIELD_TO_VERSION_PROPERTY: dict[str, str] = {
+    "group": "project_group",
+    "name": "project_name",
+    "purl": "package_url",
+}
 
 # CycloneDX 1.6 component type taxonomy (used as Cypher node labels).
 # Values are validated against this set before interpolation into queries
@@ -61,6 +83,13 @@ ALLOWED_PROJECT_TYPES: frozenset[str] = frozenset(
 )
 
 _SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+_IPV4_LITERAL = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$")
+
+
+def _host_is_ipv4_literal(host: str) -> bool:
+    m = _IPV4_LITERAL.fullmatch(host.strip())
+    return m is not None and all(0 <= int(g) <= 255 for g in m.groups())
+
 
 ALLOWED_SBOM_FORMATS: frozenset[str] = frozenset({"cyclonedx", "spdx"})
 ALLOWED_SBOM_SOURCES: frozenset[str] = frozenset({"webhook", "api_upload", "cli"})
@@ -126,6 +155,9 @@ class Persistence:
             connection_kwargs["ssl_certfile"] = ssl_certfile
         if ssl_keyfile:
             connection_kwargs["ssl_keyfile"] = ssl_keyfile
+        if ssl and _host_is_ipv4_literal(host):
+            # TLS certs typically name the Service DNS name; ClusterIP connectHost would fail verify.
+            connection_kwargs["ssl_check_hostname"] = False
         self.db = FalkorDB(**connection_kwargs)
         self.graph: Graph = self.db.select_graph(graph_name)
         self.internal_prefixes: list[tuple[str, str]] = internal_prefixes or []
@@ -190,6 +222,176 @@ class Persistence:
                 )
             prefixes.append((field, prefix))
         return prefixes
+
+    @staticmethod
+    def merge_internal_prefix_rule_lists(
+        base: list[tuple[str, str]],
+        overlay: list[tuple[str, str]],
+    ) -> list[tuple[str, str]]:
+        """Combine two prefix-rule lists, preserving order without duplicates."""
+        merged: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for item in [*base, *overlay]:
+            if item in seen:
+                continue
+            seen.add(item)
+            merged.append(item)
+        return merged
+
+    @staticmethod
+    def format_internal_prefixes_csv(rules: list[tuple[str, str]]) -> str:
+        """Serialise prefix rules using the INTERNAL_PREFIXES field:prefix comma syntax."""
+        return ",".join(f"{field}:{prefix}" for field, prefix in rules)
+
+    def get_internal_prefixes_overlay_raw(self) -> str:
+        """Return the raw overlay CSV stored on the graph singleton, or ``\"\"``.
+
+        Overlay rules extend (never replace) the ``INTERNAL_PREFIXES`` environment list.
+        """
+        params = {"gid": _SBOM_GRAPH_CONFIG_ID_VALUE}
+        query = cast(
+            LiteralString,
+            (
+                "MATCH "
+                "(n:SbomGraphConfig {graph_config_id: $gid}) "
+                "RETURN n.internal_prefixes_overlay AS overlay"
+            ),
+        )
+        result = self.run_query(query=query, params=params)
+        if not result.result_set:
+            return ""
+        val = result.result_set[0].get("overlay")
+        return val if isinstance(val, str) else ""
+
+    def set_internal_prefixes_overlay_raw(self, overlay_csv: str) -> None:
+        """Persist overlay CSV onto the singleton config node (replaces overlay only).
+
+        Args:
+            overlay_csv: CSV in the usual ``INTERNAL_PREFIXES`` grammar.
+                Pass ``\"\"`` to clear the overlay while keeping Helm/env rules only.
+
+        Raises:
+            ValueError: When overlay string is too large or parses with errors.
+        """
+        if overlay_csv is None:
+            overlay_csv = ""
+        if len(overlay_csv) > _MAX_INTERNAL_PREFIX_OVERLAY_CHARS:
+            raise ValueError(
+                f"overlay exceeds {_MAX_INTERNAL_PREFIX_OVERLAY_CHARS} characters"
+            )
+        if overlay_csv.strip():
+            # Fail fast rather than poisoning the graph store.
+            self.parse_internal_prefixes(overlay_csv)
+        merge_q = cast(
+            LiteralString,
+            (
+                "MERGE "
+                "(n:SbomGraphConfig {graph_config_id: $gid}) "
+                "SET n.internal_prefixes_overlay = $overlay"
+            ),
+        )
+        self.run_query(
+            query=merge_q,
+            params={"gid": _SBOM_GRAPH_CONFIG_ID_VALUE, "overlay": overlay_csv},
+        )
+
+    def reload_internal_prefixes_from_env_and_overlay(
+        self, env_csv: str | None
+    ) -> None:
+        """Replace ``internal_prefixes`` with env rules merged with FalkorDB overlay.
+
+        Parsing errors on the overlay string raise :class:`ValueError` — callers decide
+        whether to degrade to env-only.
+        """
+        env_trimmed = (env_csv or "").strip()
+        parsed_env = self.parse_internal_prefixes(env_trimmed)
+        overlay_raw = self.get_internal_prefixes_overlay_raw()
+        parsed_overlay: list[tuple[str, str]] = []
+        if overlay_raw.strip():
+            parsed_overlay = self.parse_internal_prefixes(overlay_raw.strip())
+        self.internal_prefixes = self.merge_internal_prefix_rule_lists(
+            parsed_env,
+            parsed_overlay,
+        )
+
+    @classmethod
+    def _validate_secondary_label_fragment(cls, label: str) -> str:
+        """Ensure ``label`` is safe to interpolate after ``SET v:LABEL``.
+
+        Mirrors the strict identifier rules used elsewhere to avoid Cypher injection.
+        """
+        if not label:
+            raise ValueError("internal label is required")
+        if len(label) > 96:
+            raise ValueError("label is too long")
+        if not _SAFE_IDENTIFIER_RE.fullmatch(label):
+            raise ValueError(f"illegal internal graph label {label!r}")
+        if label in {"Version", "Defect", "SbomGraphConfig", "Project"}:
+            raise ValueError(f"reserved structural label {label!r}")
+        return label
+
+    def apply_internal_label_for_prefix_rules(
+        self,
+        internal_label: str,
+        prefixes: list[tuple[str, str]],
+    ) -> dict[str, Any]:
+        """Add ``internal_label`` on existing ``Version`` nodes matching prefix rules.
+
+        New ingests honour prefixes automatically at MERGE-time; this back-fills graphs
+        that were populated before prefix rules were extended.
+
+        Args:
+            internal_label: Secondary label fragment (validated; typically matches
+                ``FALKORDB_INTERNAL_LABEL``, e.g. ``INTERNAL``).
+            prefixes: ``(field, prefix)`` rules identical to ingestion-time matching.
+
+        Returns:
+            JSON-serialisable dict with per-rule matched counts plus ``rules_applied``.
+        """
+        validated = self._validate_secondary_label_fragment(internal_label)
+        per_rule: list[dict[str, Any]] = []
+        prop_map = INTERNAL_RULE_FIELD_TO_VERSION_PROPERTY
+        for field, prefix in prefixes:
+            if field not in prop_map:
+                raise ValueError(f"unsupported prefix field {field!r}")
+            qlit_prop = prop_map[field]
+            if not prefix:
+                logger.debug("Skipping empty-prefix rule for field=%s", field)
+                per_rule.append(
+                    {
+                        "field": field,
+                        "prefix": prefix,
+                        "matched_versions": 0,
+                    },
+                )
+                continue
+            q_fragment = cast(
+                LiteralString,
+                (
+                    "MATCH (v:Version)\n"
+                    f"WHERE v.{qlit_prop} IS NOT NULL "
+                    f"AND toString(v.{qlit_prop}) STARTS WITH $prefix "
+                    f"SET v:{validated} RETURN count(v) AS cnt"
+                ),
+            )
+            res = self.run_query(
+                q_fragment,
+                params={"prefix": prefix},
+            )
+            cnt = 0
+            if res.result_set:
+                rv = res.result_set[0].get("cnt")
+                if isinstance(rv, (int, float)):
+                    cnt = int(rv)
+            per_rule.append(
+                {"field": field, "prefix": prefix, "matched_versions": cnt},
+            )
+            logger.info(
+                "Applied internal label %s to Versions matching %s STARTS WITH prefix",
+                validated,
+                field,
+            )
+        return {"internal_label": validated, "per_rule": per_rule}
 
     @staticmethod
     def _validate_label(label: str, allowed: frozenset[str]) -> str:
@@ -413,9 +615,7 @@ class Persistence:
         if version.project and version.project.type is not None:
             type_val = version.project.type
             raw_type = (
-                type_val.name
-                if hasattr(type_val, "name")
-                else str(type_val).title()
+                type_val.name if hasattr(type_val, "name") else str(type_val).title()
             )
         project_type = self._validate_label(raw_type, ALLOWED_PROJECT_TYPES)
 
@@ -1357,23 +1557,49 @@ class Persistence:
 
     # Centrality methods
 
-    def add_inward_centrality_scores(self) -> None:
-        """Add inward centrality scores to INTERNAL nodes."""
+    def add_inward_centrality_scores(self, internal_label: str | None = None) -> None:
+        """Set ``inDegree`` on internal ``Version`` nodes (incoming edge count).
+
+        Args:
+            internal_label: Secondary graph label for internal versions (validated),
+                defaulting to ``INTERNAL``. Must match ``FALKORDB_INTERNAL_LABEL`` / API
+                configuration.
+        """
+        label = self._validate_secondary_label_fragment(internal_label or "INTERNAL")
         self.run_query(
-            query="""
-                MATCH (n:INTERNAL)
+            query=f"""
+                MATCH (n:Version:{label})
                 SET n.inDegree = SIZE((n)<--())
             """
         )
 
-    def add_outward_centrality_scores(self) -> None:
-        """Add outward centrality scores to INTERNAL nodes."""
+    def add_outward_centrality_scores(self, internal_label: str | None = None) -> None:
+        """Set ``outDegree`` on internal ``Version`` nodes (outgoing edge count).
+
+        Args:
+            internal_label: Same semantics as :meth:`add_inward_centrality_scores`.
+        """
+        label = self._validate_secondary_label_fragment(internal_label or "INTERNAL")
         self.run_query(
-            query="""
-                MATCH (n:INTERNAL)
+            query=f"""
+                MATCH (n:Version:{label})
                 SET n.outDegree = SIZE((n)-->())
             """
         )
+
+    def refresh_internal_degree_centrality(
+        self, internal_label: str | None = None
+    ) -> None:
+        """Refresh stored in- and out-degree counts for internal ``Version`` nodes.
+
+        Used by scheduled enrichment so reports and queries can read ``inDegree`` /
+        ``outDegree`` properties without recomputing ``SIZE()`` on every request.
+
+        Args:
+            internal_label: Secondary label fragment (default ``INTERNAL``).
+        """
+        self.add_inward_centrality_scores(internal_label=internal_label)
+        self.add_outward_centrality_scores(internal_label=internal_label)
 
     # Trust Score methods
 

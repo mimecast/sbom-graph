@@ -102,7 +102,7 @@ SBOM Graph API is a Flask application that provides data visualizations of graph
 
 ### Configuration Guidelines
 
-- All configuration comes from environment variables
+- All configuration comes from environment variables (optional `*_FILE` paths for secrets mounted as files)
 - Use `config.py` for configuration management
 - FalkorDB credentials should come from Kubernetes secrets in production
 - Default values support local development
@@ -127,6 +127,72 @@ SBOM Graph API is a Flask application that provides data visualizations of graph
 - LDAP integration supports user DN templates, group membership checks, and SSL
 - TLS can be enabled for secure HTTPS connections
 
+### SBOM Ingest Pipeline (Async by Default)
+
+The four ingest endpoints (`POST /ingest/cyclonedx`, `/ingest/spdx`,
+`/ingest/sbom`, `/ingest/vex`) **default to asynchronous** processing:
+
+- The Flask handler validates the request body (size, JSON Schema,
+  format autodetect for `/ingest/sbom`), allocates a deterministic
+  `record_id`, and then calls
+  `celery_app.send_task("sbom_graph_enrichment.ingest_tasks.<task>",
+   queue="ingest")`.
+- The handler returns `202 Accepted` with body
+  `{"status": "accepted", "record_id", "job_id", "status_url", "format"}`
+  and a `Location: /ingest/jobs/<job_id>` header.
+- The task runs on the dedicated `enrichment-ingest-worker` pool (see
+  `helm/charts/sbom-graph/templates/enrichment-ingest-worker-deployment.yaml`)
+  which consumes **only** the `ingest` queue with
+  `--prefetch-multiplier=1` to bound per-task memory.
+- `GET /ingest/jobs/<job_id>` validates the UUID shape, looks up the
+  Celery `AsyncResult`, and returns
+  `{"job_id", "state", "terminal", "result"?}`. The `result` dict in
+  the terminal SUCCESS case is byte-for-byte the legacy synchronous
+  summary (`projects_count`, `dependencies_count`, `defects_count`, …).
+
+**Synchronous escape hatch**: `POST /ingest/<endpoint>?sync=true` (or
+`?sync=1`/`?sync=yes`) runs the same `process_*` helpers inline and
+returns the legacy `201 Created` with the summary directly. Use only
+for very small SBOMs in test scripts or when the dedicated ingest pool
+is intentionally disabled (`enrichment.ingest.enabled: false`).
+
+**Security**:
+- The `/ingest/jobs/<id>` handler **must** validate `<id>` as a UUID
+  before passing it to `AsyncResult` — without that, an attacker could
+  probe arbitrary keys in the result-backend Redis namespace
+  (CWE-22 / CWE-200).
+- Worker tasks catch their own validation exceptions and return a
+  sanitised `{"status": "error", "error": "<message>"}` dict from
+  `state: SUCCESS`. An actual `state: FAILURE` returns the static
+  string `"Ingest job failed; see server logs"` (CWE-209) — the raw
+  exception is never sent to the client.
+- The 50 MB `MAX_SBOM_SIZE` body cap is enforced **before** the Celery
+  `send_task` call, so oversize bodies never enter the broker.
+
+**Failure handling**:
+- When the API container cannot import `sbom_graph_enrichment.celery_app`
+  the async path returns `503 Ingest pipeline not available`. The
+  synchronous `?sync=true` path continues to work because it only
+  needs the `sbom_graph_model` package (already a hard dependency).
+- The dedicated worker pool can be disabled by setting
+  `enrichment.ingest.enabled: false` or `replicas: 0` in
+  `values.yaml`. The main enrichment pool will **not** automatically
+  pick up the `ingest` queue — that's the priority guarantee.
+
+**Module layout**:
+- `src/sbom_graph_api/routes/ingest.py` — Flask handlers, validation,
+  enqueue, and `?sync=true` inline path.
+- `sbom-graph-enrichment/src/sbom_graph_enrichment/ingest_tasks.py` —
+  Celery tasks invoked by the worker.
+- Both call the same `process_cyclonedx` / `process_spdx` helpers and
+  `sbom_graph_model.Persistence` plumbing.
+
+**Reference**: [`docs/ingest-pipeline.md`](../docs/ingest-pipeline.md)
+is the authoritative operator and integrator guide (topology, sizing,
+HTTP contract, threat model, troubleshooting). Required reading
+before changing the queue topology, worker concurrency, the
+`?sync=true` flag semantics, or the job-status response shape.
+
 ### Visualization Modules
 
 - K-partite visualization uses longest-path partitioning algorithm
@@ -143,6 +209,7 @@ SBOM Graph API is a Flask application that provides data visualizations of graph
 - Health/ready endpoints for Kubernetes probes
 - **JSON response standardization**: Programmatic API v1 endpoints use `utils/api_helpers.py` (`api_response()`, `paginate_params()`, `make_pagination()`) for consistent envelope `{data, pagination?, meta}`
 - **SBOM provenance tracking**: Ingestion endpoints (`/ingest/cyclonedx`, `/ingest/spdx`, `/ingest/sbom`) create SBOM records (document hash, tool info, ingested_at) linked to all ingested versions; responses include `record_id` for audit trails and provenance lookups
+- **Asynchronous SBOM ingest**: `POST /ingest/*` returns `202 Accepted` by default and enqueues the parse-and-persist work onto a dedicated Celery `ingest` queue consumed only by the `enrichment-ingest-worker` pool. Clients poll `GET /ingest/jobs/<job_id>` for the worker's terminal summary. A `?sync=true` query flag preserves the legacy `201 Created` inline path for callers that need to block. See [`docs/ingest-pipeline.md`](../docs/ingest-pipeline.md) for the full contract and operational reference.
 
 ### UI Features
 
@@ -587,8 +654,13 @@ uv run python -m sbom_graph_api.app
 
 ### Docker Build
 
+Build context must be this subproject directory (or use `build-images.sh sbom-graph-api` from the monorepo root).
+
 ```bash
-docker build -t sbom-graph-api:latest .
+# From sbom-graph-api/
+docker build -t sbom-graph-api:latest -f Dockerfile \
+  --build-arg "PYTHON_PACKAGE_VERSION=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)" \
+  .
 ```
 
 ### Kubernetes

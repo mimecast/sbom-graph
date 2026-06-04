@@ -2,28 +2,37 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "sbom-graph.enrichment.fullname" . }}
+  name: {{ include "sbom-graph.enrichmentBeat.fullname" . }}
   labels:
-    {{- include "sbom-graph.enrichment.labels" . | nindent 4 }}
+    {{- include "sbom-graph.enrichmentBeat.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.enrichment.replicas }}
+  replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
-      {{- include "sbom-graph.enrichment.selectorLabels" . | nindent 6 }}
+      {{- include "sbom-graph.enrichmentBeat.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "sbom-graph.enrichment.selectorLabels" . | nindent 8 }}
+        {{- include "sbom-graph.enrichmentBeat.selectorLabels" . | nindent 8 }}
     spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
         fsGroup: 65532
+      # Disable kubelet service-link env vars (e.g. SBOM_GRAPH_FALKORDB_SERVICE_HOST).
+      # Required when TLS to FalkorDB is enabled: Celery's Redis transport validates the
+      # TLS cert against the host in rediss://...; service links inject the ClusterIP,
+      # which is not in the cert SAN and breaks the handshake.
+      enableServiceLinks: false
+      {{- if (.Values.falkordb.waitForReady | default true) }}
       initContainers:
         {{- include "sbom-graph.falkordb.waitContainer" (dict "ctx" . "tlsVolume" "tls-ca") | nindent 8 }}
+      {{- end }}
       containers:
-        - name: enrichment-worker
+        - name: enrichment-beat
           image: "{{ .Values.enrichment.image.repository }}:{{ .Values.enrichment.image.tag }}"
           imagePullPolicy: {{ .Values.enrichment.image.pullPolicy }}
           env:
@@ -31,13 +40,16 @@ spec:
           args:
             - "-A"
             - "sbom_graph_enrichment.celery_app"
-            - "worker"
+            - "beat"
             - "--loglevel=info"
-            - "--concurrency={{ .Values.enrichment.concurrency }}"
-            - "-Q"
-            - "enrichment"
+            - "--schedule=/tmp/celerybeat-schedule"
           resources:
-            {{- toYaml .Values.enrichment.resources | nindent 12 }}
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

@@ -793,8 +793,10 @@ class TestCycloneDXHelper:
             port=6379,
             graph_name="test-graph",
             password="",
-            ssl=True,
+            ssl=False,
             ssl_ca_certs="certs/ca_bundle.pem",
+            ssl_certfile=None,
+            ssl_keyfile=None,
             internal_prefixes=mock_persistence.parse_internal_prefixes.return_value,
         )
         mock_client.assert_called_once_with(self.TEST_CONFIG)
@@ -804,6 +806,33 @@ class TestCycloneDXHelper:
         assert helper.persistence is mock_persistence.return_value
         assert helper.sonatype_client is mock_client.return_value
         assert helper.cyclonedx_processor is mock_processor.return_value
+
+    @patch("sonatype_lifecycle_release_listener.app.CycloneDXProcessor")
+    @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient")
+    @patch("sonatype_lifecycle_release_listener.app.Persistence")
+    def test_init_creates_persistence_with_tls_and_mtls(
+        self, mock_persistence, mock_client, mock_processor
+    ) -> None:
+        """FALKORDB_SSL and optional client cert paths are passed to Persistence."""
+        config = {
+            **self.TEST_CONFIG,
+            "FALKORDB_SSL": "true",
+            "FALKORDB_CLIENT_CERT": "/tls/client.crt",
+            "FALKORDB_CLIENT_KEY": "/tls/client.key",
+        }
+        CycloneDXHelper(config)
+
+        mock_persistence.assert_called_once_with(
+            host="localhost",
+            port=6379,
+            graph_name="test-graph",
+            password="",
+            ssl=True,
+            ssl_ca_certs="certs/ca_bundle.pem",
+            ssl_certfile="/tls/client.crt",
+            ssl_keyfile="/tls/client.key",
+            internal_prefixes=mock_persistence.parse_internal_prefixes.return_value,
+        )
 
     @patch("sonatype_lifecycle_release_listener.app.CycloneDXProcessor")
     @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient")

@@ -6,62 +6,67 @@
 # ============================================================================
 FROM python:3.14-slim AS builder
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libffi-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install uv for dependency management
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Base image may default to non-root; builder must create paths and run uv as root.
+USER root
 
 # Set working directory
 WORKDIR /app
 
+RUN mkdir -p /app/dependencies
+
+COPY ./dist/*.whl ./deps/
+COPY ./scripts/ ./scripts/
+COPY ./gunicorn.conf.py ./
+
+ARG PYTHON_PACKAGE_VERSION
+RUN test -n "${PYTHON_PACKAGE_VERSION}" \
+  || (echo "PYTHON_PACKAGE_VERSION build-arg is required (e.g. from pyproject.toml)" >&2 && exit 1)
+
+RUN export REQUESTS_CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
+
+# RUN uv pip install --target=/app/dependencies --native-tls --no-cache --no-sources "sbom-graph-api==${PYTHON_PACKAGE_VERSION}"
+RUN uv pip install --target=/app/dependencies --native-tls --no-cache --no-sources ./deps/*.whl "sbom-graph-api==${PYTHON_PACKAGE_VERSION}"
+
+RUN mkdir -p /data /certs && chown -R nonroot:nonroot /app /data /certs
+
+
+# Install build dependencies
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#     gcc \
+#     libffi-dev \
+#     && rm -rf /var/lib/apt/lists/*
+
+# Install uv for dependency management
+# COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Set working directory
+# WORKDIR /app
+
 # Copy dependency files first for better layer caching
-COPY ./sbom-graph-model/dist/*.whl ./deps/
-COPY ./sbom-graph-api/pyproject.toml ./sbom-graph-api/uv.lock ./sbom-graph-api/README.md ./
+# COPY ./sbom-graph-model/dist/*.whl ./deps/
+# COPY ./sbom-graph-api/pyproject.toml ./sbom-graph-api/uv.lock ./sbom-graph-api/README.md ./
 # Copy application source code
-COPY ./sbom-graph-api/src/ ./src/
-COPY ./sbom-graph-api/scripts/ ./scripts/
-COPY ./sbom-graph-api/gunicorn.conf.py ./
-COPY ./sbom-graph-api/entrypoint.sh ./
-RUN uv pip install --target=/app/dependencies --no-cache --no-sources ./deps/*.whl .
+# COPY ./sbom-graph-api/src/ ./src/
+# COPY ./sbom-graph-api/scripts/ ./scripts/
+# COPY ./sbom-graph-api/gunicorn.conf.py ./
+# COPY ./sbom-graph-api/entrypoint.sh ./
+# RUN uv pip install --target=/app/dependencies --no-cache --no-sources ./deps/*.whl .
 
 
 # ============================================================================
 # Stage 2: Runtime - python:3.14-slim (matches builder for C extension ABI)
 # ============================================================================
-FROM python:3.14-slim
+FROM gcr.io/distroless/python3-debian13:nonroot
 
-# Create nonroot user (UID 65532 matches Kubernetes runAsUser)
-RUN groupadd --gid 65532 nonroot \
-    && useradd --uid 65532 --gid nonroot --shell /usr/sbin/nologin --no-create-home nonroot
+COPY --from=builder /app/ /app/
+COPY --from=builder /data/ /data/
+COPY --from=builder /certs/ /certs/
 
 # Set working directory
 WORKDIR /app
 
-# Copy installed dependencies from builder
-COPY --from=builder /app/dependencies /app/dependencies
-
-# Copy application source (needed for imports)
-COPY --from=builder /app/src /app/src
-
-# Copy gunicorn configuration file
-COPY --from=builder /app/gunicorn.conf.py /app/gunicorn.conf.py
-
-# Copy scripts (populate_acme_corp for init-data job)
-COPY --from=builder /app/scripts /app/scripts
-
-# Copy and set up entrypoint (logs startup for debugging empty logs)
-COPY --from=builder /app/entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
-
-# Create volume directories and set ownership
-RUN mkdir -p /data /certs && chown -R nonroot:nonroot /app /data /certs
-
 # Set Python path to include our dependencies and source
-ENV PYTHONPATH=/app/dependencies:/app/src
+ENV PYTHONPATH=/app/dependencies:scripts:.
 ENV PYTHONUNBUFFERED=1
 
 # Environment variables with defaults (can be overridden)
@@ -114,7 +119,7 @@ EXPOSE 8080
 EXPOSE 8443
 
 # Run as nonroot (matches Kubernetes runAsUser: 65532)
-USER nonroot
+USER daemon
 
 # Health check
 # HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
@@ -133,4 +138,35 @@ USER nonroot
 #
 # TLS is automatically enabled when TLS_ENABLED=true and cert/key files are set
 # The gunicorn_config.py reads environment variables for TLS configuration
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENTRYPOINT ["python", "-m", "gunicorn", "-c", "/app/gunicorn.conf.py", "sbom_graph_api.wsgi:app"]
+
+# FROM python:3.14-slim
+
+# Create nonroot user (UID 65532 matches Kubernetes runAsUser)
+# RUN groupadd --gid 65532 nonroot \
+#     && useradd --uid 65532 --gid nonroot --shell /usr/sbin/nologin --no-create-home nonroot
+
+# Set working directory
+# WORKDIR /app
+
+# Copy installed dependencies from builder
+# COPY --from=builder /app/dependencies /app/dependencies
+
+# Copy application source (needed for imports)
+# COPY --from=builder /app/src /app/src
+
+# Copy gunicorn configuration file
+# COPY --from=builder /app/gunicorn.conf.py /app/gunicorn.conf.py
+
+# Copy scripts (populate_acme_corp for init-data job)
+# COPY --from=builder /app/scripts /app/scripts
+
+# Copy and set up entrypoint (logs startup for debugging empty logs)
+# COPY --from=builder /app/entrypoint.sh /app/entrypoint.sh
+# RUN chmod +x /app/entrypoint.sh
+
+# Create volume directories and set ownership
+# RUN mkdir -p /data /certs && chown -R nonroot:nonroot /app /data /certs
+
+# Set Python path to include our dependencies and source
+# ENV PYTHONPATH=/app/dependencies:/app/src

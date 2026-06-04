@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 REGISTRY="${REGISTRY:-}"
-VALUES="helm/sbom-graph/values.yaml"
+VALUES="helm/charts/sbom-graph/values.yaml"
 
 API_VER=$(grep '^version' sbom-graph-api/pyproject.toml | sed 's/.*"\(.*\)"/\1/')
 ENR_VER=$(grep '^version' sbom-graph-enrichment/pyproject.toml | sed 's/.*"\(.*\)"/\1/')

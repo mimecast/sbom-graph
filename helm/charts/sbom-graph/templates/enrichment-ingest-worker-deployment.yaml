@@ -1,0 +1,109 @@
+{{/*
+Dedicated Celery worker pool that listens only on the ``ingest`` queue.
+
+This deployment is a near-clone of ``enrichment-worker-deployment.yaml`` --
+the same image, the same environment, the same FalkorDB/Redis wiring.
+The single material difference is the ``-Q ingest`` argument, which
+isolates SBOM upload jobs from the long-running ``enrichment`` queue.
+
+Why a separate Deployment instead of ``-Q ingest,enrichment`` on the
+existing pool?  Celery treats ``-Q a,b`` as a list of queues to drain in
+*round-robin* fashion between tasks; once a worker has accepted an
+``enrichment`` task it will not pre-empt to handle a freshly-arrived
+``ingest`` task.  In practice that means a 30-minute
+``enrich_all_packages`` job will block ingest for the full 30 minutes.
+A dedicated pool guarantees an ingest task always has a free slot.
+
+See ``docs/sbom-graph-api-troubleshooting.md`` §10.6 for the full
+context and threat model.
+
+Disable cleanly by setting ``enrichment.ingest.enabled: false`` -- the
+synchronous escape hatch ``POST /ingest/*?sync=true`` remains available
+even when this pool is offline.
+*/}}
+{{- if and .Values.enrichment.enabled .Values.enrichment.ingest.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sbom-graph.enrichmentIngest.fullname" . }}
+  labels:
+    {{- include "sbom-graph.enrichmentIngest.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.enrichment.ingest.replicas }}
+  selector:
+    matchLabels:
+      {{- include "sbom-graph.enrichmentIngest.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sbom-graph.enrichmentIngest.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      # Same kubelet service-link suppression as the enrichment worker --
+      # required when TLS to FalkorDB is enabled.  See
+      # ``enrichment-worker-deployment.yaml`` for the full rationale.
+      enableServiceLinks: false
+      {{- if (.Values.falkordb.waitForReady | default true) }}
+      initContainers:
+        {{- include "sbom-graph.falkordb.waitContainer" (dict "ctx" . "tlsVolume" "tls-ca") | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: enrichment-ingest
+          image: "{{ .Values.enrichment.image.repository }}:{{ .Values.enrichment.image.tag }}"
+          imagePullPolicy: {{ .Values.enrichment.image.pullPolicy }}
+          env:
+            {{- include "sbom-graph.enrichment.env" . | nindent 12 }}
+          args:
+            - "-A"
+            - "sbom_graph_enrichment.celery_app"
+            - "worker"
+            - "--loglevel=info"
+            - "--concurrency={{ .Values.enrichment.ingest.concurrency }}"
+            # CRITICAL: this pool MUST listen only on the ``ingest`` queue.
+            # Adding ``enrichment`` here would defeat the whole point of the
+            # separation (see template doc comment above).
+            - "-Q"
+            - {{ .Values.enrichment.ingest.queueName | quote }}
+            # ``--prefetch-multiplier=1`` keeps each worker holding at most
+            # one ingest task at a time.  SBOM payloads are bulky enough
+            # that prefetching even two of them risks doubling per-worker
+            # memory footprint.
+            - "--prefetch-multiplier=1"
+          resources:
+            {{- toYaml .Values.enrichment.ingest.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.falkordb.tls.enabled }}
+            - name: tls-ca
+              mountPath: /tls
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.falkordb.tls.enabled }}
+        - name: tls-ca
+          secret:
+            secretName: {{ include "sbom-graph.tls.secretName" . }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+              - key: client.crt
+                path: client.crt
+              - key: client.key
+                path: client.key
+        {{- end }}
+{{- end }}

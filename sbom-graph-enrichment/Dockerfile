@@ -6,21 +6,39 @@
 # ============================================================================
 FROM python:3.14-slim AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libffi-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Base image may default to non-root; builder must create paths and run uv as root.
+USER root
 
 WORKDIR /app
 
-COPY ./sbom-graph-model/dist/*.whl ./deps/
-COPY ./sbom-graph-enrichment/pyproject.toml ./sbom-graph-enrichment/README.md ./
+RUN mkdir -p /app/dependencies
 
-RUN uv pip install --target=/app/dependencies --no-cache --no-sources ./deps/*.whl .
 
-COPY ./sbom-graph-enrichment/src/ ./src/
+COPY ./dist/*.whl ./deps/
+
+ARG PYTHON_PACKAGE_VERSION
+RUN test -n "${PYTHON_PACKAGE_VERSION}" \
+  || (echo "PYTHON_PACKAGE_VERSION build-arg is required (e.g. from pyproject.toml)" >&2 && exit 1)
+
+# RUN uv pip install --target=/app/dependencies --native-tls --no-cache --no-sources "sbom-graph-enrichment==${PYTHON_PACKAGE_VERSION}"
+RUN uv pip install --target=/app/dependencies --native-tls --no-cache --no-sources ./deps/*.whl "sbom-graph-enrichment==${PYTHON_PACKAGE_VERSION}"
+
+
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#     gcc \
+#     libffi-dev \
+#     && rm -rf /var/lib/apt/lists/*
+
+# COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# WORKDIR /app
+
+# COPY ./sbom-graph-model/dist/*.whl ./deps/
+# COPY ./sbom-graph-enrichment/pyproject.toml ./sbom-graph-enrichment/README.md ./
+
+# RUN uv pip install --target=/app/dependencies --no-cache --no-sources ./deps/*.whl .
+
+# COPY ./sbom-graph-enrichment/src/ ./src/
 
 # ============================================================================
 # Stage 2: Runtime - Distroless Python image
@@ -30,9 +48,8 @@ FROM gcr.io/distroless/python3-debian13:nonroot
 WORKDIR /app
 
 COPY --from=builder /app/dependencies /app/dependencies
-COPY --from=builder /app/src /app/src
 
-ENV PYTHONPATH=/app/dependencies:/app/src
+ENV PYTHONPATH=/app/dependencies:.
 ENV PYTHONUNBUFFERED=1
 
 ENV FALKORDB_HOST="localhost"
@@ -44,9 +61,31 @@ ENV CELERY_RESULT_DB="2"
 ENV ENRICHMENT_INTERVAL="3600"
 ENV INTERNAL_PREFIXES=""
 
-USER 65532
+USER daemon
 
 ENTRYPOINT ["/usr/bin/python3", "-m", "celery"]
 CMD ["-A", "sbom_graph_enrichment.celery_app", "worker", "--loglevel=info", "--concurrency=2", "-Q", "enrichment"]
+
+# WORKDIR /app
+
+# COPY --from=builder /app/dependencies /app/dependencies
+# COPY --from=builder /app/src /app/src
+
+# ENV PYTHONPATH=/app/dependencies:/app/src
+# ENV PYTHONUNBUFFERED=1
+
+# ENV FALKORDB_HOST="localhost"
+# ENV FALKORDB_PORT="6379"
+# ENV FALKORDB_GRAPH_NAME="acme-corp"
+# ENV FALKORDB_PASSWORD=""
+# ENV CELERY_BROKER_DB="1"
+# ENV CELERY_RESULT_DB="2"
+# ENV ENRICHMENT_INTERVAL="3600"
+# ENV INTERNAL_PREFIXES=""
+
+# USER 65532
+
+# ENTRYPOINT ["/usr/bin/python3", "-m", "celery"]
+# CMD ["-A", "sbom_graph_enrichment.celery_app", "worker", "--loglevel=info", "--concurrency=2", "-Q", "enrichment"]
 # To run beat instead: override CMD with:
 #   ["-A", "sbom_graph_enrichment.celery_app", "beat", "--loglevel=info"]

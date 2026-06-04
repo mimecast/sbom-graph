@@ -71,9 +71,10 @@ SONATYPE_USERNAME=your_user SONATYPE_PASSWORD=your_pass \
 
 ### Docker
 
-The Dockerfile must be built from the **repository root** because it copies the
-`sbom-graph-model` wheel from the sibling project's `dist/` directory. Use the
-build script provided in the repo root:
+The Docker **build context** must be the **`sonatype-lifecycle-release-listener/`**
+directory. Dependencies are installed from PyPI via `uv pip` in the Dockerfile;
+use `build-images.sh` from the monorepo root (it runs `docker build` inside that
+subproject):
 
 ```bash
 # From the repository root (sbom-graph/)
@@ -82,13 +83,16 @@ build script provided in the repo root:
 # Or with a custom tag
 ./build-images.sh --rl-tag myrepo/sonatype-lifecycle-release-listener:v1
 
-# Or directly with docker build (wheel must be pre-built)
-cd sbom-graph-model && uv build && cd ..
-docker build -t sonatype-lifecycle-release-listener:latest -f sonatype-lifecycle-release-listener/Dockerfile .
+# Or directly with docker build (run from sonatype-lifecycle-release-listener/)
+cd sonatype-lifecycle-release-listener
+docker build -t sonatype-lifecycle-release-listener:latest -f Dockerfile \
+  --build-arg "PYTHON_PACKAGE_VERSION=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)" \
+  .
 ```
 
-The build script automatically builds the `sbom-graph-model` wheel if it is
-not already present in `sbom-graph-model/dist/`.
+The build script still builds the `sbom-graph-model` wheel when needed for
+other targets; the release-listener image build does not copy that wheel into
+the image.
 
 ```bash
 # Run the container

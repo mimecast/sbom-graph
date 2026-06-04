@@ -11,13 +11,14 @@ import os
 import re
 import uuid
 from datetime import datetime, UTC
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import quote as urlquote
 from flask import Flask, request, jsonify
 from werkzeug.exceptions import BadRequest, NotFound
 import requests
 from requests.auth import HTTPBasicAuth
 from sbom_graph_model.cyclonedx.processor import CycloneDXProcessor
+from sbom_graph_model.k8s_service_host import resolve_k8s_service_link_host
 from sbom_graph_model.persistence import Persistence
 from sbom_graph_model.vex import VexProcessor
 from redis.exceptions import RedisError
@@ -54,6 +55,42 @@ _configure_logging()
 logger = logging.getLogger(__name__)
 
 
+def _listener_ingestion_persistence(config: dict[str, Any]) -> Persistence:
+    """Connect to FalkorDB with Helm INTERNAL_PREFIXES plus optional graph overlay."""
+    env_csv = str(config.get("INTERNAL_PREFIXES") or "")
+    base = Persistence.parse_internal_prefixes(env_csv.strip())
+
+    ssl_enabled = config.get("FALKORDB_SSL", "false")
+    if isinstance(ssl_enabled, str):
+        ssl_enabled = ssl_enabled.lower() == "true"
+
+    persistence = Persistence(
+        host=config.get("FALKORDB_HOST", ""),
+        port=int(config.get("FALKORDB_PORT", 6379)),
+        graph_name=config.get("FALKORDB_GRAPH_NAME", "acme-corp"),
+        password=config.get("FALKORDB_PASSWORD", ""),
+        ssl=ssl_enabled,
+        ssl_ca_certs=config.get("FALKORDB_CACERTS"),
+        ssl_certfile=config.get("FALKORDB_CLIENT_CERT"),
+        ssl_keyfile=config.get("FALKORDB_CLIENT_KEY"),
+        internal_prefixes=base,
+    )
+    try:
+        persistence.reload_internal_prefixes_from_env_and_overlay(env_csv)
+    except ValueError as exc:
+        logger.warning(
+            "Invalid Falkor internal-prefix overlay; using INTERNAL_PREFIXES env only: %s",
+            exc,
+        )
+        persistence.internal_prefixes = list(base)
+    except Exception:
+        logger.exception(
+            "Unable to merge Falkor internal-prefix overlay; INTERNAL_PREFIXES only",
+        )
+        persistence.internal_prefixes = list(base)
+    return persistence
+
+
 def create_app(config: Optional[dict] = None) -> Flask:
     """
     Application factory for creating the Flask app.
@@ -74,7 +111,13 @@ def create_app(config: Optional[dict] = None) -> Flask:
     app.config.setdefault(
         "SONATYPE_CACERTS", os.environ.get("SONATYPE_CACERTS", "certs/ca_bundle.pem")
     )
-    app.config.setdefault("FALKORDB_HOST", os.environ.get("FALKORDB_HOST", ""))
+    _falkordb_host_raw = os.environ.get("FALKORDB_HOST", "")
+    _falkordb_host_resolved = (
+        resolve_k8s_service_link_host(_falkordb_host_raw)
+        if _falkordb_host_raw.strip()
+        else ""
+    )
+    app.config.setdefault("FALKORDB_HOST", _falkordb_host_resolved)
     app.config.setdefault("FALKORDB_PORT", int(os.environ.get("FALKORDB_PORT", "6379")))
     app.config.setdefault(
         "FALKORDB_GRAPH_NAME", os.environ.get("FALKORDB_GRAPH_NAME", "acme-corp")
@@ -311,23 +354,7 @@ class CycloneDXHelper:
     """Helper class to process CycloneDX SBOMs."""
 
     def __init__(self, config: dict):
-        internal_prefixes = Persistence.parse_internal_prefixes(
-            config.get("INTERNAL_PREFIXES", "")
-        )
-        ssl_enabled = config.get("FALKORDB_SSL", "false")
-        if isinstance(ssl_enabled, str):
-            ssl_enabled = ssl_enabled.lower() == "true"
-        self.persistence = Persistence(
-            host=config.get("FALKORDB_HOST", ""),
-            port=int(config.get("FALKORDB_PORT", 6379)),
-            graph_name=config.get("FALKORDB_GRAPH_NAME", "acme-corp"),
-            password=config.get("FALKORDB_PASSWORD", ""),
-            ssl=ssl_enabled,
-            ssl_ca_certs=config.get("FALKORDB_CACERTS"),
-            ssl_certfile=config.get("FALKORDB_CLIENT_CERT"),
-            ssl_keyfile=config.get("FALKORDB_CLIENT_KEY"),
-            internal_prefixes=internal_prefixes,
-        )
+        self.persistence = _listener_ingestion_persistence(config)
         self.sonatype_client = SonaTypeClient(config)
         self.cyclonedx_processor = CycloneDXProcessor(persistence=self.persistence)
 
@@ -417,23 +444,7 @@ class VexHelper:
 
     def __init__(self, config: dict):
         """Initialize with shared persistence and Sonatype client."""
-        internal_prefixes = Persistence.parse_internal_prefixes(
-            config.get("INTERNAL_PREFIXES", "")
-        )
-        ssl_enabled = config.get("FALKORDB_SSL", "false")
-        if isinstance(ssl_enabled, str):
-            ssl_enabled = ssl_enabled.lower() == "true"
-        self.persistence = Persistence(
-            host=config.get("FALKORDB_HOST", ""),
-            port=int(config.get("FALKORDB_PORT", 6379)),
-            graph_name=config.get("FALKORDB_GRAPH_NAME", "acme-corp"),
-            password=config.get("FALKORDB_PASSWORD", ""),
-            ssl=ssl_enabled,
-            ssl_ca_certs=config.get("FALKORDB_CACERTS"),
-            ssl_certfile=config.get("FALKORDB_CLIENT_CERT"),
-            ssl_keyfile=config.get("FALKORDB_CLIENT_KEY"),
-            internal_prefixes=internal_prefixes,
-        )
+        self.persistence = _listener_ingestion_persistence(config)
         self.sonatype_client = SonaTypeClient(config)
         self.vex_processor = VexProcessor(persistence=self.persistence)
 

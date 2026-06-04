@@ -225,6 +225,79 @@ CONTACT_CREATE_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+_MAX_INTERNAL_RULES_BATCH = 512
+_MAX_INTERNAL_OVERLAY_CHARS = 16_384
+_MAX_SINGLE_PREFIX_CHARS = 2048
+
+
+INTERNAL_PREFIX_RULE_ITEM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["field", "prefix"],
+    "additionalProperties": False,
+    "properties": {
+        "field": {"type": "string", "enum": ["group", "name", "purl"]},
+        "prefix": {"type": "string", "maxLength": _MAX_SINGLE_PREFIX_CHARS},
+    },
+}
+
+INTERNAL_PREFIX_OVERLAY_PUT_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/inbound/internal-prefix-overlay",
+    "title": "Replace internal-prefix Falkor overlay",
+    "description": (
+        "Replaces ONLY the FalkorDB-stored overlay (Helm INTERNAL_PREFIXES is unchanged)."
+    ),
+    "type": "object",
+    "required": ["overlay"],
+    "properties": {
+        "overlay": {
+            "type": "string",
+            "maxLength": _MAX_INTERNAL_OVERLAY_CHARS,
+        },
+    },
+    "additionalProperties": False,
+}
+
+
+INTERNAL_PREFIX_OVERLAY_EXTEND_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/inbound/internal-prefix-overlay-extend",
+    "title": "Append internal-prefix rules to Falkor overlay",
+    "type": "object",
+    "required": ["additional"],
+    "properties": {
+        "additional": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": _MAX_INTERNAL_OVERLAY_CHARS,
+        },
+    },
+    "additionalProperties": False,
+}
+
+
+INTERNAL_APPLY_INTERNAL_LABEL_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/inbound/apply-internal-label",
+    "title": "Back-fill internal secondary label via prefix rules",
+    "type": "object",
+    "properties": {
+        "internal_label": {
+            "type": "string",
+            "maxLength": 96,
+        },
+        "use_effective_prefixes": {
+            "type": "boolean",
+        },
+        "prefixes": {
+            "type": "array",
+            "maxItems": _MAX_INTERNAL_RULES_BATCH,
+            "items": INTERNAL_PREFIX_RULE_ITEM_SCHEMA,
+        },
+    },
+    "additionalProperties": False,
+}
+
 # ============================================================================
 # Inbound Schema Index
 # ============================================================================
@@ -263,5 +336,22 @@ INBOUND_SCHEMA_INDEX: dict[str, dict[str, Any]] = {
         "schema": VEX_AUTO_STUB_SCHEMA,
         "endpoint": "/api/v1/vex/auto-stub",
         "description": "Auto-generate VEX not_affected stubs",
+    },
+    "internal-prefix-overlay": {
+        "schema": INTERNAL_PREFIX_OVERLAY_PUT_SCHEMA,
+        "endpoint": "PUT /api/v1/config/internal-prefixes/overlay",
+        "description": "Replace FalkorDB internal-prefix overlay stored on SbomGraphConfig",
+    },
+    "internal-prefix-overlay-extend": {
+        "schema": INTERNAL_PREFIX_OVERLAY_EXTEND_SCHEMA,
+        "endpoint": "POST /api/v1/config/internal-prefixes/overlay",
+        "description": "Append rules to FalkorDB internal-prefix overlay",
+    },
+    "internal-apply-internal-label": {
+        "schema": INTERNAL_APPLY_INTERNAL_LABEL_SCHEMA,
+        "endpoint": "POST /api/v1/graph/apply-internal-label",
+        "description": (
+            "SET :internal_label on existing Version rows matching supplied prefix rules"
+        ),
     },
 }

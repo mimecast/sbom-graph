@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from redis.exceptions import ResponseError
 
 from sbom_graph_api.config import FalkorDBConfig
 from sbom_graph_api.services.falkordb_service import (
@@ -141,6 +142,62 @@ class TestFalkorDBService:
 
         mock_graph.ro_query.assert_called_once_with("RETURN 1", {})
         assert result == []
+
+    @patch("sbom_graph_api.services.falkordb_service.FalkorDB")
+    def test_execute_query_returns_empty_when_graph_key_missing(self, mock_falkordb_class, service):
+        """A read against an empty graph must return [], not raise.
+
+        FalkorDB raises ``ResponseError("Invalid graph operation on empty
+        key")`` when the graph key has never been written.  A freshly-
+        deployed instance with no SBOMs ingested yet is exactly this state
+        and read endpoints must degrade to an empty result set.
+        """
+        mock_db = MagicMock()
+        mock_graph = MagicMock()
+        mock_graph.ro_query.side_effect = ResponseError("Invalid graph operation on empty key")
+        mock_db.select_graph.return_value = mock_graph
+        mock_falkordb_class.return_value = mock_db
+
+        result = service.execute_query("MATCH (n) RETURN n")
+
+        assert result == []
+
+    @patch("sbom_graph_api.services.falkordb_service.FalkorDB")
+    def test_execute_query_propagates_other_response_errors(self, mock_falkordb_class, service):
+        """Non-empty-graph FalkorDB errors must still surface as exceptions."""
+        mock_db = MagicMock()
+        mock_graph = MagicMock()
+        mock_graph.ro_query.side_effect = ResponseError("syntax error near 'FOO'")
+        mock_db.select_graph.return_value = mock_graph
+        mock_falkordb_class.return_value = mock_db
+
+        with pytest.raises(ResponseError, match="syntax error"):
+            service.execute_query("MATCH (n) FOO")
+
+    @patch("sbom_graph_api.services.falkordb_service.FalkorDB")
+    def test_execute_write_returns_empty_when_graph_key_missing(self, mock_falkordb_class, service):
+        """A pure MATCH ... DELETE against an empty graph must be a no-op."""
+        mock_db = MagicMock()
+        mock_graph = MagicMock()
+        mock_graph.query.side_effect = ResponseError("Invalid graph operation on empty key")
+        mock_db.select_graph.return_value = mock_graph
+        mock_falkordb_class.return_value = mock_db
+
+        result = service.execute_write("MATCH (n) DELETE n")
+
+        assert result == []
+
+    @patch("sbom_graph_api.services.falkordb_service.FalkorDB")
+    def test_execute_write_propagates_other_response_errors(self, mock_falkordb_class, service):
+        """Write failures unrelated to empty graphs must still raise."""
+        mock_db = MagicMock()
+        mock_graph = MagicMock()
+        mock_graph.query.side_effect = ResponseError("constraint violation")
+        mock_db.select_graph.return_value = mock_graph
+        mock_falkordb_class.return_value = mock_db
+
+        with pytest.raises(ResponseError, match="constraint violation"):
+            service.execute_write("CREATE (n:Foo {id: 1})")
 
     @patch("sbom_graph_api.services.falkordb_service.FalkorDB")
     def test_find_version_found(self, mock_falkordb_class, service, mock_node):

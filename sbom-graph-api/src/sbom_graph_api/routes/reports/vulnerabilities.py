@@ -36,6 +36,7 @@ from sbom_graph_api.utils.validation import (
     build_url_with_params,
     validate_boolean,
     validate_defect_id,
+    validate_defect_id_match_filter,
     validate_format,
     validate_max_depth,
     validate_vex_filter,
@@ -57,6 +58,8 @@ def all_vulnerabilities() -> Response:
             internal-labeled nodes
         vex_filter: 'all' (default), 'hide_not_affected', or
             'under_investigation'
+        defect_id_match: Optional defect id prefix or ``*`` glob
+            (e.g. ``CVE-2024``, ``GHSA-*-abc``). Matched case-insensitively.
 
     Returns:
         HTML table, Excel download, or JSON
@@ -66,9 +69,15 @@ def all_vulnerabilities() -> Response:
         request.args.get("internal_only"),
     )
     vex_filter = validate_vex_filter(request.args.get("vex_filter"))
+    defect_id_match = validate_defect_id_match_filter(
+        request.args.get("defect_id_match"),
+    )
 
     service = get_falkordb_service()
-    vulns = service.get_all_vulnerabilities(internal_only)
+    vulns = service.get_all_vulnerabilities(
+        internal_only,
+        defect_id_match,
+    )
 
     # VEX coverage: count vulnerabilities with VEX vs total (before filter)
     with_vex = sum(1 for v in vulns if v.get("vex_status"))
@@ -130,17 +139,20 @@ def all_vulnerabilities() -> Response:
         vulnerabilities=vulns,
         stats=stats,
         vex_filter=vex_filter,
+        defect_id_match=defect_id_match or "",
         excel_url=build_url_with_params(
             base_url,
             format="excel",
             internal_only=internal_only,
             vex_filter=vex_filter,
+            defect_id_match=defect_id_match,
         ),
         json_url=build_url_with_params(
             base_url,
             format="json",
             internal_only=internal_only,
             vex_filter=vex_filter,
+            defect_id_match=defect_id_match,
         ),
         schema_url="/schemas/vulnerabilities",
     )

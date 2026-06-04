@@ -19,6 +19,11 @@ spec:
         runAsUser: 65532
         runAsGroup: 65532
         fsGroup: 65532
+      # Disable kubelet service-link env vars (e.g. SBOM_GRAPH_FALKORDB_SERVICE_HOST).
+      # Required when TLS to FalkorDB is enabled: the Python redis client validates the
+      # TLS cert against the host in the connection URL, and the cert SAN is the cluster
+      # DNS name -- not the ClusterIP that service links would inject.
+      enableServiceLinks: false
       containers:
         - name: sonatype-lifecycle-release-listener
           image: "{{ .Values.releaseListener.image.repository }}:{{ .Values.releaseListener.image.tag }}"
@@ -29,7 +34,7 @@ spec:
               protocol: TCP
           env:
             - name: FALKORDB_HOST
-              value: {{ include "sbom-graph.falkordb.fullname" . | quote }}
+              value: {{ include "sbom-graph.falkordb.connectHost" . | quote }}
             - name: FALKORDB_PORT
               value: "6379"
             - name: FALKORDB_GRAPH_NAME
@@ -46,9 +51,10 @@ spec:
                   key: webhook-secret
             - name: GUNICORN_WORKERS
               value: {{ .Values.releaseListener.gunicornWorkers | quote }}
-            {{- if .Values.global.internalPrefixes }}
+            {{- $internalPrefixes := include "sbom-graph.internalPrefixesValue" . | trim }}
+            {{- if ne $internalPrefixes "" }}
             - name: INTERNAL_PREFIXES
-              value: {{ .Values.global.internalPrefixes | quote }}
+              value: {{ $internalPrefixes | quote }}
             {{- end }}
             {{- if .Values.falkordb.tls.enabled }}
             - name: FALKORDB_SSL

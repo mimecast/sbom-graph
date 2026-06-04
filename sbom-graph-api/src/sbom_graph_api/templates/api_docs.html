@@ -734,35 +734,66 @@
 
     <div class="section-note">
         These endpoints accept <code>POST</code> requests with JSON bodies. Use <code>Authorization: Bearer &lt;token&gt;</code> for authentication.
-        SBOM ingestion responses include <code>record_id</code> for provenance tracking.
+        <strong>Async by default:</strong> all four <code>POST /ingest/*</code> endpoints return
+        <code>202 Accepted</code> with a <code>job_id</code> and <code>status_url</code>; the heavy parse-and-persist work
+        runs on the dedicated <code>enrichment-ingest-worker</code> Celery pool. Poll
+        <code>GET /ingest/jobs/&lt;job_id&gt;</code> for the terminal summary.
+        Pass <code>?sync=true</code> to force the legacy synchronous path and receive a <code>201 Created</code> with the
+        summary inline (use only for small SBOMs in scripts).
+        See <a href="https://github.com/Mimecast/sbom-graph/blob/main/docs/ingest-pipeline.md"><code>docs/ingest-pipeline.md</code></a>
+        for the full contract.
     </div>
 
     <div class="endpoint">
         <span class="method-post">POST</span>
         <span class="path">/ingest/cyclonedx</span>
         <div class="description">Upload and process a CycloneDX SBOM. Parses components, dependencies, and defects into the graph. SBOM provenance (document hash, tool info) is stored and linked to ingested versions.</div>
-        <div class="body-desc">Body: <code>{"sbom": &lt;CycloneDX JSON&gt;, "app_id"?: string, "public_app_id"?: string, "project_url"?: string}</code>. Response includes <code>record_id</code> for provenance tracking.</div>
+        <div class="body-desc">Body: <code>{"sbom": &lt;CycloneDX JSON&gt;, "app_id"?: string, "public_app_id"?: string, "project_url"?: string}</code>.
+            <br>Query: <code>?sync=true</code> (optional) forces synchronous processing.
+            <br>Response <code>202</code> (default): <code>{status, record_id, job_id, status_url, format}</code>.
+            <br>Response <code>201</code> (<code>?sync=true</code>): <code>{status, record_id, format, projects_count, dependencies_count, defects_count}</code>.
+        </div>
     </div>
 
     <div class="endpoint">
         <span class="method-post">POST</span>
         <span class="path">/ingest/spdx</span>
         <div class="description">Upload and process an SPDX 2.3 JSON SBOM. Parses packages, relationships, licenses, source repos, and defects into the graph. SBOM provenance is stored and linked to ingested versions.</div>
-        <div class="body-desc">Body: <code>{"sbom": &lt;SPDX 2.3 JSON&gt;, "app_id"?: string, "public_app_id"?: string, "project_url"?: string}</code>. Response includes <code>record_id</code> and <code>format</code>.</div>
+        <div class="body-desc">Body: <code>{"sbom": &lt;SPDX 2.3 JSON&gt;, "app_id"?: string, "public_app_id"?: string, "project_url"?: string}</code>.
+            <br>Query: <code>?sync=true</code> (optional). Async and sync response shapes match <code>/ingest/cyclonedx</code> with <code>format: "spdx"</code>.
+        </div>
     </div>
 
     <div class="endpoint">
         <span class="method-post">POST</span>
         <span class="path">/ingest/sbom</span>
         <div class="description">Auto-detect SBOM format (CycloneDX or SPDX) from the document structure and process accordingly. Use when format is unknown or tools may produce either format.</div>
-        <div class="body-desc">Body: <code>{"sbom": &lt;CycloneDX or SPDX JSON&gt;, ...}</code>. Format detected via <code>bomFormat</code>/<code>metadata.component</code> (CycloneDX) or <code>spdxVersion</code> (SPDX). Response includes <code>record_id</code> and <code>format</code>.</div>
+        <div class="body-desc">Body: <code>{"sbom": &lt;CycloneDX or SPDX JSON&gt;, ...}</code>. Format detected via <code>bomFormat</code>/<code>metadata.component</code> (CycloneDX) or <code>spdxVersion</code> (SPDX).
+            <br>Query: <code>?sync=true</code> (optional).  Response includes detected <code>format</code>.
+        </div>
     </div>
 
     <div class="endpoint">
         <span class="method-post">POST</span>
         <span class="path">/ingest/vex</span>
         <div class="description">Upload an OpenVEX document. Parses VEX statements and links them to existing vulnerabilities.</div>
-        <div class="body-desc">Body: OpenVEX JSON document</div>
+        <div class="body-desc">Body: OpenVEX JSON document.
+            <br>Query: <code>?sync=true</code> (optional).  Async response: <code>{status, record_id, job_id, status_url}</code> (no <code>format</code> key).
+        </div>
+    </div>
+
+    <div class="endpoint">
+        <span class="method">GET</span>
+        <span class="path">/ingest/jobs/&lt;job_id&gt;</span>
+        <div class="description">Status of an asynchronous ingest job. Poll until <code>terminal: true</code>.
+            <code>state</code> values: <code>PENDING</code>, <code>RECEIVED</code>, <code>STARTED</code>,
+            <code>SUCCESS</code>, <code>FAILURE</code>, <code>REVOKED</code>.
+        </div>
+        <div class="body-desc">Path: <code>job_id</code> must be a UUID (returned from a prior <code>POST /ingest/*</code>).
+            <br>Response (terminal SUCCESS): <code>{job_id, state: "SUCCESS", terminal: true, result: {status, record_id, format, projects_count, dependencies_count, defects_count}}</code>.
+            <br>Response (FAILURE): <code>{job_id, state: "FAILURE", terminal: true, result: {status: "error", error: &lt;sanitised message&gt;}}</code>.
+            <br>Errors: <code>400</code> if not a UUID; <code>503</code> if the ingest pipeline is not installed.
+        </div>
     </div>
 
     <h2>Programmatic API (v1)</h2>

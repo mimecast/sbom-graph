@@ -18,8 +18,10 @@ import ssl
 
 from celery import Celery
 from celery.signals import worker_process_init
+from sbom_graph_model.k8s_service_host import resolve_k8s_service_link_host
 
-_REDIS_HOST = os.environ.get("FALKORDB_HOST", "localhost")
+_redis_host_raw = os.environ.get("FALKORDB_HOST", "localhost") or "localhost"
+_REDIS_HOST = resolve_k8s_service_link_host(_redis_host_raw)
 _REDIS_PORT = os.environ.get("FALKORDB_PORT", "6379")
 _REDIS_PASSWORD = os.environ.get("FALKORDB_PASSWORD", "")
 _BROKER_DB = os.environ.get("CELERY_BROKER_DB", "1")
@@ -69,12 +71,21 @@ if _REDIS_SSL:
 _ENRICHMENT_INTERVAL = int(os.environ.get("ENRICHMENT_INTERVAL", "3600"))
 _TRUST_SCORE_INTERVAL = int(os.environ.get("TRUST_SCORE_INTERVAL", "7200"))
 _TRUST_SCORE_ENABLED = os.environ.get("TRUST_SCORE_ENABLED", "true").lower() == "true"
+_CENTRALITY_REFRESH_INTERVAL = int(
+    os.environ.get("CENTRALITY_REFRESH_INTERVAL", "7200"),
+)
+_CENTRALITY_REFRESH_ENABLED = (
+    os.environ.get("CENTRALITY_REFRESH_ENABLED", "true").lower() == "true"
+)
 
 _ENRICHMENT_SOURCES_RAW = os.environ.get("ENRICHMENT_SOURCES", "")
 try:
     import json as _json
-    _ENRICHMENT_SOURCES: list[str] | None = _json.loads(_ENRICHMENT_SOURCES_RAW) if _ENRICHMENT_SOURCES_RAW else None
-except (ValueError, TypeError):
+
+    _ENRICHMENT_SOURCES: list[str] | None = (
+        _json.loads(_ENRICHMENT_SOURCES_RAW) if _ENRICHMENT_SOURCES_RAW else None
+    )
+except ValueError, TypeError:
     _ENRICHMENT_SOURCES = None
 
 app.conf.beat_schedule = {
@@ -92,7 +103,21 @@ if _TRUST_SCORE_ENABLED:
         "args": (),
     }
 
+if _CENTRALITY_REFRESH_ENABLED:
+    app.conf.beat_schedule["refresh-internal-centrality"] = {
+        "task": "sbom_graph_enrichment.tasks.refresh_internal_centrality",
+        "schedule": _CENTRALITY_REFRESH_INTERVAL,
+        "args": (),
+    }
+
+# ``autodiscover_tasks`` defaults to ``related_name="tasks"`` and so only
+# imports ``sbom_graph_enrichment/tasks.py``.  The asynchronous SBOM ingest
+# pipeline lives in a second module, ``ingest_tasks.py``, which must be
+# discovered separately or Celery will reject incoming ingest jobs with
+# ``Received unregistered task of type 'sbom_graph_enrichment.ingest_tasks.*'``.
+# See ``docs/ingest-pipeline.md`` for the broader rationale.
 app.autodiscover_tasks(["sbom_graph_enrichment"])
+app.autodiscover_tasks(["sbom_graph_enrichment"], related_name="ingest_tasks")
 
 
 # ---------------------------------------------------------------------------

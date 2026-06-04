@@ -13,7 +13,7 @@ import json
 import logging
 import os
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from celery import shared_task
@@ -100,6 +100,19 @@ def enrich_package(
             _persist_depsdev(persistence, finding)
             depsdev_count += 1
 
+    # Stamp the canonical "package was fully enriched" timestamp.  Only
+    # written when every certifier in `sources` succeeded -- a transient
+    # failure raises self.retry above and never reaches this point, so
+    # the freshness filter in `enrich_all_packages` will pick the purl
+    # up again on the next beat tick.
+    persistence.run_query(
+        query=("MATCH (v:Version {package_url: $purl}) SET v.last_enriched_at = $ts"),
+        params={
+            "purl": purl,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
     if _TRUST_SCORE_ENABLED and all_findings:
         compute_trust_score.delay(purl, _serialise_findings(all_findings))
 
@@ -115,27 +128,67 @@ def enrich_package(
 
 _DISPATCH_BATCH_SIZE = 500
 
+# Use 90% of the configured interval as the freshness cutoff so a beat tick
+# that runs slightly slow does not lag the previous one and accidentally
+# re-enqueue work that was just completed.
+_ENRICHMENT_INTERVAL_SECONDS = int(os.environ.get("ENRICHMENT_INTERVAL", "3600"))
+_FRESHNESS_CUTOFF_SECONDS = max(int(_ENRICHMENT_INTERVAL_SECONDS * 0.9), 1)
+
 
 @shared_task
-def enrich_all_packages(sources: list[str] | None = None) -> dict[str, int]:
+def enrich_all_packages(
+    sources: list[str] | None = None,
+    force: bool = False,
+) -> dict[str, int]:
     """Fan-out enrichment for every package in the graph.
 
-    Queries the graph for all distinct purls and dispatches
-    :func:`enrich_package` tasks in batches to avoid overwhelming
-    the broker with very large SBOM graphs.
+    Only dispatches :func:`enrich_package` tasks for purls whose
+    ``last_enriched_at`` is older than ``_FRESHNESS_CUTOFF_SECONDS``
+    (or has never been enriched).  In steady state this means each
+    beat tick dispatches a small number of tasks (newly-ingested
+    packages, or packages whose certifier set changed) rather than
+    the entire graph -- without this filter a single missed beat
+    tick caused the queue to grow by tens of thousands of tasks
+    that could not be drained fast enough, eventually OOM-killing
+    FalkorDB.
+
+    Args:
+        sources: Optional list of certifier names to run for each
+            dispatched task.  ``None`` (the default) runs every
+            registered certifier.
+        force: When ``True``, bypass the freshness filter and
+            re-enrich every package in the graph.  Intended for
+            manual / on-demand use (e.g. after a schema change or
+            certifier addition); never set this from the periodic
+            beat schedule.
     """
     persistence = create_persistence()
-    result = persistence.run_query(
-        query=(
+
+    if force:
+        query = (
             "MATCH (v:Version) WHERE v.package_url IS NOT NULL "
             "RETURN DISTINCT v.package_url AS purl"
         )
-    )
+        params: dict[str, Any] = {}
+    else:
+        cutoff_iso = (
+            datetime.now(timezone.utc) - timedelta(seconds=_FRESHNESS_CUTOFF_SECONDS)
+        ).isoformat()
+        query = (
+            "MATCH (v:Version) "
+            "WHERE v.package_url IS NOT NULL "
+            "AND (v.last_enriched_at IS NULL OR v.last_enriched_at < $cutoff) "
+            "RETURN DISTINCT v.package_url AS purl"
+        )
+        params = {"cutoff": cutoff_iso}
+
+    result = persistence.run_query(query=query, params=params)
     purls: list[str] = [row["purl"] for row in result.result_set if row.get("purl")]
 
     logger.info(
-        "Dispatching enrichment for %d packages in batches of %d",
+        "Dispatching enrichment for %d packages (force=%s) in batches of %d",
         len(purls),
+        force,
         _DISPATCH_BATCH_SIZE,
     )
     for i in range(0, len(purls), _DISPATCH_BATCH_SIZE):
@@ -144,7 +197,7 @@ def enrich_all_packages(sources: list[str] | None = None) -> dict[str, int]:
             enrich_package.delay(purl, sources)
         logger.debug("Dispatched batch %d-%d of %d", i, i + len(batch), len(purls))
 
-    return {"dispatched": len(purls)}
+    return {"dispatched": len(purls), "force": force}
 
 
 def _persist_vulnerability(persistence: Any, finding: Finding) -> None:
@@ -304,8 +357,7 @@ def _persist_depsdev(persistence: Any, finding: Finding) -> None:
     if oss_fuzz:
         persistence.run_query(
             query=(
-                "MATCH (v:Version {package_url: $purl}) "
-                "SET v.oss_fuzz = $oss_fuzz_json"
+                "MATCH (v:Version {package_url: $purl}) SET v.oss_fuzz = $oss_fuzz_json"
             ),
             params={
                 "purl": purl,
@@ -455,25 +507,23 @@ def propagate_effective_scores() -> dict[str, Any]:
         updated += 1
 
         if eff_score < alert_threshold:
-            alerts.append({
-                "purl": purl,
-                "effective_score": eff_score,
-                "direct_score": direct_scores.get(purl, 5.0),
-                "dep_count": dep_counts.get(purl, 0),
-            })
+            alerts.append(
+                {
+                    "purl": purl,
+                    "effective_score": eff_score,
+                    "direct_score": direct_scores.get(purl, 5.0),
+                    "dep_count": dep_counts.get(purl, 0),
+                }
+            )
 
     if alerts:
         alerts.sort(key=lambda a: a["effective_score"])
         top_alerts = alerts[:20]
         logger.warning(
-            "Trust score alert: %d packages below threshold %.1f. "
-            "Top concerns: %s",
+            "Trust score alert: %d packages below threshold %.1f. Top concerns: %s",
             len(alerts),
             alert_threshold,
-            ", ".join(
-                f"{a['purl']} ({a['effective_score']:.1f})"
-                for a in top_alerts
-            ),
+            ", ".join(f"{a['purl']} ({a['effective_score']:.1f})" for a in top_alerts),
         )
 
     logger.info("Propagated effective scores for %d packages", updated)
@@ -616,7 +666,7 @@ def _deserialise_findings(data_list: list[dict[str, Any]]) -> list[Finding]:
     for item in data_list:
         try:
             kind = FindingKind(item["kind"])
-        except (KeyError, ValueError):
+        except KeyError, ValueError:
             continue
         findings.append(
             Finding(
@@ -640,3 +690,21 @@ def _serialise_findings(findings: list[Finding]) -> list[dict[str, Any]]:
         }
         for f in findings
     ]
+
+
+@shared_task
+def refresh_internal_centrality() -> dict[str, Any]:
+    """Recompute and store ``inDegree`` / ``outDegree`` on internal Version nodes.
+
+    Aligns with the internal-centrality report: only nodes carrying the
+    configured internal secondary label (``FALKORDB_INTERNAL_LABEL``, default
+    ``INTERNAL``) are updated. Scheduled by Celery beat (see ``celery_app``).
+    """
+    internal_label = os.environ.get("FALKORDB_INTERNAL_LABEL", "INTERNAL") or "INTERNAL"
+    persistence = get_persistence()
+    persistence.refresh_internal_degree_centrality(internal_label=internal_label)
+    logger.info(
+        "Refreshed internal degree centrality for label %s",
+        internal_label,
+    )
+    return {"internal_label": internal_label, "status": "ok"}

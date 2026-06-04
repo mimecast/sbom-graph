@@ -40,6 +40,14 @@
             </select>
         </div>
 
+        <div class="vex-filter-container">
+            <label for="defectIdMatchInput" class="toggle-label">Defect ID:</label>
+            <input type="text" id="defectIdMatchInput" class="vex-filter-select" style="min-width: 220px;"
+                   placeholder="Prefix or glob (e.g. CVE-2024, GHSA-*-abc)"
+                   value="{{ defect_id_match|default('')|e }}">
+            <button type="button" id="defectIdMatchApply" class="download-link" style="margin-left: 8px;">Apply</button>
+        </div>
+
         <div class="download-links">
             {% if excel_url %}
             <a href="{{ excel_url }}" class="download-link" id="excelLink">Download as Excel</a>
@@ -126,6 +134,15 @@
     {% endif %}
 
     <script>
+        function applyDefectIdMatchToUrl(currentUrl) {
+            const raw = document.getElementById('defectIdMatchInput').value.trim();
+            if (raw) {
+                currentUrl.searchParams.set('defect_id_match', raw);
+            } else {
+                currentUrl.searchParams.delete('defect_id_match');
+            }
+        }
+
         document.getElementById('internalOnlyToggle').addEventListener('change', function() {
             const isChecked = this.checked;
             const currentUrl = new URL(window.location.href);
@@ -136,6 +153,7 @@
                 currentUrl.searchParams.delete('internal_only');
             }
 
+            applyDefectIdMatchToUrl(currentUrl);
             window.location.href = currentUrl.toString();
         });
 
@@ -149,6 +167,13 @@
                 currentUrl.searchParams.set('vex_filter', value);
             }
 
+            applyDefectIdMatchToUrl(currentUrl);
+            window.location.href = currentUrl.toString();
+        });
+
+        document.getElementById('defectIdMatchApply').addEventListener('click', function() {
+            const currentUrl = new URL(window.location.href);
+            applyDefectIdMatchToUrl(currentUrl);
             window.location.href = currentUrl.toString();
         });
     </script>

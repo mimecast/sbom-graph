@@ -177,6 +177,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from falkordb import FalkorDB
+from sbom_graph_model.k8s_service_host import resolve_k8s_service_link_host
 
 
 @dataclass
@@ -2193,7 +2194,8 @@ def create_graph(
 def main():
     """Main entry point."""
     try:
-        host = os.environ.get("FALKORDB_HOST", "localhost")
+        _host_raw = os.environ.get("FALKORDB_HOST", "localhost") or "localhost"
+        host = resolve_k8s_service_link_host(_host_raw)
         port = int(os.environ.get("FALKORDB_PORT", "6379"))
         password = os.environ.get("FALKORDB_PASSWORD")
         graph_name = os.environ.get("FALKORDB_GRAPH_NAME", "acme_corp")

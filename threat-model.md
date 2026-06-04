@@ -19,44 +19,28 @@ The most critical system-level risks are: the **unauthenticated write path** (so
 
 ## System Architecture
 
-```
-                    +-----------------+
-                    | SonaType IQ     |
-                    | Server          |
-                    +--------+--------+
-                             |
-                  Webhook POST (untrusted)
-                             |
-+----------------------------v-------------------------------+
-| Kubernetes Cluster                                         |
-|                                                            |
-|  +-------------------+         +------------------------+  |
-|  | Ingress / LB      |         | Release Listener (SLC) |  |
-|  | (TLS termination) +---------+ (Flask, port 8000)     |  |
-|  +--------+----------+         | - No auth on /webhook  |  |
-|           |                    | - SonaType creds       |  |
-|           |                    +----------+-------------+  |
-|           |                               |                |
-|  +--------v----------+         +---------v--------------+  |
-|  | SBOM Graph API |         | FalkorDB               |  |
-|  | (Flask, port 8000) |-------->| (Redis protocol, 6379) |  |
-|  | - JWT/LDAP auth   |         | - Optional TLS         |  |
-|  | - Session mgmt    |         | - Optional password    |  |
-|  | - Read graph      |         | - PVC persistence      |  |
-|  | - Ingest SBOMs    |         |                        |  |
-|  +-------------------+         +-------------------------+  |
-|                                         ^                  |
-|  +-------------------+                  |                  |
-|  | Init Data Job     +------------------+                  |
-|  | (Helm hook)       |                                     |
-|  +-------------------+                                     |
-+------------------------------------------------------------+
-       ^
-       | HTTPS
-+------+------+
-| Browser /   |
-| API Client  |
-+--------------+
+```mermaid
+flowchart TB
+  browser["Browser / API Client"]
+  sonatype["SonaType IQ Server"]
+
+  subgraph cluster["Kubernetes Cluster"]
+    ingress["Ingress / LB (TLS termination)"]
+    listener["Release Listener (SLC) - Flask :8000 (no auth on /webhook)"]
+    api["SBOM Graph API - Flask :8000 (JWT/LDAP auth)"]
+    falkordb["FalkorDB - Redis protocol :6379 (optional TLS/password)"]
+    initjob["Init Data Job (Helm hook)"]
+  end
+
+  browser --> ingress
+  sonatype --> ingress
+
+  ingress --> listener
+  ingress --> api
+
+  listener --> falkordb
+  api --> falkordb
+  initjob --> falkordb
 ```
 
 ## Assets

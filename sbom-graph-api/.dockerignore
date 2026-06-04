@@ -15,7 +15,7 @@ env
 .eggs
 *.egg-info
 *.egg
-dist
+# dist
 build
 
 # IDE

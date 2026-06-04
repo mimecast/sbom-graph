@@ -1,0 +1,264 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sbom-graph.sbomGraphApi.fullname" . }}
+  labels:
+    {{- include "sbom-graph.sbomGraphApi.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.sbomGraphApi.replicas }}
+  selector:
+    matchLabels:
+      {{- include "sbom-graph.sbomGraphApi.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sbom-graph.sbomGraphApi.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- $sd := .Values.sbomGraphApi.secrets.delivery | default "env" }}
+      {{- $sm := .Values.sbomGraphApi.secrets.mountPath | default "/etc/sbom-graph-api/secrets" }}
+      {{- $ff := .Values.sbomGraphApi.secrets.fileNames.flaskSecretKey | default "flask-secret-key" }}
+      {{- $jf := .Values.sbomGraphApi.secrets.fileNames.jwtSecretKey | default "jwt-secret-key" }}
+      {{- $tf := .Values.sbomGraphApi.secrets.fileNames.tokenDbEncryptionKey | default "token-db-encryption-key" }}
+      {{- if or .Values.sbomGraphApi.serviceAccount.create .Values.sbomGraphApi.serviceAccount.name }}
+      serviceAccountName: {{ include "sbom-graph.sbomGraphApi.serviceAccountName" . }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      # Disable kubelet service-link env vars (e.g. SBOM_GRAPH_FALKORDB_SERVICE_HOST).
+      # Required when TLS to FalkorDB is enabled: the Python redis client validates the
+      # TLS cert against the host in the connection URL, and the cert SAN is the cluster
+      # DNS name -- not the ClusterIP that service links would inject.  The wait-for-
+      # falkordb init container has its own DNS fallback (see _helpers.tpl) so it still
+      # works when service links are off.
+      enableServiceLinks: false
+      initContainers:
+        {{- include "sbom-graph.falkordb.waitContainer" (dict "ctx" . "tlsVolume" "tls") | nindent 8 }}
+      containers:
+        - name: sbom-graph-api
+          {{- $auth := .Values.sbomGraphApi.auth | default dict }}
+          {{- $ldap := $auth.ldap | default dict }}
+          {{- $ldapOn := ternary ($ldap.enabled | default false) (.Values.sbomGraphApi.ldapEnabled | default false) (hasKey $ldap "enabled") }}
+          image: "{{ .Values.sbomGraphApi.image.repository }}:{{ .Values.sbomGraphApi.image.tag }}"
+          imagePullPolicy: {{ .Values.sbomGraphApi.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ ternary 8443 .Values.sbomGraphApi.service.targetPort .Values.falkordb.tls.enabled }}
+              protocol: TCP
+          env:
+            - name: FALKORDB_HOST
+              value: {{ include "sbom-graph.falkordb.connectHost" . | quote }}
+            - name: FALKORDB_PORT
+              value: "6379"
+            - name: FALKORDB_GRAPH_NAME
+              value: {{ .Values.graphName | quote }}
+            - name: FALKORDB_SOCKET_TIMEOUT
+              value: "60.0"
+            - name: FALKORDB_CONNECT_TIMEOUT
+              value: "30.0"
+            - name: FALKORDB_INTERNAL_LABEL
+              value: {{ .Values.sbomGraphApi.falkordbInternalLabel | default "INTERNAL" | quote }}
+            {{- $internalPrefixes := include "sbom-graph.internalPrefixesValue" . | trim }}
+            {{- if ne $internalPrefixes "" }}
+            - name: INTERNAL_PREFIXES
+              value: {{ $internalPrefixes | quote }}
+            {{- end }}
+            - name: FALKORDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sbom-graph.falkordb.secretName" . }}
+                  key: password
+            {{- if eq $sd "env" }}
+            - name: FLASK_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sbom-graph.sbomGraphApi.secretName" . }}
+                  key: flask-secret-key
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sbom-graph.sbomGraphApi.secretName" . }}
+                  key: jwt-secret-key
+            - name: TOKEN_DB_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sbom-graph.sbomGraphApi.secretName" . }}
+                  key: token-db-encryption-key
+            {{- else }}
+            - name: FLASK_SECRET_KEY_FILE
+              value: {{ printf "%s/%s" $sm $ff | quote }}
+            - name: JWT_SECRET_KEY_FILE
+              value: {{ printf "%s/%s" $sm $jf | quote }}
+            - name: TOKEN_DB_ENCRYPTION_KEY_FILE
+              value: {{ printf "%s/%s" $sm $tf | quote }}
+            {{- end }}
+            - name: TOKEN_DB_PATH
+              value: /data/tokens.db
+            - name: GUNICORN_WORKERS
+              value: {{ .Values.sbomGraphApi.gunicornWorkers | default "2" | quote }}
+            - name: GUNICORN_THREADS
+              value: {{ .Values.sbomGraphApi.gunicornThreads | default "4" | quote }}
+            - name: AUTH_ENABLED
+              value: {{ .Values.sbomGraphApi.authEnabled | default true | quote }}
+            {{- if .Values.sbomGraphApi.authEnabled }}
+            - name: JWT_ACCESS_TOKEN_EXPIRES_HOURS
+              value: {{ ($auth.jwt | default dict).accessTokenExpiresHours | default "1" | quote }}
+            - name: JWT_REFRESH_TOKEN_EXPIRES_DAYS
+              value: {{ ($auth.jwt | default dict).refreshTokenExpiresDays | default "30" | quote }}
+            {{- end }}
+            - name: LDAP_ENABLED
+              value: {{ $ldapOn | quote }}
+            {{- if $ldapOn }}
+            - name: LDAP_SERVER
+              value: {{ $ldap.server | default "" | quote }}
+            - name: LDAP_PORT
+              value: {{ $ldap.port | default "636" | quote }}
+            - name: LDAP_USE_SSL
+              value: {{ $ldap.useSsl | default "true" | quote }}
+            - name: LDAP_BASE_DN
+              value: {{ $ldap.baseDn | default "" | quote }}
+            - name: LDAP_USER_DN_TEMPLATE
+              value: {{ $ldap.userDnTemplate | default "uid={username},ou=users,dc=example,dc=com" | quote }}
+            - name: LDAP_SEARCH_FILTER
+              value: {{ $ldap.searchFilter | default "(uid={username})" | quote }}
+            {{- if $ldap.groupSearchBase }}
+            - name: LDAP_GROUP_SEARCH_BASE
+              value: {{ $ldap.groupSearchBase | quote }}
+            {{- end }}
+            {{- if $ldap.adminGroups }}
+            - name: LDAP_ADMIN_GROUPS
+              value: {{ $ldap.adminGroups | quote }}
+            {{- end }}
+            {{- if $ldap.userGroups }}
+            - name: LDAP_USER_GROUPS
+              value: {{ $ldap.userGroups | quote }}
+            {{- end }}
+            {{- if $ldap.allowedGroups }}
+            - name: LDAP_ALLOWED_GROUPS
+              value: {{ $ldap.allowedGroups | quote }}
+            {{- end }}
+            {{- if $ldap.requiredGroup }}
+            - name: LDAP_REQUIRED_GROUP
+              value: {{ $ldap.requiredGroup | quote }}
+            {{- end }}
+            - name: LDAP_REQUIRE_GROUP_MEMBERSHIP
+              value: {{ $ldap.requireGroupMembership | default false | quote }}
+            {{- end }}
+            - name: TLS_ENABLED
+              value: {{ .Values.falkordb.tls.enabled | quote }}
+            {{- if .Values.falkordb.tls.enabled }}
+            - name: FALKORDB_SSL
+              value: "true"
+            - name: FALKORDB_CA_FILE
+              value: /tls/ca.crt
+            - name: FALKORDB_CLIENT_CERT
+              value: /tls/client.crt
+            - name: FALKORDB_CLIENT_KEY
+              value: /tls/client.key
+            - name: TLS_CERT_FILE
+              value: /tls/tls.crt
+            - name: TLS_KEY_FILE
+              value: /tls/tls.key
+            {{- end }}
+          # Probe tuning rationale (see docs/sbom-graph-api-troubleshooting.md §9):
+          #   /health is a static jsonify, but its response depends on a free
+          #   gthread thread.  During concurrent SBOM ingest (POST /ingest/*),
+          #   all 2 workers x 2 threads can be busy writing nodes/edges to
+          #   FalkorDB over mTLS for many seconds at a stretch.  With
+          #   timeoutSeconds=10 and failureThreshold=3 (default), three
+          #   missed probes in 90s would have the kubelet SIGKILL a fully
+          #   healthy pod.  Widen the windows so a burst of ingest cannot
+          #   masquerade as a liveness failure.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+              {{- if .Values.falkordb.tls.enabled }}
+              scheme: HTTPS
+              {{- end }}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 20
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+              {{- if .Values.falkordb.tls.enabled }}
+              scheme: HTTPS
+              {{- end }}
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 30
+            failureThreshold: 5
+          resources:
+            {{- toYaml .Values.sbomGraphApi.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if eq $sd "kubernetesVolume" }}
+            - name: application-secrets
+              mountPath: {{ $sm | quote }}
+              readOnly: true
+            {{- end }}
+            {{- if eq $sd "awsSecretsManagerCsi" }}
+            - name: {{ .Values.sbomGraphApi.secrets.awsSecretsManagerCsi.volumeName }}
+              mountPath: {{ $sm | quote }}
+              readOnly: true
+            {{- end }}
+            - name: data
+              mountPath: /data
+            {{- if .Values.falkordb.tls.enabled }}
+            - name: tls
+              mountPath: /tls
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if eq $sd "kubernetesVolume" }}
+        - name: application-secrets
+          secret:
+            secretName: {{ include "sbom-graph.sbomGraphApi.applicationSecretName" . }}
+        {{- end }}
+        {{- if eq $sd "awsSecretsManagerCsi" }}
+        - name: {{ .Values.sbomGraphApi.secrets.awsSecretsManagerCsi.volumeName }}
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ include "sbom-graph.sbomGraphApi.awsSecretProviderClassName" . }}
+        {{- end }}
+        - name: data
+          {{- if .Values.sbomGraphApi.tokenDb.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "sbom-graph.sbomGraphApi.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.falkordb.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ include "sbom-graph.tls.secretName" . }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+              - key: client.crt
+                path: client.crt
+              - key: client.key
+                path: client.key
+        {{- end }}

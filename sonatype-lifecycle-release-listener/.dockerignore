@@ -14,7 +14,7 @@ ENV/
 env/
 *.egg-info/
 .eggs/
-dist/
+# dist/
 build/
 
 # IDE

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from sbom_graph_enrichment.certifiers.base import Finding, FindingKind
@@ -15,6 +16,7 @@ from sbom_graph_enrichment.tasks import (
     enrich_all_packages,
     compute_trust_score,
     propagate_effective_scores,
+    refresh_internal_centrality,
 )
 
 
@@ -431,9 +433,7 @@ class TestEnrichPackage:
         ]
         mock_get_pers.return_value = mock_pers
 
-        with patch(
-            "sbom_graph_enrichment.tasks.OSVCertifier"
-        ) as mock_osv_cls:
+        with patch("sbom_graph_enrichment.tasks.OSVCertifier") as mock_osv_cls:
             mock_osv = MagicMock()
             mock_osv.enrich.return_value = [
                 Finding(
@@ -445,9 +445,7 @@ class TestEnrichPackage:
             ]
             mock_osv_cls.return_value = mock_osv
 
-            with patch(
-                "sbom_graph_enrichment.tasks.LicenseCertifier"
-            ) as mock_lic_cls:
+            with patch("sbom_graph_enrichment.tasks.LicenseCertifier") as mock_lic_cls:
                 mock_lic = MagicMock()
                 mock_lic.enrich.return_value = [
                     Finding(
@@ -584,7 +582,10 @@ class TestEnrichPackage:
                 kind=FindingKind.SOURCE_REPO,
                 source="depsdev",
                 package_url="pkg:npm/foo@1.0",
-                data={"repo_url": "https://github.com/owner/repo", "repo_host": "github.com"},
+                data={
+                    "repo_url": "https://github.com/owner/repo",
+                    "repo_host": "github.com",
+                },
             ),
         ]
 
@@ -716,14 +717,98 @@ class TestEnrichPackage:
         assert len(findings_data) == 1
         assert findings_data[0]["kind"] == "license"
 
+    @patch("sbom_graph_enrichment.tasks.get_http_client")
+    @patch("sbom_graph_enrichment.tasks.get_persistence")
+    @patch("sbom_graph_enrichment.tasks._TRUST_SCORE_ENABLED", False)
+    def test_enrich_package_stamps_last_enriched_at(
+        self,
+        mock_get_pers: MagicMock,
+        mock_get_http: MagicMock,
+    ) -> None:
+        """A successful run must write last_enriched_at on the Version node.
+
+        This timestamp is what `enrich_all_packages` uses to skip
+        recently-enriched packages, so its absence would cause the
+        beat fan-out to re-queue the entire graph every tick.
+        """
+        mock_get_http.return_value = MagicMock()
+        mock_pers = MagicMock()
+        mock_get_pers.return_value = mock_pers
+
+        mock_cert = MagicMock()
+        mock_cert.enrich.return_value = []  # no findings is still a success
+
+        with patch.dict(
+            "sbom_graph_enrichment.tasks._CERTIFIERS",
+            {"osv": MagicMock(return_value=mock_cert)},
+            clear=True,
+        ):
+            enrich_package.apply(
+                args=["pkg:maven/com.example/x@1.0"],
+                kwargs={"sources": ["osv"]},
+            ).get()
+
+        stamp_calls = [
+            call
+            for call in mock_pers.run_query.call_args_list
+            if "last_enriched_at" in call.kwargs.get("query", "")
+        ]
+        assert len(stamp_calls) == 1
+        params = stamp_calls[0].kwargs["params"]
+        assert params["purl"] == "pkg:maven/com.example/x@1.0"
+        ts = datetime.fromisoformat(params["ts"])
+        assert ts <= datetime.now(timezone.utc)
+
+    @patch("sbom_graph_enrichment.tasks.get_http_client")
+    @patch("sbom_graph_enrichment.tasks.get_persistence")
+    @patch("sbom_graph_enrichment.tasks._TRUST_SCORE_ENABLED", False)
+    def test_enrich_package_does_not_stamp_on_retry(
+        self,
+        mock_get_pers: MagicMock,
+        mock_get_http: MagicMock,
+    ) -> None:
+        """When a certifier raises, self.retry fires and the stamp must be skipped.
+
+        Otherwise a transient failure would mark the package fresh and
+        the next beat tick would not pick it up to retry the failed
+        certifier.
+        """
+        mock_get_http.return_value = MagicMock()
+        mock_pers = MagicMock()
+        mock_get_pers.return_value = mock_pers
+
+        mock_cert = MagicMock()
+        mock_cert.enrich.side_effect = RuntimeError("network down")
+
+        with patch.dict(
+            "sbom_graph_enrichment.tasks._CERTIFIERS",
+            {"osv": MagicMock(return_value=mock_cert)},
+            clear=True,
+        ):
+            # The task swallows the retry into a Retry exception under
+            # eager mode -- we only care that the timestamp was not
+            # written, not how the failure surfaces to the caller.
+            try:
+                enrich_package.apply(
+                    args=["pkg:maven/com.example/x@1.0"],
+                    kwargs={"sources": ["osv"]},
+                ).get()
+            except Exception:  # noqa: BLE001 - Celery Retry or RuntimeError
+                pass
+
+        stamp_calls = [
+            call
+            for call in mock_pers.run_query.call_args_list
+            if "last_enriched_at" in call.kwargs.get("query", "")
+        ]
+        assert stamp_calls == []
+
 
 class TestEnrichAllPackages:
     """Tests for the enrich_all_packages task."""
 
     @patch("sbom_graph_enrichment.tasks.enrich_package")
-    def test_enrich_all_dispatches_batches(
-        self, mock_enrich: MagicMock
-    ) -> None:
+    def test_enrich_all_dispatches_batches(self, mock_enrich: MagicMock) -> None:
         mock_pers = MagicMock()
         mock_pers.run_query.return_value = MagicMock(
             result_set=[
@@ -741,15 +826,62 @@ class TestEnrichAllPackages:
         assert result["dispatched"] == 2
         assert mock_enrich.delay.call_count == 2
 
+    @patch("sbom_graph_enrichment.tasks.enrich_package")
+    def test_enrich_all_filters_recently_enriched_by_default(
+        self, mock_enrich: MagicMock
+    ) -> None:
+        """Default beat invocation must query with last_enriched_at cutoff."""
+        mock_pers = MagicMock()
+        mock_pers.run_query.return_value = MagicMock(
+            result_set=[{"purl": "pkg:npm/stale@1"}],
+        )
+
+        with patch(
+            "sbom_graph_enrichment.tasks.create_persistence",
+            return_value=mock_pers,
+        ):
+            result = enrich_all_packages.apply(args=[]).get()
+
+        call = mock_pers.run_query.call_args
+        assert "last_enriched_at" in call.kwargs["query"]
+        assert "cutoff" in call.kwargs["params"]
+        # Cutoff should be a parseable ISO-8601 timestamp in the past.
+        cutoff = datetime.fromisoformat(call.kwargs["params"]["cutoff"])
+        assert cutoff < datetime.now(timezone.utc)
+
+        assert result == {"dispatched": 1, "force": False}
+        mock_enrich.delay.assert_called_once_with("pkg:npm/stale@1", None)
+
+    @patch("sbom_graph_enrichment.tasks.enrich_package")
+    def test_enrich_all_force_bypasses_filter(self, mock_enrich: MagicMock) -> None:
+        """force=True must run the unfiltered query and dispatch all purls."""
+        mock_pers = MagicMock()
+        mock_pers.run_query.return_value = MagicMock(
+            result_set=[
+                {"purl": "pkg:npm/a@1"},
+                {"purl": "pkg:npm/b@2"},
+            ],
+        )
+
+        with patch(
+            "sbom_graph_enrichment.tasks.create_persistence",
+            return_value=mock_pers,
+        ):
+            result = enrich_all_packages.apply(kwargs={"force": True}).get()
+
+        call = mock_pers.run_query.call_args
+        assert "last_enriched_at" not in call.kwargs["query"]
+        assert call.kwargs["params"] == {}
+        assert result == {"dispatched": 2, "force": True}
+        assert mock_enrich.delay.call_count == 2
+
 
 class TestComputeTrustScore:
     """Tests for the compute_trust_score task."""
 
     @patch("sbom_graph_enrichment.tasks.get_persistence")
     @patch("sbom_graph_enrichment.tasks._TRUST_SCORE_ENABLED", True)
-    def test_compute_trust_score_persists(
-        self, mock_get_pers: MagicMock
-    ) -> None:
+    def test_compute_trust_score_persists(self, mock_get_pers: MagicMock) -> None:
         mock_pers = MagicMock()
         mock_get_pers.return_value = mock_pers
 
@@ -789,9 +921,7 @@ class TestPropagateEffectiveScores:
 
     @patch("sbom_graph_enrichment.tasks.create_persistence")
     @patch("sbom_graph_enrichment.tasks._TRUST_SCORE_ENABLED", True)
-    def test_propagate_updates_scores(
-        self, mock_create_pers: MagicMock
-    ) -> None:
+    def test_propagate_updates_scores(self, mock_create_pers: MagicMock) -> None:
         mock_pers = MagicMock()
         mock_pers.get_all_trust_scores.return_value = [
             {"purl": "pkg:npm/leaf@1", "direct_score": 4.0},
@@ -815,9 +945,7 @@ class TestPropagateEffectiveScores:
     @patch("sbom_graph_enrichment.tasks.create_persistence")
     @patch("sbom_graph_enrichment.tasks._TRUST_SCORE_ENABLED", True)
     @patch.dict("os.environ", {"TRUST_SCORE_ALERT_THRESHOLD": "5.0"}, clear=False)
-    def test_propagate_with_low_score_alerts(
-        self, mock_create_pers: MagicMock
-    ) -> None:
+    def test_propagate_with_low_score_alerts(self, mock_create_pers: MagicMock) -> None:
         mock_pers = MagicMock()
         mock_pers.get_all_trust_scores.return_value = [
             {"purl": "pkg:npm/low@1", "direct_score": 2.0},
@@ -826,9 +954,7 @@ class TestPropagateEffectiveScores:
         mock_pers.get_dependency_graph_for_propagation.return_value = []
         mock_create_pers.return_value = mock_pers
 
-        with patch(
-            "sbom_graph_enrichment.tasks.logger"
-        ) as mock_logger:
+        with patch("sbom_graph_enrichment.tasks.logger") as mock_logger:
             result = propagate_effective_scores.apply(args=[]).get()
 
         assert result["updated"] == 2
@@ -836,3 +962,28 @@ class TestPropagateEffectiveScores:
         mock_logger.warning.assert_called_once()
         call_args = mock_logger.warning.call_args[0]
         assert "below threshold" in call_args[0]
+
+
+class TestRefreshInternalCentrality:
+    """Tests for scheduled internal degree centrality refresh."""
+
+    @patch("sbom_graph_enrichment.tasks.get_persistence")
+    def test_calls_persistence_with_internal_label_from_env(
+        self,
+        mock_get_persistence: MagicMock,
+    ) -> None:
+        mock_pers = MagicMock()
+        mock_get_persistence.return_value = mock_pers
+
+        with patch.dict(
+            "os.environ",
+            {"FALKORDB_INTERNAL_LABEL": "INTERNAL"},
+            clear=False,
+        ):
+            result = refresh_internal_centrality.apply(args=[]).get()
+
+        assert result["status"] == "ok"
+        assert result["internal_label"] == "INTERNAL"
+        mock_pers.refresh_internal_degree_centrality.assert_called_once_with(
+            internal_label="INTERNAL",
+        )

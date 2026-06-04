@@ -197,7 +197,7 @@ Enrichment tasks can be triggered on-demand via the API (`POST /api/v1/enrich/vu
 Build images (only those that changed), update Helm tags, and deploy:
 
 ```bash
-./release.sh            # Build changed images, update helm/sbom-graph/values.yaml
+./release.sh            # Build changed images, update helm/charts/sbom-graph/values.yaml
 ./deploy.sh             # helm upgrade --install, preserving volumes and secrets
 ```
 
@@ -229,7 +229,7 @@ Run `./release.sh --help` or `./deploy.sh --help` for the full list of options.
 Deploy all components directly with the umbrella Helm chart:
 
 ```bash
-helm install sbom-graph ./helm/sbom-graph
+helm install sbom-graph ./helm/charts/sbom-graph
 ```
 
 ## Docker Builds
@@ -249,9 +249,9 @@ values automatically:
 
 ### Using `build-images.sh` directly
 
-All Docker images are built from the **repository root** because Dockerfiles
-reference sibling project directories. The low-level build script handles
-build ordering and dependencies.
+Run the script from the **repository root** (e.g. `./build-images.sh`). Each
+image is built with **that subproject folder as the Docker context** (same as
+CI), not the monorepo root. The script handles build ordering and dependencies.
 
 #### Build all images
 
@@ -266,11 +266,17 @@ This will:
 3. Build the `sonatype-lifecycle-release-listener` Docker image
 4. Build the `sbom-graph-enrichment` Docker image
 
+Unless you pass `--adv-tag`, `--rl-tag`, or `--enr-tag`, each image is tagged as
+`<name>:<safe-version>` and `<name>:latest`, where **safe-version** is
+`[project].version` from that subproject’s `pyproject.toml` with `+` replaced by
+`-` (OCI-safe). The install `--build-arg PYTHON_PACKAGE_VERSION` remains the
+raw PEP 440 version string.
+
 #### Build individual targets
 
 ```bash
-./build-images.sh model                                  # Wheel only
-./build-images.sh sbom-graph-api                         # sbom-graph-api image only
+./build-images.sh model                # Wheel only
+./build-images.sh sbom-graph-api    # sbom-graph-api image only
 ./build-images.sh sonatype-lifecycle-release-listener     # release listener image only
 ./build-images.sh sbom-graph-enrichment                  # enrichment image only
 ```

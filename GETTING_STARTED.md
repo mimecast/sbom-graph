@@ -83,8 +83,9 @@ cd sbom-graph
 
 ### 2. Build Docker Images
 
-All images must be built from the **repository root** because Dockerfiles
-reference sibling project directories.
+Run `build-images.sh` from the **repository root**. The script uses each
+**subproject directory** as the Docker build context for that image (matching
+CI).
 
 ```bash
 ./build-images.sh
@@ -93,9 +94,9 @@ reference sibling project directories.
 This builds four things in order:
 
 1. The `sbom-graph-model` Python wheel
-2. The `sbom-graph-api` Docker image (tagged `sbom-graph-api:latest`)
-3. The `sonatype-lifecycle-release-listener` Docker image (tagged `sonatype-lifecycle-release-listener:latest`)
-4. The `sbom-graph-enrichment` Docker image (tagged `sbom-graph-enrichment:latest`)
+2. The `sbom-graph-api` Docker image (default tags: `sbom-graph-api:<safe-version>` and `:latest`)
+3. The `sonatype-lifecycle-release-listener` Docker image (same pattern)
+4. The `sbom-graph-enrichment` Docker image (same pattern)
 
 #### Custom Tags (for pushing to a registry)
 
@@ -181,7 +182,7 @@ synchronisation in a single command. It reads versions from each sub-project's
 ./release.sh
 ```
 
-Builds only changed images and updates `helm/sbom-graph/values.yaml` with
+Builds only changed images and updates `helm/charts/sbom-graph/values.yaml` with
 the correct tags. Locally built images are available to Kubernetes
 automatically on Docker Desktop and OrbStack.
 
@@ -257,7 +258,7 @@ If you want encrypted connections without requiring client certificates
 (e.g. for simpler debugging or when connecting external tools):
 
 ```bash
-helm install sbom-graph ./helm/sbom-graph \
+helm install sbom-graph ./helm/charts/sbom-graph \
   --set falkordb.tls.requireClientAuth=false
 ```
 
@@ -273,6 +274,7 @@ server certificate must include the Kubernetes service DNS name as a SAN.
 #### Generate with OpenSSL
 
 ```bash
+# Create a directory for the certificates
 mkdir -p certs && cd certs
 
 # 1. Generate a CA key and certificate
@@ -327,7 +329,7 @@ cd ..
 Pass all certificates to Helm:
 
 ```bash
-helm install sbom-graph ./helm/sbom-graph \
+helm install sbom-graph ./helm/charts/sbom-graph \
   --set-file falkordb.tls.key=certs/tls.key \
   --set-file falkordb.tls.cert=certs/tls.crt \
   --set-file falkordb.tls.caCert=certs/ca.crt \
@@ -338,7 +340,7 @@ helm install sbom-graph ./helm/sbom-graph \
 To use user-provided certs **without** client auth:
 
 ```bash
-helm install sbom-graph ./helm/sbom-graph \
+helm install sbom-graph ./helm/charts/sbom-graph \
   --set falkordb.tls.requireClientAuth=false \
   --set-file falkordb.tls.key=certs/tls.key \
   --set-file falkordb.tls.cert=certs/tls.crt \
@@ -349,7 +351,7 @@ helm install sbom-graph ./helm/sbom-graph \
 
 ## Helm Values Reference
 
-The umbrella chart is located at `helm/sbom-graph/`. Below are the key
+The umbrella chart is located at `helm/charts/sbom-graph/`. Below are the key
 configuration values and their defaults.
 
 ### Global Settings
@@ -464,7 +466,7 @@ Alternatively, build and deploy manually:
 
 ```bash
 ./build-images.sh
-helm install sbom-graph ./helm/sbom-graph
+helm install sbom-graph ./helm/charts/sbom-graph
 kubectl get pods -w
 ```
 
@@ -473,7 +475,7 @@ kubectl get pods -w
 Override values for a more production-like setup:
 
 ```bash
-helm install sbom-graph ./helm/sbom-graph \
+helm install sbom-graph ./helm/charts/sbom-graph \
   --set falkordb.password="$(openssl rand -base64 24)" \
   --set sbomGraphApi.secrets.jwtSecretKey="$(openssl rand -base64 36)" \
   --set sbomGraphApi.secrets.flaskSecretKey="$(openssl rand -base64 36)" \
@@ -548,7 +550,7 @@ initData:
 ```bash
 kubectl create namespace sbom-graph
 
-helm install sbom-graph ./helm/sbom-graph \
+helm install sbom-graph ./helm/charts/sbom-graph \
   -n sbom-graph \
   -f my-values.yaml
 ```
@@ -746,7 +748,7 @@ SCA scans complete. To set this up:
 4. **If using a pre-shared secret**, pass it at install time:
 
    ```bash
-   helm install sbom-graph ./helm/sbom-graph \
+   helm install sbom-graph ./helm/charts/sbom-graph \
      --set releaseListener.webhookSecret="your-pre-shared-secret"
    ```
 
@@ -788,7 +790,7 @@ For a remote registry:
 If you prefer to manage the process manually:
 
 ```bash
-helm upgrade sbom-graph ./helm/sbom-graph
+helm upgrade sbom-graph ./helm/charts/sbom-graph
 ```
 
 - Secrets are preserved automatically across upgrades (via `lookup`).
@@ -799,7 +801,7 @@ To upgrade images after a rebuild:
 
 ```bash
 ./build-images.sh
-helm upgrade sbom-graph ./helm/sbom-graph \
+helm upgrade sbom-graph ./helm/charts/sbom-graph \
   --set sbomGraphApi.image.tag=v1.1.0 \
   --set releaseListener.image.tag=v1.1.0
 ```
@@ -850,7 +852,7 @@ the job fails. Delete and re-run:
 
 ```bash
 kubectl delete job sbom-graph-init-data
-helm upgrade sbom-graph ./helm/sbom-graph
+helm upgrade sbom-graph ./helm/charts/sbom-graph
 ```
 
 ### TLS connection errors
@@ -923,7 +925,7 @@ kubectl patch storageclass <name> -p '{"metadata": {"annotations":{"storageclass
 Or specify the storage class in your values:
 
 ```bash
-helm install sbom-graph ./helm/sbom-graph \
+helm install sbom-graph ./helm/charts/sbom-graph \
   --set falkordb.persistence.storageClass="standard" \
   --set sbomGraphApi.tokenDb.persistence.storageClass="standard"
 ```

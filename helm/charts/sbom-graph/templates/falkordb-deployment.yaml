@@ -1,0 +1,120 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sbom-graph.falkordb.fullname" . }}
+  labels:
+    {{- include "sbom-graph.falkordb.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "sbom-graph.falkordb.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sbom-graph.falkordb.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: falkordb
+          image: "{{ .Values.falkordb.image.repository }}:{{ .Values.falkordb.image.tag }}"
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          {{- /* Entrypoint auto-loads *.so from /usr/local/lib/redis/modules/; we just pass redis-server args */}}
+          {{- $srv := .Values.falkordb.server | default dict }}
+          {{- /* Module load-time args.  Pinning thread counts to 1 mitigates the
+                 fork()/BGSAVE deadlock observed when GraphBLAS/OpenMP worker threads
+                 hold internal mutexes at fork().  See docs/falkordb-backup-and-restore.md §5. */}}
+          {{- $mod := $srv.module | default dict }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              exec /usr/local/bin/docker-entrypoint.sh redis-server \
+                --loadmodule /var/lib/falkordb/bin/falkordb.so{{ if $mod.threadCount }} THREAD_COUNT {{ $mod.threadCount }}{{ end }}{{ if $mod.ompThreadCount }} OMP_THREAD_COUNT {{ $mod.ompThreadCount }}{{ end }} \
+                --dir /data \
+                --requirepass "${FALKORDB_PASSWORD}" \
+                --maxmemory {{ $srv.maxmemory | default "3gb" }} \
+                --maxmemory-policy {{ $srv.maxmemoryPolicy | default "noeviction" }} \
+                --save "{{ $srv.save | default "900 1 300 100 60 10000" }}" \
+                --stop-writes-on-bgsave-error {{ $srv.stopWritesOnBgsaveError | default "no" }} \
+                --rdbcompression {{ $srv.rdbCompression | default "yes" }} \
+                --rdbchecksum {{ $srv.rdbChecksum | default "yes" }} \
+                --activedefrag {{ $srv.activeDefrag | default "yes" }} \
+                --active-defrag-ignore-bytes {{ $srv.activeDefragIgnoreBytes | default "100mb" }} \
+                --active-defrag-threshold-lower {{ $srv.activeDefragThresholdLower | default "10" }} \
+                --active-defrag-threshold-upper {{ $srv.activeDefragThresholdUpper | default "100" }} \
+                --timeout {{ $srv.timeout | default "0" }} \
+                --tcp-keepalive {{ $srv.tcpKeepalive | default "60" }} \
+                --client-output-buffer-limit "normal {{ $srv.clientOutputBufferLimitNormal | default "0 0 0" }}" \
+                --client-output-buffer-limit "replica {{ $srv.clientOutputBufferLimitReplica | default "0 0 0" }}" \
+                --appendonly {{ $srv.appendonly | default "no" }}{{ if .Values.falkordb.tls.enabled }} \
+                --tls-port 6379 --port 0 \
+                --tls-cert-file /tls/tls.crt --tls-key-file /tls/tls.key --tls-ca-cert-file /tls/ca.crt \
+                --tls-auth-clients {{ if .Values.falkordb.tls.requireClientAuth }}yes{{ else }}no{{ end }}{{ end }}
+          env:
+            - name: FALKORDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sbom-graph.falkordb.secretName" . }}
+                  key: password
+          {{- /* TCP probes break TLS-only Redis (6379): kubelet never completes TLS */}}
+          {{- $probes := .Values.falkordb.probes | default dict }}
+          {{- $rp := $probes.readiness | default dict }}
+          {{- $lp := $probes.liveness | default dict }}
+          readinessProbe:
+            {{- if .Values.falkordb.tls.enabled }}
+            exec:
+              command:
+                - /bin/sh
+                - -ec
+                - redis-cli --tls --cacert /tls/ca.crt{{- if .Values.falkordb.tls.requireClientAuth }} --cert /tls/client.crt --key /tls/client.key{{- end }} -h 127.0.0.1 -p 6379 -a "${FALKORDB_PASSWORD}" ping | grep -qx PONG
+            {{- else }}
+            tcpSocket:
+              port: redis
+            {{- end }}
+            initialDelaySeconds: {{ $rp.initialDelaySeconds | default 15 }}
+            periodSeconds: {{ $rp.periodSeconds | default 15 }}
+            timeoutSeconds: {{ $rp.timeoutSeconds | default 15 }}
+            failureThreshold: {{ $rp.failureThreshold | default 3 }}
+          livenessProbe:
+            {{- if .Values.falkordb.tls.enabled }}
+            exec:
+              command:
+                - /bin/sh
+                - -ec
+                - redis-cli --tls --cacert /tls/ca.crt{{- if .Values.falkordb.tls.requireClientAuth }} --cert /tls/client.crt --key /tls/client.key{{- end }} -h 127.0.0.1 -p 6379 -a "${FALKORDB_PASSWORD}" ping | grep -qx PONG
+            {{- else }}
+            tcpSocket:
+              port: redis
+            {{- end }}
+            initialDelaySeconds: {{ $lp.initialDelaySeconds | default 60 }}
+            periodSeconds: {{ $lp.periodSeconds | default 30 }}
+            timeoutSeconds: {{ $lp.timeoutSeconds | default 15 }}
+            failureThreshold: {{ $lp.failureThreshold | default 5 }}
+          resources:
+            {{- toYaml .Values.falkordb.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            {{- if .Values.falkordb.tls.enabled }}
+            - name: tls
+              mountPath: /tls
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.falkordb.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "sbom-graph.falkordb.fullname" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.falkordb.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ include "sbom-graph.tls.secretName" . }}
+        {{- end }}

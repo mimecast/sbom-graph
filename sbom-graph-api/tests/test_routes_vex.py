@@ -12,7 +12,7 @@ class TestUploadVex:
 
         with (
             patch(
-                "sbom_graph_api.routes.ingest._create_persistence",
+                "sbom_graph_api.routes.ingest.create_ingestion_persistence",
                 return_value=mock_persistence,
             ),
             patch(
@@ -21,7 +21,7 @@ class TestUploadVex:
             ),
         ):
             resp = client.post(
-                "/ingest/vex",
+                "/ingest/vex?sync=true",
                 json={
                     "@context": "https://openvex.dev/ns/v0.2.0",
                     "@id": "https://example.com/vex/doc-1",
@@ -51,13 +51,13 @@ class TestUploadVex:
 
     def test_empty_body_returns_400(self, client) -> None:
         """Empty body returns 400."""
-        resp = client.post("/ingest/vex", content_type="application/json")
+        resp = client.post("/ingest/vex?sync=true", content_type="application/json")
         assert resp.status_code == 400
 
     def test_non_object_body_returns_400(self, client) -> None:
         """Non-object body returns 400."""
         resp = client.post(
-            "/ingest/vex",
+            "/ingest/vex?sync=true",
             json=["not", "an", "object"],
             content_type="application/json",
         )
@@ -68,11 +68,11 @@ class TestUploadVex:
         mock_persistence = MagicMock()
 
         with patch(
-            "sbom_graph_api.routes.ingest._create_persistence",
+            "sbom_graph_api.routes.ingest.create_ingestion_persistence",
             return_value=mock_persistence,
         ):
             resp = client.post(
-                "/ingest/vex",
+                "/ingest/vex?sync=true",
                 json={"no_statements": True},
                 content_type="application/json",
             )

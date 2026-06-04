@@ -9,7 +9,7 @@ NAMESPACE="${NAMESPACE:-sbom-graph}"
 RELEASE="${RELEASE:-sbom-graph}"
 VALUES_FILE=""
 DRY_RUN=false
-CHART_DIR="helm/sbom-graph"
+CHART_DIR="helm/charts/sbom-graph"
 
 usage() {
     cat <<'EOF'

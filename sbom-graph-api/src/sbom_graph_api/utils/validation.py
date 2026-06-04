@@ -46,6 +46,10 @@ VERSION_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._+\-]*$")
 # Examples: CVE-2021-44228, SNYK-JAVA-LOG4J-2314720
 DEFECT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 
+# Vulnerability list filter: CVE/GHSA/SNYK-style tokens plus * glob (no regex metacharacters)
+DEFECT_ID_MATCH_FILTER_PATTERN = re.compile(r"^[a-zA-Z0-9*._:\\-]+$")
+MAX_DEFECT_ID_MATCH_LENGTH = 200
+
 # Package URL (purl) pattern - https://github.com/package-url/purl-spec
 # Format: pkg:<type>/<namespace>/<name>@<version>?<qualifiers>#<subpath>
 # At minimum: pkg:<type>/<name>
@@ -371,6 +375,46 @@ def validate_defect_id(value: str) -> str | None:
         return None
 
     return value
+
+
+def validate_defect_id_match_filter(value: str | None) -> str | None:
+    """Validate optional defect-ID filter for the vulnerabilities report.
+
+    Allows a prefix (e.g. ``CVE-2024``) or a simple ``*`` glob (e.g.
+    ``GHSA-*-abc``). Prefix matches use Cypher ``STARTS WITH`` (parameterised).
+    Glob matches use ``fnmatch`` in the API after the query, because some
+    FalkorDB builds do not support the ``=~`` regex operator.
+
+    Args:
+        value: Raw query parameter, or None
+
+    Returns:
+        Sanitized filter string, or None if absent/invalid
+    """
+    if not value:
+        return None
+
+    raw = str(value).strip()
+    if not raw or len(raw) > MAX_DEFECT_ID_MATCH_LENGTH:
+        return None
+
+    if raw == "*":
+        return None
+
+    if not DEFECT_ID_MATCH_FILTER_PATTERN.match(raw):
+        return None
+
+    return raw
+
+
+def defect_id_match_uses_glob(match: str) -> bool:
+    """True if the validated filter uses ``*`` wildcards (fnmatch semantics)."""
+    return "*" in match.strip()
+
+
+def defect_id_match_prefix_for_starts_with(match: str) -> str:
+    """Lowercase prefix for Cypher ``STARTS WITH`` (non-glob patterns only)."""
+    return match.strip().lower()
 
 
 def validate_purl(value: str) -> str | None:
@@ -762,6 +806,7 @@ def build_url_params(  # pylint: disable=redefined-builtin
     longest_only: bool = True,
     latest_only: bool = False,
     vex_filter: str | None = None,
+    defect_id_match: str | None = None,
 ) -> str:
     """Build URL query parameters string, filtering out None/False values.
 
@@ -774,6 +819,7 @@ def build_url_params(  # pylint: disable=redefined-builtin
         latest_only: Show only latest version per application (default False)
         vex_filter: VEX filter for vulnerabilities (all, hide_not_affected,
             under_investigation; only include if not 'all')
+        defect_id_match: Optional defect id prefix/glob for vulnerabilities report
 
     Returns:
         URL-encoded query string (without leading '?')
@@ -793,6 +839,8 @@ def build_url_params(  # pylint: disable=redefined-builtin
         params["latest_only"] = "true"
     if vex_filter and vex_filter != "all":
         params["vex_filter"] = vex_filter
+    if defect_id_match:
+        params["defect_id_match"] = defect_id_match
 
     return urlencode(params) if params else ""
 
@@ -806,6 +854,7 @@ def build_url_with_params(  # pylint: disable=redefined-builtin
     longest_only: bool = True,
     latest_only: bool = False,
     vex_filter: str | None = None,
+    defect_id_match: str | None = None,
 ) -> str:
     """Build a complete URL with query parameters.
 
@@ -818,6 +867,7 @@ def build_url_with_params(  # pylint: disable=redefined-builtin
         longest_only: Show only longest paths (default True)
         latest_only: Show only latest version per application (default False)
         vex_filter: VEX filter for vulnerabilities report
+        defect_id_match: Optional defect id prefix/glob for vulnerabilities report
 
     Returns:
         Complete URL with query string
@@ -830,6 +880,7 @@ def build_url_with_params(  # pylint: disable=redefined-builtin
         longest_only=longest_only,
         latest_only=latest_only,
         vex_filter=vex_filter,
+        defect_id_match=defect_id_match,
     )
     if query_string:
         return f"{base_url}?{query_string}"

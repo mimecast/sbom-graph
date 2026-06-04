@@ -1,0 +1,309 @@
+global:
+  # INTERNAL_PREFIXES for API, release listener, and enrichment (field:prefix comma list).
+    internalPrefixes: "group:com.acme,name:acme-"
+falkordb:
+  image:
+    repository: falkordb/falkordb-server
+    tag: v4.16.5
+    pullPolicy: IfNotPresent
+  # When true, API / enrichment / init-data run an init container that waits for FalkorDB.
+  # Set false only for local debugging if FalkorDB is intentionally unavailable.
+  waitForReady: true
+  password: ""
+  persistence:
+    enabled: true
+    # 5Gi covers dump.rdb (observed ~500 MB) plus concurrent temp-<pid>.rdb during
+    # BGSAVE on graphs up to ~1M edges.  Raise on fresh installs only when using a
+    # storageClass with allowVolumeExpansion: true -- in-place resize will fail on
+    # static provisioners (e.g. minikube hostpath / "standard").
+    size: 5Gi
+    storageClass: ""
+  # When empty, clients use the in-cluster DNS name (<fullname>.<namespace>.svc.cluster.local).
+  # The chart-managed TLS cert SAN is this DNS name, so leave empty when TLS is enabled
+  # so Python clients validate the cert correctly.
+  # If pods cannot resolve cluster DNS, set this to a hostname that resolves (the cert SAN
+  # must still match it).  Setting it to a ClusterIP will break TLS unless the cert is
+  # re-issued with that IP as a SAN.
+  connectHost: ""
+  # When connectHost is empty AND preferClusterIP is true, the chart resolves the FalkorDB
+  # Service ClusterIP at render time (helm lookup) and uses it as FALKORDB_HOST.
+  # WARNING: with TLS enabled this BREAKS the Python redis client's hostname verification
+  # because the cert SAN is the DNS name, not the IP.  Keep this false unless TLS is off
+  # AND cluster DNS resolution is unavailable in your pods.
+  preferClusterIP: false
+  tls:
+    enabled: true
+    # Require mutual TLS (client certificates).  When true FalkorDB
+    # demands a valid client cert signed by the CA.  When false traffic
+    # is still encrypted but clients connect without presenting a cert.
+    requireClientAuth: true
+    # When empty and tls.enabled=true, Helm generates self-signed certs.
+    key: ""
+    cert: ""
+    caCert: ""
+    clientKey: ""
+    clientCert: ""
+  resources:
+    # Sizing rationale: steady-state RSS reaches ~1.9 GiB on a graph with
+    # ~80k nodes / ~600k edges because GraphBLAS query workspaces and Redis
+    # output buffers inflate well beyond the graph payload itself.  A 4Gi
+    # limit eliminates the OOMKill loop observed under sustained ingest;
+    # raise further (8Gi+) for larger graphs.
+    limits:
+      cpu: "2"
+      memory: 4Gi
+    # Request matches steady-state usage so kubelet reserves the memory and
+    # the pod is not first to be evicted under node pressure.
+    requests:
+      cpu: 500m
+      memory: 2Gi
+  # FalkorDB / Redis runtime tuning.  Consumed by the falkordb-deployment template.
+  # Defaults are tuned for sustained SBOM ingest workloads.
+  server:
+    # FalkorDB module load-time arguments.  These are passed on the
+    # --loadmodule line (BEFORE any redis-server runtime flags) and therefore
+    # take effect for the very first BGSAVE.
+    #
+    # Both default to "1" to mitigate a fork()/BGSAVE deadlock observed in
+    # this deployment: when FalkorDB's GraphBLAS worker threads or OpenMP
+    # threads hold an internal mutex at the instant of fork(), the BGSAVE
+    # child inherits the locked-but-ownerless mutex and blocks forever in a
+    # futex wait (state S, 0-byte temp file, no /data/ fds).  Pinning both
+    # thread pools to 1 ensures any held lock is owned by the main thread at
+    # fork() time, eliminating the inherited-mutex hazard.
+    #
+    # Trade-off: graph query parallelism is reduced.  For the SBOM-graph
+    # workload (mostly small Cypher reads + bulk ingest writes) this is
+    # negligible vs. the cost of a wedged daily backup.
+    #
+    # Set either value to "" (empty string) to fall back to FalkorDB's
+    # CPU-count auto-detection — only do this if you have confirmation that
+    # the upstream fork-safety issue is resolved in your falkordb image tag.
+    # See docs/falkordb-backup-and-restore.md §5 for the full diagnosis.
+    module:
+      threadCount: "1"
+      ompThreadCount: "1"
+    # Soft cap below the cgroup memory limit.  When reached, Redis returns
+    # "OOM command not allowed when used memory > 'maxmemory'" to clients
+    # (clean, retriable) instead of being SIGKILL'd by the kernel.
+    # Keep this ~75% of resources.limits.memory.
+    maxmemory: "3gb"
+    # noeviction prevents graph data from being silently dropped; combined
+    # with maxmemory above, writes start failing cleanly when full instead
+    # of the entire process being killed.
+    maxmemoryPolicy: "noeviction"
+    # Less aggressive RDB triggers reduce fork()/CoW pressure during ingest.
+    # Format: "<seconds> <changes> [<seconds> <changes> ...]"  -- match Redis defaults.
+    save: "900 1 300 100 60 10000"
+    # Do NOT freeze the DB when a snapshot fails; let writes continue.
+    stopWritesOnBgsaveError: "no"
+    rdbCompression: "yes"
+    rdbChecksum: "yes"
+    # Online defragmentation reclaims fragmented allocator pages without
+    # restarting; valuable for long-running, mutation-heavy graphs.
+    activeDefrag: "yes"
+    activeDefragIgnoreBytes: "100mb"
+    activeDefragThresholdLower: "10"
+    activeDefragThresholdUpper: "100"
+    # Disable idle-client timeout: mTLS handshake is expensive, we want
+    # API and enrichment pools to keep connections open.
+    timeout: "0"
+    tcpKeepalive: "60"
+    # Do not kill slow consumers; the enrichment worker can legitimately
+    # block on large query results.
+    clientOutputBufferLimitNormal: "0 0 0"
+    clientOutputBufferLimitReplica: "0 0 0"
+    # Stay RDB-only.  AOF doubles write amplification and is unnecessary
+    # because the graph can be rebuilt from source SBOMs if needed.
+    appendonly: "no"
+  # Liveness/readiness probe tuning.  Defaults give the redis-cli + TLS+mTLS
+  # handshake enough time to complete under heavy query load and let the
+  # RDB finish loading after a restart on large datasets.
+  probes:
+    readiness:
+      initialDelaySeconds: 15
+      periodSeconds: 15
+      timeoutSeconds: 15
+      failureThreshold: 3
+    liveness:
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      timeoutSeconds: 15
+      failureThreshold: 5
+sbomGraphApi:
+  image:
+    repository: localhost/sbom-graph-api
+    tag: 0.2.0-beta.2
+    pullPolicy: Never
+  replicas: 1
+  # gthread concurrency: workers * threads is the max number of in-flight
+  # requests a single pod can serve. See docs/sbom-graph-api-troubleshooting.md
+  # §10 for the rationale behind these defaults.
+  gunicornWorkers: "2"
+  gunicornThreads: "4"
+  # Optional label for internal nodes (FalkorDB filter; matches sbom-graph-api subchart)
+  falkordbInternalLabel: "INTERNAL"
+  # Auth: enabled by default with local users (LDAP disabled)
+  authEnabled: true
+  # Deprecated: set auth.ldap.enabled instead. If still set, it is used when auth.ldap.enabled is absent.
+  ldapEnabled: false
+  auth:
+    jwt:
+      accessTokenExpiresHours: "1"
+      refreshTokenExpiresDays: "30"
+    ldap:
+      enabled: false
+      server: ""
+      port: "389"
+      useSsl: "false"
+      baseDn: ""
+      userDnTemplate: "uid={username},ou=users,dc=example,dc=com"
+      searchFilter: "(uid={username})"
+      groupSearchBase: ""
+      adminGroups: ""
+      userGroups: ""
+      allowedGroups: ""
+      requiredGroup: ""
+      requireGroupMembership: false
+      # Sign-in uses LDAP_USER_DN_TEMPLATE + the password from the login form (not a Helm value).
+  serviceAccount:
+    # Set create true (and optional irsaRoleArn) when using awsSecretsManagerCsi delivery.
+    create: false
+    name: ""
+    irsaRoleArn: ""
+  service:
+    port: 80
+    targetPort: 8080
+  # Leave empty to auto-generate (persisted across upgrades via lookup).
+  secrets:
+    delivery: env
+    mountPath: /etc/sbom-graph-api/secrets
+    fileNames:
+      flaskSecretKey: flask-secret-key
+      jwtSecretKey: jwt-secret-key
+      tokenDbEncryptionKey: token-db-encryption-key
+    kubernetesVolume:
+      secretName: ""
+    awsSecretsManagerCsi:
+      secretProviderClassName: ""
+      volumeName: secrets-store
+      secretProviderSpec: {}
+    flaskSecretKey: ""
+    jwtSecretKey: ""
+    tokenDbEncryptionKey: ""
+  tokenDb:
+    persistence:
+      enabled: true
+      size: 1Gi
+      storageClass: ""
+  # Memory sizing notes:
+  #   The /reports/vulnerabilities endpoint currently materialises every Defect
+  #   row (with its collected affected_versions and vex_statements) into a single
+  #   Python list before rendering one HTML page.  Empirically this costs
+  #   ~10 KB/row of resident memory, plus a ~100 MB Flask/Gunicorn baseline and
+  #   a comparable Jinja render buffer for the response.  Sizing rule of thumb:
+  #     limit_MiB >= 250 + ceil(rows / 100)
+  #   so 14 k vulnerabilities needs >= ~1.7 GiB to render safely.  Raise this
+  #   further if you grow the graph or hit OOMKilled (exit 137) on report endpoints.
+  #   The proper long-term fix is server-side pagination of the report
+  #   (see docs/falkordb-backup-and-restore.md and the reports blueprint).
+  resources:
+    limits:
+      cpu: 1500m
+      memory: 2Gi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+releaseListener:
+  image:
+    repository: localhost/sonatype-lifecycle-release-listener
+    tag: 0.2.0-beta.2
+    pullPolicy: Never
+  replicas: 1
+  # Leave empty to auto-generate. Retrieve after install -- see NOTES.
+  webhookSecret: ""
+  gunicornWorkers: "2"
+  service:
+    port: 80
+    targetPort: 8000
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+enrichment:
+  enabled: true
+  image:
+    repository: localhost/sbom-graph-enrichment
+    tag: 0.2.0-beta.3
+    pullPolicy: Never
+  replicas: 1
+  interval: "3600"
+  sources: '["osv","clearlydefined"]'
+  celeryBrokerDb: "1"
+  celeryResultDb: "2"
+  concurrency: 2
+  centralityRefresh:
+    enabled: true
+    interval: "7200"
+  trustScore:
+    enabled: true
+    interval: "7200"
+    alpha: "0.4"
+    decay: "0.8"
+    maxDepth: "20"
+    alertThreshold: "4.0"
+    weights:
+      securityPractices: "0.3"
+      vulnerabilityProfile: "0.35"
+      maintenanceHealth: "0.2"
+      supplyChainHygiene: "0.15"
+    ossindex:
+      user: ""
+      token: ""
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  # ---------------------------------------------------------------------------
+  # Dedicated ingest worker pool (docs/sbom-graph-api-troubleshooting.md §10.6).
+  #
+  # Runs the same enrichment container image, but listens *only* on the
+  # ``ingest`` queue.  This guarantees true priority: an SBOM upload triggered
+  # by ``POST /ingest/*`` will never wait behind an in-flight
+  # ``enrich_all_packages`` run that's already occupying every slot in the
+  # main enrichment pool.
+  #
+  # Sizing rationale:
+  # * ``concurrency: 2`` -- each task holds an entire SBOM document in
+  #   memory while parsing and persisting it; running too many in parallel
+  #   per pod risks OOM with large CycloneDX/SPDX files.
+  # * Memory limit higher than the enrichment pool default -- a 50 MB JSON
+  #   SBOM can balloon to several hundred MB once parsed into Python objects.
+  # * Set ``replicas: 0`` to disable the dedicated pool entirely; the main
+  #   enrichment pool will not pick up the ``ingest`` queue automatically.
+  ingest:
+    enabled: true
+    replicas: 1
+    concurrency: 2
+    queueName: "ingest"
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+      requests:
+        cpu: 200m
+        memory: 256Mi
+  networkPolicy:
+    # Enable to restrict enrichment pod egress to FalkorDB, DNS, and
+    # external HTTPS (port 443) only.  Requires a CNI that supports
+    # NetworkPolicy (e.g. Calico, Cilium).
+    enabled: false
+initData:
+  enabled: true
+graphName: "acme-corp"

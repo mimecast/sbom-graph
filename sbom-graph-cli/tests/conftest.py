@@ -101,12 +101,44 @@ def make_policy_response() -> dict:
 
 @pytest.fixture
 def mock_httpx() -> httpx.MockTransport:
-    """Create a mock transport that handles common API routes."""
+    """Create a mock transport that handles common API routes.
+
+    For ``POST /ingest/sbom`` the mock honours the ``?sync=true`` query
+    flag introduced in §10.6: with the flag the server returns the
+    legacy ``201`` summary; without it the server returns a ``202``
+    envelope and ``GET /ingest/jobs/<id>`` returns SUCCESS with the
+    same summary.  This lets the CLI test suite exercise both code
+    paths against a single fixture.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
         url = str(request.url)
         if request.method == "POST" and "/ingest/sbom" in url:
-            return httpx.Response(201, json=make_ingest_response())
+            # ``request.url`` includes query string; check sync flag.
+            if "sync=true" in url or "sync=1" in url:
+                return httpx.Response(201, json=make_ingest_response())
+            envelope = {
+                "status": "accepted",
+                "record_id": "abc-123",
+                "job_id": "job-deadbeef",
+                "status_url": "/ingest/jobs/job-deadbeef",
+                "format": "cyclonedx",
+            }
+            return httpx.Response(
+                202,
+                json=envelope,
+                headers={"Location": envelope["status_url"]},
+            )
+        if request.method == "GET" and "/ingest/jobs/" in url:
+            return httpx.Response(
+                200,
+                json={
+                    "job_id": "job-deadbeef",
+                    "state": "SUCCESS",
+                    "terminal": True,
+                    "result": make_ingest_response(),
+                },
+            )
         if request.method == "GET" and "/vulns" in url:
             return httpx.Response(200, json=make_vulns_response())
         if request.method == "GET" and "/version-dependencies" in url:

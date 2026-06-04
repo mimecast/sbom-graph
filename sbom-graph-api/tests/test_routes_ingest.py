@@ -57,7 +57,7 @@ class TestUploadCycloneDX:
         projects, dep_versions, defects = _mock_processor_result()
 
         with (
-            patch("sbom_graph_api.routes.ingest._create_persistence") as mock_persist,
+            patch("sbom_graph_api.routes.ingest.create_ingestion_persistence") as mock_persist,
             patch("sbom_graph_api.routes.ingest.CycloneDXProcessor") as mock_processor_cls,
         ):
             mock_processor = MagicMock()
@@ -70,7 +70,7 @@ class TestUploadCycloneDX:
             mock_persist.return_value = MagicMock()
 
             response = client.post(
-                "/ingest/cyclonedx",
+                "/ingest/cyclonedx?sync=true",
                 json={"sbom": sbom},
                 content_type="application/json",
             )
@@ -98,7 +98,7 @@ class TestUploadCycloneDX:
         defects = {}
 
         with (
-            patch("sbom_graph_api.routes.ingest._create_persistence") as mock_persist,
+            patch("sbom_graph_api.routes.ingest.create_ingestion_persistence") as mock_persist,
             patch("sbom_graph_api.routes.ingest.CycloneDXProcessor") as mock_processor_cls,
         ):
             mock_processor = MagicMock()
@@ -112,7 +112,7 @@ class TestUploadCycloneDX:
             mock_persist.return_value = mock_persistence
 
             response = client.post(
-                "/ingest/cyclonedx",
+                "/ingest/cyclonedx?sync=true",
                 json={"sbom": sbom},
                 content_type="application/json",
             )
@@ -135,7 +135,7 @@ class TestUploadCycloneDX:
         projects, dep_versions, defects = _mock_processor_result()
 
         with (
-            patch("sbom_graph_api.routes.ingest._create_persistence"),
+            patch("sbom_graph_api.routes.ingest.create_ingestion_persistence"),
             patch("sbom_graph_api.routes.ingest.CycloneDXProcessor") as mock_processor_cls,
         ):
             mock_processor = MagicMock()
@@ -147,7 +147,7 @@ class TestUploadCycloneDX:
             mock_processor_cls.return_value = mock_processor
 
             response = client.post(
-                "/ingest/cyclonedx",
+                "/ingest/cyclonedx?sync=true",
                 json={
                     "sbom": sbom,
                     "app_id": "custom-id",
@@ -174,7 +174,7 @@ class TestUploadCycloneDX:
         expected_app_id = hashlib.sha1(b"acme-service").hexdigest()  # noqa: S324
 
         with (
-            patch("sbom_graph_api.routes.ingest._create_persistence"),
+            patch("sbom_graph_api.routes.ingest.create_ingestion_persistence"),
             patch("sbom_graph_api.routes.ingest.CycloneDXProcessor") as mock_processor_cls,
         ):
             mock_processor = MagicMock()
@@ -186,7 +186,7 @@ class TestUploadCycloneDX:
             mock_processor_cls.return_value = mock_processor
 
             response = client.post(
-                "/ingest/cyclonedx",
+                "/ingest/cyclonedx?sync=true",
                 json={"sbom": sbom},
                 content_type="application/json",
             )
@@ -199,7 +199,7 @@ class TestUploadCycloneDX:
     def test_missing_sbom_field(self, client):
         """Request without 'sbom' key returns 400."""
         response = client.post(
-            "/ingest/cyclonedx",
+            "/ingest/cyclonedx?sync=true",
             json={"not_sbom": {}},
             content_type="application/json",
         )
@@ -211,7 +211,7 @@ class TestUploadCycloneDX:
     def test_sbom_not_a_dict(self, client):
         """Request with 'sbom' as a non-dict returns 400."""
         response = client.post(
-            "/ingest/cyclonedx",
+            "/ingest/cyclonedx?sync=true",
             json={"sbom": "not-a-dict"},
             content_type="application/json",
         )
@@ -223,7 +223,7 @@ class TestUploadCycloneDX:
     def test_non_json_content_type(self, client):
         """Request without application/json Content-Type returns 415."""
         response = client.post(
-            "/ingest/cyclonedx",
+            "/ingest/cyclonedx?sync=true",
             data="not json",
             content_type="text/plain",
         )
@@ -237,7 +237,7 @@ class TestUploadCycloneDX:
         sbom = {"metadata": {}}  # Missing required fields
 
         with (
-            patch("sbom_graph_api.routes.ingest._create_persistence"),
+            patch("sbom_graph_api.routes.ingest.create_ingestion_persistence"),
             patch("sbom_graph_api.routes.ingest.CycloneDXProcessor") as mock_processor_cls,
         ):
             mock_processor = MagicMock()
@@ -247,7 +247,7 @@ class TestUploadCycloneDX:
             mock_processor_cls.return_value = mock_processor
 
             response = client.post(
-                "/ingest/cyclonedx",
+                "/ingest/cyclonedx?sync=true",
                 json={"sbom": sbom},
                 content_type="application/json",
             )
@@ -261,7 +261,7 @@ class TestUploadCycloneDX:
         sbom = _minimal_cyclonedx()
 
         with (
-            patch("sbom_graph_api.routes.ingest._create_persistence"),
+            patch("sbom_graph_api.routes.ingest.create_ingestion_persistence"),
             patch("sbom_graph_api.routes.ingest.CycloneDXProcessor") as mock_processor_cls,
         ):
             mock_processor = MagicMock()
@@ -269,7 +269,7 @@ class TestUploadCycloneDX:
             mock_processor_cls.return_value = mock_processor
 
             response = client.post(
-                "/ingest/cyclonedx",
+                "/ingest/cyclonedx?sync=true",
                 json={"sbom": sbom},
                 content_type="application/json",
             )
@@ -282,7 +282,7 @@ class TestUploadCycloneDX:
     def test_empty_request_body(self, client):
         """Empty request body returns 400."""
         response = client.post(
-            "/ingest/cyclonedx",
+            "/ingest/cyclonedx?sync=true",
             data="",
             content_type="application/json",
         )
@@ -319,7 +319,7 @@ class TestUploadSPDX:
         defects = []
 
         with (
-            patch("sbom_graph_api.routes.ingest._create_persistence") as mock_persist,
+            patch("sbom_graph_api.routes.ingest.create_ingestion_persistence") as mock_persist,
             patch("sbom_graph_api.routes.ingest.SPDXProcessor") as mock_proc_cls,
         ):
             mock_processor = MagicMock()
@@ -332,7 +332,7 @@ class TestUploadSPDX:
             mock_persist.return_value = MagicMock()
 
             response = client.post(
-                "/ingest/spdx",
+                "/ingest/spdx?sync=true",
                 json={"sbom": sbom},
                 content_type="application/json",
             )
@@ -355,7 +355,7 @@ class TestUploadSPDX:
         defects = []
 
         with (
-            patch("sbom_graph_api.routes.ingest._create_persistence") as mock_persist,
+            patch("sbom_graph_api.routes.ingest.create_ingestion_persistence") as mock_persist,
             patch("sbom_graph_api.routes.ingest.SPDXProcessor") as mock_proc_cls,
         ):
             mock_processor = MagicMock()
@@ -369,7 +369,7 @@ class TestUploadSPDX:
             mock_persist.return_value = mock_persistence
 
             response = client.post(
-                "/ingest/spdx",
+                "/ingest/spdx?sync=true",
                 json={"sbom": sbom},
                 content_type="application/json",
             )
@@ -389,7 +389,7 @@ class TestUploadSPDX:
         defects = []
 
         with (
-            patch("sbom_graph_api.routes.ingest._create_persistence") as mock_persist,
+            patch("sbom_graph_api.routes.ingest.create_ingestion_persistence") as mock_persist,
             patch("sbom_graph_api.routes.ingest.SPDXProcessor") as mock_proc_cls,
         ):
             mock_processor = MagicMock()
@@ -403,7 +403,7 @@ class TestUploadSPDX:
             mock_persist.return_value = mock_persistence
 
             response = client.post(
-                "/ingest/spdx",
+                "/ingest/spdx?sync=true",
                 json={"sbom": sbom},
                 content_type="application/json",
             )
@@ -416,7 +416,7 @@ class TestUploadSPDX:
     def test_spdx_non_json_content_type(self, client):
         """Request without application/json Content-Type returns 415."""
         response = client.post(
-            "/ingest/spdx",
+            "/ingest/spdx?sync=true",
             data="not json",
             content_type="text/plain",
         )
@@ -427,7 +427,7 @@ class TestUploadSPDX:
         sbom = {"metadata": {}}  # Missing spdxVersion, SPDXID, etc.
 
         with (
-            patch("sbom_graph_api.routes.ingest._create_persistence"),
+            patch("sbom_graph_api.routes.ingest.create_ingestion_persistence"),
             patch("sbom_graph_api.routes.ingest.SPDXProcessor") as mock_proc_cls,
         ):
             mock_processor = MagicMock()
@@ -437,7 +437,7 @@ class TestUploadSPDX:
             mock_proc_cls.return_value = mock_processor
 
             response = client.post(
-                "/ingest/spdx",
+                "/ingest/spdx?sync=true",
                 json={"sbom": sbom},
                 content_type="application/json",
             )
@@ -451,7 +451,7 @@ class TestUploadSPDX:
         sbom = _minimal_spdx()
 
         with (
-            patch("sbom_graph_api.routes.ingest._create_persistence"),
+            patch("sbom_graph_api.routes.ingest.create_ingestion_persistence"),
             patch("sbom_graph_api.routes.ingest.SPDXProcessor") as mock_proc_cls,
         ):
             mock_processor = MagicMock()
@@ -459,7 +459,7 @@ class TestUploadSPDX:
             mock_proc_cls.return_value = mock_processor
 
             response = client.post(
-                "/ingest/spdx",
+                "/ingest/spdx?sync=true",
                 json={"sbom": sbom},
                 content_type="application/json",
             )
@@ -479,7 +479,7 @@ class TestUploadSbomAutoDetect:
         projects, dep_versions, defects = _mock_processor_result()
 
         with (
-            patch("sbom_graph_api.routes.ingest._create_persistence"),
+            patch("sbom_graph_api.routes.ingest.create_ingestion_persistence"),
             patch("sbom_graph_api.routes.ingest.CycloneDXProcessor") as mock_processor_cls,
         ):
             mock_processor = MagicMock()
@@ -491,7 +491,7 @@ class TestUploadSbomAutoDetect:
             mock_processor_cls.return_value = mock_processor
 
             response = client.post(
-                "/ingest/sbom",
+                "/ingest/sbom?sync=true",
                 json={"sbom": sbom},
                 content_type="application/json",
             )
@@ -508,7 +508,7 @@ class TestUploadSbomAutoDetect:
         defects = []
 
         with (
-            patch("sbom_graph_api.routes.ingest._create_persistence"),
+            patch("sbom_graph_api.routes.ingest.create_ingestion_persistence"),
             patch("sbom_graph_api.routes.ingest.SPDXProcessor") as mock_proc_cls,
         ):
             mock_processor = MagicMock()
@@ -520,7 +520,7 @@ class TestUploadSbomAutoDetect:
             mock_proc_cls.return_value = mock_processor
 
             response = client.post(
-                "/ingest/sbom",
+                "/ingest/sbom?sync=true",
                 json={"sbom": sbom},
                 content_type="application/json",
             )
@@ -532,7 +532,7 @@ class TestUploadSbomAutoDetect:
     def test_unrecognised_format_returns_400(self, client):
         """SBOM with unrecognised format returns 400."""
         response = client.post(
-            "/ingest/sbom",
+            "/ingest/sbom?sync=true",
             json={"sbom": {"unknown": "format"}},
             content_type="application/json",
         )

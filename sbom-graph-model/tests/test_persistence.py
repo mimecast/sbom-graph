@@ -23,6 +23,21 @@ from sbom_graph_model.persistence import (
 )
 
 
+def _make_raw_result(
+    columns: list[str],
+    rows: list[list],
+) -> MagicMock:
+    """Build a mock matching the raw FalkorDB QueryResult wire format.
+
+    ``_DictQueryResult`` reads ``header`` (list of ``(type, name)`` tuples)
+    and ``result_set`` (list of positional lists) from the raw result and
+    zips them into dicts.  This helper builds that shape so tests exercise
+    the real conversion path.
+    """
+    header = [(1, col) for col in columns]
+    return MagicMock(header=header, result_set=rows)
+
+
 # ---------------------------------------------------------------------------
 # Static / utility helpers
 # ---------------------------------------------------------------------------
@@ -199,6 +214,31 @@ class TestPersistenceInit:
                 ssl_ca_certs="/path/to/ca.crt",
             )
             mock_fdb_instance.select_graph.assert_called_once_with("prod")
+
+    def test_connection_ssl_ipv4_sets_ssl_check_hostname_false(
+        self, mock_graph: MagicMock
+    ):
+        with patch("sbom_graph_model.persistence.FalkorDB") as mock_fdb:
+            mock_fdb_instance = MagicMock()
+            mock_fdb_instance.select_graph.return_value = mock_graph
+            mock_fdb.return_value = mock_fdb_instance
+
+            _ = Persistence(
+                host="10.100.141.68",
+                port=6379,
+                graph_name="g",
+                password="secret",
+                ssl=True,
+                ssl_ca_certs="/ca.crt",
+            )
+            mock_fdb.assert_called_once_with(
+                host="10.100.141.68",
+                port=6379,
+                password="secret",
+                ssl=True,
+                ssl_ca_certs="/ca.crt",
+                ssl_check_hostname=False,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -584,8 +624,9 @@ class TestRetrieveAllProjectNodesWithRepoUrl:
     """Tests for Persistence.retrieve_all_project_nodes_with_repo_url."""
 
     def test_returns_matching_nodes(self, mock_persistence, mock_graph):
-        mock_graph.query.return_value = MagicMock(
-            result_set=[{"n": {"name": "proj-1"}}, {"n": {"name": "proj-2"}}]
+        mock_graph.query.return_value = _make_raw_result(
+            ["n"],
+            [[{"name": "proj-1"}], [{"name": "proj-2"}]],
         )
         result = mock_persistence.retrieve_all_project_nodes_with_repo_url(
             "https://gitlab.example.com/repo"
@@ -603,19 +644,12 @@ class TestGetVersionsByPurl:
     """Tests for Persistence.get_versions_by_purl."""
 
     def test_returns_structured_rows(self, mock_persistence, mock_graph):
-        mock_graph.query.return_value = MagicMock(
-            result_set=[
-                {
-                    "name": "1.0.0",
-                    "project_name": "my-lib",
-                    "project_group": "com.example",
-                },
-                {
-                    "name": "2.0.0",
-                    "project_name": "my-lib",
-                    "project_group": "com.example",
-                },
-            ]
+        mock_graph.query.return_value = _make_raw_result(
+            ["name", "project_name", "project_group"],
+            [
+                ["1.0.0", "my-lib", "com.example"],
+                ["2.0.0", "my-lib", "com.example"],
+            ],
         )
         result = mock_persistence.get_versions_by_purl(
             "pkg:maven/com.example/my-lib@1.0.0"
@@ -645,10 +679,9 @@ class TestGetVersionsByPurl:
         assert result == []
 
     def test_handles_none_fields(self, mock_persistence, mock_graph):
-        mock_graph.query.return_value = MagicMock(
-            result_set=[
-                {"name": "1.0.0", "project_name": "my-lib", "project_group": None},
-            ]
+        mock_graph.query.return_value = _make_raw_result(
+            ["name", "project_name", "project_group"],
+            [["1.0.0", "my-lib", None]],
         )
         result = mock_persistence.get_versions_by_purl("pkg:npm/-/my-lib@1.0.0")
         assert result[0]["project_group"] is None
@@ -695,11 +728,9 @@ class TestGetPackagesNeedingEnrichment:
     """Tests for Persistence.get_packages_needing_enrichment."""
 
     def test_returns_purls(self, mock_persistence, mock_graph):
-        mock_graph.query.return_value = MagicMock(
-            result_set=[
-                {"purl": "pkg:maven/a/b@1.0"},
-                {"purl": "pkg:npm/c/d@2.0"},
-            ]
+        mock_graph.query.return_value = _make_raw_result(
+            ["purl"],
+            [["pkg:maven/a/b@1.0"], ["pkg:npm/c/d@2.0"]],
         )
         result = mock_persistence.get_packages_needing_enrichment()
         assert result == ["pkg:maven/a/b@1.0", "pkg:npm/c/d@2.0"]
@@ -986,12 +1017,24 @@ class TestCentralityScores:
     def test_add_inward_centrality(self, mock_persistence, mock_graph):
         mock_persistence.add_inward_centrality_scores()
         mock_graph.query.assert_called_once()
-        assert "inDegree" in mock_graph.query.call_args.kwargs["q"]
+        q = mock_graph.query.call_args.kwargs["q"]
+        assert "inDegree" in q
+        assert "Version:INTERNAL" in q
 
     def test_add_outward_centrality(self, mock_persistence, mock_graph):
         mock_persistence.add_outward_centrality_scores()
         mock_graph.query.assert_called_once()
-        assert "outDegree" in mock_graph.query.call_args.kwargs["q"]
+        q = mock_graph.query.call_args.kwargs["q"]
+        assert "outDegree" in q
+        assert "Version:INTERNAL" in q
+
+    def test_refresh_internal_degree_centrality_runs_both(
+        self,
+        mock_persistence,
+        mock_graph,
+    ) -> None:
+        mock_persistence.refresh_internal_degree_centrality()
+        assert mock_graph.query.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -1016,15 +1059,15 @@ class TestCreateIndexes:
         mock_persistence.create_indexes()
         assert mock_graph.query.call_count == 14
 
-    def test_logs_debug_on_unexpected_error(
-        self, mock_persistence, mock_graph, caplog
-    ):
+    def test_logs_debug_on_unexpected_error(self, mock_persistence, mock_graph, caplog):
         mock_graph.query.side_effect = Exception("Connection refused")
         import logging
 
         with caplog.at_level(logging.DEBUG):
             mock_persistence.create_indexes()
-        assert any("already exists or could not be created" in msg for msg in caplog.messages)
+        assert any(
+            "already exists or could not be created" in msg for msg in caplog.messages
+        )
 
     def test_mixed_success_and_failure(self, mock_persistence, mock_graph):
         mock_graph.query.side_effect = [
@@ -1158,18 +1201,17 @@ class TestGetAllTrustScores:
     """Tests for Persistence.get_all_trust_scores."""
 
     def test_returns_rows(self, mock_persistence, mock_graph):
-        mock_graph.query.return_value = MagicMock(
-            result_set=[
-                {
-                    "purl": "pkg:maven/a/b@1.0",
-                    "direct_score": 7.5,
-                    "effective_score": 6.5,
-                    "inherited_score": 5.8,
-                    "min_path_score": 3.2,
-                    "confidence": 0.75,
-                    "dep_count": 42,
-                },
-            ]
+        mock_graph.query.return_value = _make_raw_result(
+            [
+                "purl",
+                "direct_score",
+                "effective_score",
+                "inherited_score",
+                "min_path_score",
+                "confidence",
+                "dep_count",
+            ],
+            [["pkg:maven/a/b@1.0", 7.5, 6.5, 5.8, 3.2, 0.75, 42]],
         )
         result = mock_persistence.get_all_trust_scores()
         assert len(result) == 1
@@ -1185,11 +1227,12 @@ class TestGetDependencyGraphForPropagation:
     """Tests for Persistence.get_dependency_graph_for_propagation."""
 
     def test_returns_edges(self, mock_persistence, mock_graph):
-        mock_graph.query.return_value = MagicMock(
-            result_set=[
-                {"parent_purl": "pkg:maven/a/b@1.0", "child_purl": "pkg:maven/c/d@2.0"},
-                {"parent_purl": "pkg:maven/a/b@1.0", "child_purl": "pkg:npm/e@3.0"},
-            ]
+        mock_graph.query.return_value = _make_raw_result(
+            ["parent_purl", "child_purl"],
+            [
+                ["pkg:maven/a/b@1.0", "pkg:maven/c/d@2.0"],
+                ["pkg:maven/a/b@1.0", "pkg:npm/e@3.0"],
+            ],
         )
         result = mock_persistence.get_dependency_graph_for_propagation()
         assert len(result) == 2
@@ -1331,16 +1374,31 @@ class TestGetSbomInventory:
     """Tests for Persistence.get_sbom_inventory."""
 
     def test_returns_records_with_version_count(self, mock_persistence, mock_graph):
-        mock_graph.query.return_value = MagicMock(
-            result_set=[
-                {
-                    "record_id": "550e8400-e29b-41d4-a716-446655440000",
-                    "format": "cyclonedx",
-                    "ingested_at": "2026-03-11T12:00:00Z",
-                    "source": "webhook",
-                    "version_count": 5,
-                },
-            ]
+        mock_graph.query.return_value = _make_raw_result(
+            [
+                "record_id",
+                "format",
+                "ingested_at",
+                "source",
+                "tool_name",
+                "tool_version",
+                "serial_number",
+                "document_hash",
+                "version_count",
+            ],
+            [
+                [
+                    "550e8400-e29b-41d4-a716-446655440000",
+                    "cyclonedx",
+                    "2026-03-11T12:00:00Z",
+                    "webhook",
+                    None,
+                    None,
+                    None,
+                    None,
+                    5,
+                ]
+            ],
         )
         result = mock_persistence.get_sbom_inventory()
         assert len(result) == 1
@@ -1391,16 +1449,31 @@ class TestGetSbomRecord:
     """Tests for Persistence.get_sbom_record."""
 
     def test_returns_record_with_linked_purls(self, mock_persistence, mock_graph):
-        mock_graph.query.return_value = MagicMock(
-            result_set=[
-                {
-                    "record_id": "550e8400-e29b-41d4-a716-446655440000",
-                    "format": "cyclonedx",
-                    "ingested_at": "2026-03-11T12:00:00Z",
-                    "source": "webhook",
-                    "purls": ["pkg:maven/a/b@1.0", "pkg:maven/c/d@2.0"],
-                },
-            ]
+        mock_graph.query.return_value = _make_raw_result(
+            [
+                "record_id",
+                "format",
+                "ingested_at",
+                "source",
+                "tool_name",
+                "tool_version",
+                "serial_number",
+                "document_hash",
+                "purl_list",
+            ],
+            [
+                [
+                    "550e8400-e29b-41d4-a716-446655440000",
+                    "cyclonedx",
+                    "2026-03-11T12:00:00Z",
+                    "webhook",
+                    None,
+                    None,
+                    None,
+                    None,
+                    ["pkg:maven/a/b@1.0", "pkg:maven/c/d@2.0"],
+                ]
+            ],
         )
         result = mock_persistence.get_sbom_record(
             "550e8400-e29b-41d4-a716-446655440000"
@@ -1536,6 +1609,60 @@ class TestParseInternalPrefixes:
     def test_all_valid_fields_accepted(self, field: str):
         result = Persistence.parse_internal_prefixes(f"{field}:test-prefix")
         assert result == [(field, "test-prefix")]
+
+
+class TestMergeInternalPrefixRules:
+    """Tests for merge/format helpers used by overlays and APIs."""
+
+    def test_merge_preserves_order_and_deduplicates(self) -> None:
+        merged = Persistence.merge_internal_prefix_rule_lists(
+            [("group", "a"), ("name", "x")],
+            [("group", "b"), ("group", "a")],
+        )
+        assert merged == [("group", "a"), ("name", "x"), ("group", "b")]
+
+    def test_format_csv_roundtrips_through_parse(self) -> None:
+        rules = [("group", "c.d"), ("name", "p-")]
+        csv = Persistence.format_internal_prefixes_csv(rules)
+        assert Persistence.parse_internal_prefixes(csv) == rules
+
+
+class TestValidateSecondaryInternalLabel:
+    """Graph label fragment used in ``SET v:LABEL`` batches."""
+
+    def test_accepts_typical_internal_marker(self) -> None:
+        assert Persistence._validate_secondary_label_fragment("INTERNAL") == "INTERNAL"
+
+    def test_rejects_injection(self) -> None:
+        with pytest.raises(ValueError):
+            Persistence._validate_secondary_label_fragment("INTERNAL; DROP n")
+
+    def test_rejects_structural_labels(self) -> None:
+        with pytest.raises(ValueError):
+            Persistence._validate_secondary_label_fragment("Version")
+
+
+class TestReloadInternalPrefixesOverlay:
+    """Merging Helm/env rules with Falkor-stored overlay CSV."""
+
+    def test_merges_env_then_overlay_without_duplicates(self, monkeypatch) -> None:
+        stub = Persistence.__new__(Persistence)
+
+        monkeypatch.setattr(
+            stub,
+            "get_internal_prefixes_overlay_raw",
+            lambda: "group:fromdb,name:shared",
+        )
+
+        stub.reload_internal_prefixes_from_env_and_overlay(
+            "group:fromenv,name:shared",
+        )
+
+        assert stub.internal_prefixes == [
+            ("group", "fromenv"),
+            ("name", "shared"),
+            ("group", "fromdb"),
+        ]
 
 
 # ---------------------------------------------------------------------------

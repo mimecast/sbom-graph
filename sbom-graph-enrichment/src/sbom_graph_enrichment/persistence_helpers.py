@@ -18,6 +18,7 @@ import os
 import httpx
 
 from sbom_graph_model import Persistence
+from sbom_graph_model.k8s_service_host import resolve_k8s_service_link_host
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,8 @@ def create_persistence() -> Persistence:
     internal_prefixes = Persistence.parse_internal_prefixes(
         os.environ.get("INTERNAL_PREFIXES", "")
     )
-    host = os.environ.get("FALKORDB_HOST", "localhost")
+    _host_raw = os.environ.get("FALKORDB_HOST", "localhost") or "localhost"
+    host = resolve_k8s_service_link_host(_host_raw)
     port = int(os.environ.get("FALKORDB_PORT", "6379"))
     graph_name = os.environ.get("FALKORDB_GRAPH_NAME", "acme-corp")
     password = os.environ.get("FALKORDB_PASSWORD", "")

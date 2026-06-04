@@ -84,8 +84,10 @@ SONATYPE_USERNAME=user SONATYPE_PASSWORD=pass uv run python -m sonatype_lifecycl
 # Run production server
 uv run gunicorn -c gunicorn.conf.py sonatype_lifecycle_release_listener.app:app
 
-# Build Docker image
-docker build -t sonatype-lifecycle-release-listener:latest .
+# Build Docker image (context = this directory; or use build-images.sh from monorepo root)
+docker build -t sonatype-lifecycle-release-listener:latest -f Dockerfile \
+  --build-arg "PYTHON_PACKAGE_VERSION=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)" \
+  .
 
 # Run Docker container
 docker run -p 8000:8000 \

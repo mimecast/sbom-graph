@@ -210,7 +210,7 @@ No solution may progress past a gate until its criteria are met.
 | Component | Purpose |
 |-----------|---------|
 | **FalkorDB** | Graph database (shared by all sub-projects) |
-| **Helm umbrella chart** (`helm/sbom-graph/`) | Deploys all components together |
+| **Helm umbrella chart** (`helm/charts/sbom-graph/`) | Deploys all components together |
 | **`build-images.sh`** | Docker build script for all images |
 | **`uv`** | Package manager (not Poetry, not pip) |
 | **`pytest`** | Testing framework across all sub-projects |

@@ -8,9 +8,38 @@ import pytest
 from sbom_graph_api.config import (
     AppConfig,
     FalkorDBConfig,
+    JWTConfig,
     get_config,
     reset_config,
+    secret_from_env_or_file,
 )
+
+
+class TestSecretFromEnvOrFile:
+    """Tests for secret_from_env_or_file helper."""
+
+    def test_prefers_file_over_env(self, tmp_path, monkeypatch):
+        key_file = tmp_path / "key"
+        key_file.write_text("  from-file  \n", encoding="utf-8")
+        monkeypatch.setenv("MY_KEY_FILE", str(key_file))
+        monkeypatch.setenv("MY_KEY", "from-env")
+        assert secret_from_env_or_file("MY_KEY") == "from-file"
+
+    def test_env_when_no_file_var(self, monkeypatch):
+        monkeypatch.setenv("MY_KEY", "value")
+        assert secret_from_env_or_file("MY_KEY") == "value"
+
+    def test_default_when_unset(self, monkeypatch):
+        monkeypatch.delenv("MY_KEY", raising=False)
+        assert secret_from_env_or_file("MY_KEY", "def") == "def"
+
+    def test_jwt_from_file(self, tmp_path, monkeypatch):
+        p = tmp_path / "jwt"
+        p.write_text("jwt-from-disk", encoding="utf-8")
+        monkeypatch.setenv("JWT_SECRET_KEY_FILE", str(p))
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        cfg = JWTConfig.from_env()
+        assert cfg.secret_key == "jwt-from-disk"
 
 
 class TestFalkorDBConfig:
@@ -68,6 +97,43 @@ class TestFalkorDBConfig:
         assert config.port == 6379  # default
         assert config.password is None  # default
         assert config.graph_name == "acme_corp"  # default
+
+    def test_from_env_prefers_k8s_service_link_host(self, monkeypatch):
+        """When the service-link opt-in is on, ClusterIP overrides Cluster DNS.
+
+        Service-link fallback is **opt-in** (``FALKORDB_USE_SERVICE_LINK=true``)
+        because substituting a ClusterIP into a TLS connection URL breaks
+        certificate verification when the cert SAN is the cluster DNS name --
+        see ``sbom_graph_model.k8s_service_host`` for the full rationale.
+        This test verifies the opt-in path; a companion test below verifies
+        that the default-off behaviour preserves the DNS hostname.
+        """
+        monkeypatch.delenv("FALKORDB_HOST", raising=False)
+        monkeypatch.setenv("FALKORDB_USE_SERVICE_LINK", "true")
+        monkeypatch.setenv(
+            "FALKORDB_HOST",
+            "sbom-graph-falkordb.sbom-graph.svc.cluster.local",
+        )
+        monkeypatch.setenv("SBOM_GRAPH_FALKORDB_SERVICE_HOST", "10.96.1.2")
+        config = FalkorDBConfig.from_env()
+        assert config.host == "10.96.1.2"
+
+    def test_from_env_default_keeps_dns_host(self, monkeypatch):
+        """Without the opt-in, the FALKORDB_HOST DNS name must pass through.
+
+        Regression guard: if someone re-enables eager service-link fallback,
+        TLS connections will fail with ``CERTIFICATE_VERIFY_FAILED: IP
+        address mismatch`` because the cert SAN is the cluster DNS name.
+        """
+        monkeypatch.delenv("FALKORDB_HOST", raising=False)
+        monkeypatch.delenv("FALKORDB_USE_SERVICE_LINK", raising=False)
+        monkeypatch.setenv(
+            "FALKORDB_HOST",
+            "sbom-graph-falkordb.sbom-graph.svc.cluster.local",
+        )
+        monkeypatch.setenv("SBOM_GRAPH_FALKORDB_SERVICE_HOST", "10.96.1.2")
+        config = FalkorDBConfig.from_env()
+        assert config.host == "sbom-graph-falkordb.sbom-graph.svc.cluster.local"
 
     # Negative tests
 
