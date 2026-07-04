@@ -32,10 +32,6 @@ sonatype-lifecycle-release-listener/
 │       ├── example-message.json      # Sample webhook payload
 │       ├── acme_notification_service_sbom.json  # Sample SBOM for mocking
 │       └── example_vex.json          # Sample VEX document for mocking
-├── helm/sonatype-lifecycle-release-listener/   # Helm chart for Kubernetes
-│   ├── Chart.yaml
-│   ├── values.yaml
-│   └── templates/           # K8s manifests
 ├── Dockerfile               # Distroless multi-stage build
 ├── .dockerignore
 ├── gunicorn.conf.py         # Production server config
@@ -93,10 +89,10 @@ docker build -t sonatype-lifecycle-release-listener:latest -f Dockerfile \
 docker run -p 8000:8000 \
   -e SONATYPE_USERNAME=user -e SONATYPE_PASSWORD=pass sonatype-lifecycle-release-listener:latest
 
-# Helm install
-helm install sonatype-lifecycle-release-listener ./helm/sonatype-lifecycle-release-listener \
-  --set secrets.sonatypeUsername=user --set secrets.sonatypePassword=pass \
-  --set falkordb.host=falkordb --set falkordb.graphName=acme-corp
+# Helm install (via the monorepo umbrella chart; listener-only)
+helm upgrade --install sbom-graph ../helm/charts/sbom-graph \
+  --set releaseListener.enabled=true --set sbomGraphApi.enabled=false \
+  --set enrichment.enabled=false --set falkordb.enabled=false
 
 # Add a new dependency
 uv add <package-name>
@@ -123,45 +119,11 @@ The application uses a **distroless** base image
 
 ### Helm Chart
 
-The Helm chart (`helm/sonatype-lifecycle-release-listener/`) provides:
-
-- **Deployment** with security contexts, health probes, and resource limits
-- **Service** (ClusterIP by default)
-- **Secret** for SonaType credentials (or use `existingSecret`)
-- **ConfigMap** for CA certificates
-- **ServiceAccount** with minimal permissions
-- **Ingress** (optional)
-- **HorizontalPodAutoscaler** (optional)
-
-Key Helm values (see `helm/sonatype-lifecycle-release-listener/values.yaml` for full list):
-
-```yaml
-sonatype:
-  host: ""                  # Optional SonaType API base URL
-
-secrets:
-  sonatypeUsername: ""      # Or use existingSecret
-  sonatypePassword: ""
-  existingSecret: ""
-  existingSecretUsernameKey: "sonatype-username"
-  existingSecretPasswordKey: "sonatype-password"
-  # Optional; FalkorDB password key in existing secret
-  existingSecretFalkordbPasswordKey: ""
-
-falkordb:
-  host: "falkordb"
-  port: 6379
-  graphName: "acme-corp"
-  # Optional; or use existingSecretFalkordbPasswordKey
-  password: ""
-  # Optional; defaults to config.caCertsPath when CA bundle mounted
-  caCertsPath: ""
-
-config:
-  # Base64-encoded CA bundle (optional)
-  caCerts: ""
-  caCertsPath: /app/certs/ca_bundle.pem
-```
+The standalone listener chart was removed; the listener is deployed by the monorepo **umbrella
+chart** at `helm/charts/sbom-graph`, which renders the listener Deployment/Service, the webhook HMAC
+Secret, and the Sonatype-credentials Secret. Set `releaseListener.enabled=true` (and disable the
+other components for a listener-only install — see the command above). All listener settings live
+under `releaseListener.*` in `helm/charts/sbom-graph/values.yaml` (the authoritative value schema).
 
 ## Testing Guidelines
 

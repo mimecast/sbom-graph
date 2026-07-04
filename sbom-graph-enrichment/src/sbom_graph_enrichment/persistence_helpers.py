@@ -49,10 +49,25 @@ def create_persistence() -> Persistence:
     ssl_keyfile = os.environ.get("FALKORDB_CLIENT_KEY") or None
 
     if not password:
+        # Fail closed: the Helm charts always provision a FALKORDB_PASSWORD (auto-
+        # generated, reused across upgrades), so an empty value in a real deployment
+        # means it was removed/misconfigured — connecting to an unauthenticated DB
+        # then is a security regression (CWE-306). Local development that genuinely
+        # runs FalkorDB without auth must opt in explicitly.
+        allow_no_auth = (
+            os.environ.get("FALKORDB_ALLOW_NO_AUTH", "false").lower() == "true"
+        )
+        if not allow_no_auth:
+            raise RuntimeError(
+                "FALKORDB_PASSWORD is empty — refusing to connect to an "
+                "unauthenticated FalkorDB. The Helm chart provisions this "
+                "automatically; if it is missing it was removed. For local "
+                "development against an auth-less FalkorDB, set "
+                "FALKORDB_ALLOW_NO_AUTH=true to override."
+            )
         logger.warning(
-            "FALKORDB_PASSWORD is empty — FalkorDB is running without "
-            "authentication.  This is acceptable for local development but "
-            "MUST be set in production (the Helm chart auto-generates one)."
+            "FALKORDB_PASSWORD is empty and FALKORDB_ALLOW_NO_AUTH=true — "
+            "connecting to FalkorDB without authentication (development only)."
         )
 
     return Persistence(
@@ -105,6 +120,23 @@ def _on_worker_process_init(**_kwargs: object) -> None:
     logger.info("Initialising per-process connections (pid=%d)", os.getpid())
     _process_persistence = create_persistence()
     _process_http_client = httpx.Client(timeout=_HTTP_TIMEOUT)
+
+
+def _on_worker_process_shutdown(**_kwargs: object) -> None:
+    """Celery ``worker_process_shutdown`` signal handler.
+
+    Closes the per-process httpx client and FalkorDB connection when a worker
+    child is recycled (e.g. via ``--max-tasks-per-child``) or shut down, so
+    sockets/connections are drained cleanly instead of being abandoned.
+    """
+    global _process_persistence, _process_http_client  # noqa: PLW0603  # pylint: disable=global-statement
+    logger.info("Closing per-process connections (pid=%d)", os.getpid())
+    if _process_http_client is not None:
+        _process_http_client.close()
+        _process_http_client = None
+    if _process_persistence is not None:
+        _process_persistence.close()
+        _process_persistence = None
 
 
 def _reset_persistence() -> None:

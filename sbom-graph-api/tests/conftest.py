@@ -133,6 +133,18 @@ def client(app):
     return app.test_client()
 
 
+@pytest.fixture(autouse=True)
+def _reset_report_rate_limiter():
+    """Reset the per-identity report rate limiter between tests for isolation."""
+    try:
+        from sbom_graph_api.routes.reports import _common
+
+        _common._reset_rate_limiter()
+    except Exception:  # pragma: no cover - module may not import in some unit tests
+        pass
+    yield
+
+
 @pytest.fixture
 def mock_graph():
     """Create a mock FalkorDB graph object."""

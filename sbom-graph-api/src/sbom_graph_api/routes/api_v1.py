@@ -384,12 +384,8 @@ def package_dependencies(purl: str) -> tuple[Response, int]:
     if err:
         return err
 
-    max_depth = validate_int_param(
-        request.args.get("max_depth"), default=10, min_val=1, max_val=50
-    )
-    offset, limit = paginate_params(
-        request.args.get("offset"), request.args.get("limit")
-    )
+    max_depth = validate_int_param(request.args.get("max_depth"), default=10, min_val=1, max_val=50)
+    offset, limit = paginate_params(request.args.get("offset"), request.args.get("limit"))
 
     service = get_falkordb_service()
     deps = service.get_transitive_dependency_purls(purl, max_depth=max_depth)
@@ -411,12 +407,8 @@ def package_dependants(purl: str) -> tuple[Response, int]:
     if err:
         return err
 
-    max_depth = validate_int_param(
-        request.args.get("max_depth"), default=10, min_val=1, max_val=50
-    )
-    offset, limit = paginate_params(
-        request.args.get("offset"), request.args.get("limit")
-    )
+    max_depth = validate_int_param(request.args.get("max_depth"), default=10, min_val=1, max_val=50)
+    offset, limit = paginate_params(request.args.get("offset"), request.args.get("limit"))
 
     service = get_falkordb_service()
     dependants = service.get_transitive_dependant_purls(purl, max_depth=max_depth)
@@ -594,9 +586,7 @@ def critical_dependencies() -> tuple[Response, int]:
         default="fan_in",
     )
 
-    limit = validate_int_param(
-        request.args.get("limit"), default=20, min_val=1, max_val=100
-    )
+    limit = validate_int_param(request.args.get("limit"), default=20, min_val=1, max_val=100)
 
     service = get_falkordb_service()
 
@@ -617,9 +607,7 @@ def risk_summary() -> tuple[Response, int]:
     service = get_falkordb_service()
 
     vuln_result = service.execute_query(
-        "MATCH (d:Defect) "
-        "RETURN d.severity AS severity, count(d) AS count "
-        "ORDER BY count DESC",
+        "MATCH (d:Defect) RETURN d.severity AS severity, count(d) AS count ORDER BY count DESC",
         {},
     )
     vuln_by_severity = {
@@ -639,9 +627,7 @@ def risk_summary() -> tuple[Response, int]:
     }
 
     policy_result = service.execute_query(
-        "MATCH (a:PolicyAnnotation) "
-        "RETURN a.type AS type, count(a) AS count "
-        "ORDER BY count DESC",
+        "MATCH (a:PolicyAnnotation) RETURN a.type AS type, count(a) AS count ORDER BY count DESC",
         {},
     )
     policy_by_type = {
@@ -654,9 +640,7 @@ def risk_summary() -> tuple[Response, int]:
         "RETURN count(DISTINCT v.package_url) AS total",
         {},
     )
-    total_packages = (
-        pkg_result[0][0] if pkg_result and pkg_result[0] else 0
-    )
+    total_packages = pkg_result[0][0] if pkg_result and pkg_result[0] else 0
 
     data = {
         "total_packages": total_packages,
@@ -1211,9 +1195,7 @@ def _build_openapi_paths() -> dict:
                         "schema": {"type": "integer", "default": 100},
                     },
                 ],
-                "responses": {
-                    "200": {"description": "Dependency tree with pagination"}
-                },
+                "responses": {"200": {"description": "Dependency tree with pagination"}},
             }
         },
         "/package/{purl}/dependants": {
@@ -1242,9 +1224,7 @@ def _build_openapi_paths() -> dict:
                         "schema": {"type": "integer", "default": 100},
                     },
                 ],
-                "responses": {
-                    "200": {"description": "Dependants list with pagination"}
-                },
+                "responses": {"200": {"description": "Dependants list with pagination"}},
             }
         },
         "/package/{purl}/trust-score": {
@@ -1332,9 +1312,7 @@ def _build_openapi_paths() -> dict:
                         "schema": {"type": "integer", "default": 20},
                     },
                 ],
-                "responses": {
-                    "200": {"description": "Critical dependency list"}
-                },
+                "responses": {"200": {"description": "Critical dependency list"}},
             }
         },
         "/analysis/risk-summary": {
@@ -1379,9 +1357,7 @@ def _build_openapi_paths() -> dict:
                         "schema": {"type": "number"},
                     },
                 ],
-                "responses": {
-                    "200": {"description": "Propagation impact data"}
-                },
+                "responses": {"200": {"description": "Propagation impact data"}},
             }
         },
     }

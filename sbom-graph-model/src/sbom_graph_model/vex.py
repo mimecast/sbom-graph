@@ -7,6 +7,7 @@ for persistence. See https://openvex.dev/ for the specification.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -14,6 +15,15 @@ from .model import VexStatus
 from .persistence import Persistence
 
 logger = logging.getLogger(__name__)
+
+# A VEX statement's `vulnerability.@id` / `name` becomes a Defect link, so an
+# unvalidated value could forge a VEX->Defect edge (e.g. a bogus "not_affected")
+# against an arbitrary identifier. Require a recognised vulnerability-id scheme
+# (CVE or GHSA) before linking; anything else is skipped and logged (CWE-20/290).
+_VULN_ID_RE = re.compile(
+    r"^(?:CVE-\d{4}-\d{4,}|GHSA-[0-9a-z]+(?:-[0-9a-z]+)*)$",
+    re.IGNORECASE,
+)
 
 
 class VexProcessingError(ValueError):
@@ -115,6 +125,13 @@ class VexProcessor:
 
         vulnerability = stmt.get("vulnerability") or {}
         vuln_id = vulnerability.get("@id") or vulnerability.get("name", "")
+        if vuln_id and (not isinstance(vuln_id, str) or not _VULN_ID_RE.match(vuln_id)):
+            logger.warning(
+                "Skipping VEX->Defect link: unrecognised vulnerability id %r "
+                "(expected CVE-… or GHSA-…)",
+                vuln_id,
+            )
+            vuln_id = ""
         if vuln_id:
             self.persistence.link_vex_to_defect(
                 statement_id=statement_id, defect_id=vuln_id,

@@ -54,6 +54,7 @@ These agreements apply to **all** sub-projects without exception.
 9. **Parameterised queries only** — no string concatenation for database queries (Cypher, SQL, or otherwise).
 10. **Never include exception details in HTTP responses** (CWE-209: Generation of Error Message Containing Sensitive Information, CWE-497: Exposure of Sensitive System Information to an Unauthorized Control Sphere). Return a static, descriptive error message to the client instead. Exception details in log messages are acceptable at debug level only.
 11. All agents must communicate findings in Markdown, using clear section headers and evidence appendices.
+12. **Never use `assert` outside of test code.** `assert` is stripped under `python -O`/`-OO`, so any check it carries silently disappears in optimised runs. In non-test source (`*/src/`), use explicit control flow instead — raise a specific exception (`raise ValueError(...)`, `raise RuntimeError(...)`) for validation and invariant checks, even for "impossible" type-narrowing cases. `assert` is permitted only in `tests/`.
 
 ---
 

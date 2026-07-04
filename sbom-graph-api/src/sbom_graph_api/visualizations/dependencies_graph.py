@@ -10,6 +10,7 @@ doesn't require a hierarchical structure and naturally spreads nodes apart
 based on their connectivity.
 """
 
+import logging
 from collections.abc import Callable
 
 import networkx as nx
@@ -20,12 +21,18 @@ from sbom_graph_api.services.falkordb_service import (
     FalkorDBService,
     get_falkordb_service,
 )
+from sbom_graph_api.visualizations._bounded import bound_nodes_edges, inject_truncation_banner
 from sbom_graph_api.visualizations.kpartite import (
     format_properties_for_tooltip,
     get_license_risk_color,
     get_partition_color,
     get_severity_color,
 )
+
+logger = logging.getLogger(__name__)
+
+MAX_VIZ_NODES = 2000
+MAX_VIZ_EDGES = 5000
 
 
 class DependencyVisitor:
@@ -449,6 +456,14 @@ def create_dependencies_graph_visualization(
     )
 
     root_id = f"{project_name}:{version_name}"
+    nodes, edges, _truncated, _dropped = bound_nodes_edges(
+        nodes, edges, MAX_VIZ_NODES, MAX_VIZ_EDGES, root_id=root_id
+    )
+    if _truncated:
+        logger.warning(
+            "Dependencies graph for %s@%s truncated at %d nodes (%d dropped)",
+            project_name, version_name, MAX_VIZ_NODES, _dropped,
+        )
     node_data = {n["id"]: n for n in nodes}
     if root_id not in node_data:
         node_data[root_id] = {
@@ -490,4 +505,7 @@ def create_dependencies_graph_visualization(
         net, edges, cycle_edges_set,
     )
 
-    return net.generate_html()
+    html = net.generate_html()
+    if _truncated:
+        html = inject_truncation_banner(html, MAX_VIZ_NODES, _dropped)
+    return html

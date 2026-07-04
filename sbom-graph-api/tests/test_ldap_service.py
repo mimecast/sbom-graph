@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from ldap3.core.exceptions import LDAPException
+from ldap3.utils.dn import escape_rdn
 
 from sbom_graph_api.config import LDAPConfig
 from sbom_graph_api.services.ldap_service import (
@@ -203,6 +204,29 @@ class TestAuthenticate:
         assert user.email == "alice@example.com"
         assert user.display_name == "Alice Smith"
         mock_conn.unbind.assert_called_once()
+
+    @patch("sbom_graph_api.services.ldap_service.Connection")
+    @patch("sbom_graph_api.services.ldap_service.Server")
+    def test_username_dn_special_chars_escaped_in_bind(
+        self, mock_server_cls, mock_conn_cls, ldap_config
+    ):
+        """L1 (CWE-90): username DN special characters are escaped before being
+        interpolated into the bind DN, so a value like 'alice,cn=admin' cannot
+        alter the DN structure."""
+        mock_conn = MagicMock()
+        mock_conn_cls.return_value = mock_conn
+        mock_conn.entries = []
+
+        service = LDAPService(config=ldap_config)
+        service.authenticate("alice,cn=admin", "password")
+
+        bind_dn = mock_conn_cls.call_args.kwargs["user"]
+        expected = (
+            "uid=" + escape_rdn("alice,cn=admin") + ",ou=users,dc=example,dc=com"
+        )
+        assert bind_dn == expected
+        # the raw, unescaped injection must NOT appear structurally
+        assert bind_dn != "uid=alice,cn=admin,ou=users,dc=example,dc=com"
 
     @patch("sbom_graph_api.services.ldap_service.Connection")
     @patch("sbom_graph_api.services.ldap_service.Server")

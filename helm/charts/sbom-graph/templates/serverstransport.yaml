@@ -1,0 +1,12 @@
+{{- if and .Values.sbomGraphApi.enabled .Values.ingress.enabled .Values.falkordb.tls.enabled }}
+# Traefik backend transport: sbom-graph-api serves HTTPS (self-signed pod cert).
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: {{ include "sbom-graph.sbomGraphApi.fullname" . }}
+  labels:
+    {{- include "sbom-graph.sbomGraphApi.labels" . | nindent 4 }}
+spec:
+  serverName: {{ .Values.ingress.host | quote }}
+  insecureSkipVerify: true
+{{- end }}

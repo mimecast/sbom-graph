@@ -289,14 +289,14 @@ if $PUSH; then
             echo "    No builds ran (images skipped as already present locally)."
         fi
     else
-    echo "==> Pushing images to registry..."
-    for ref in "${BUILT_IMAGES[@]}"; do
+        echo "==> Pushing images to registry..."
+        for ref in "${BUILT_IMAGES[@]}"; do
             echo "    ${DOCKER} push $ref"
             run "${DOCKER}" push "$ref"
-    done
-    if [[ ${#BUILT_IMAGES[@]} -eq 0 ]]; then
-        echo "    Nothing to push (no images were built)."
-    fi
+        done
+        if [[ ${#BUILT_IMAGES[@]} -eq 0 ]]; then
+            echo "    Nothing to push (no images were built)."
+        fi
     fi
 fi
 
@@ -314,9 +314,9 @@ if $LOAD_MINIKUBE; then
     for ref in "$API_REF" "$ENR_REF" "$LIS_REF"; do
         if image_exists_locally "$ref"; then
             if [[ "${MINIKUBE_IMAGE_OVERWRITE}" == "1" ]]; then
-            echo "    minikube image load $ref --overwrite"
-            run minikube image load "$ref" --overwrite
-        else
+                echo "    minikube image load $ref --overwrite"
+                run minikube image load "$ref" --overwrite
+            else
                 echo "    minikube image load $ref"
                 run minikube image load "$ref"
             fi

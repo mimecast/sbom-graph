@@ -131,6 +131,7 @@ class TestSourceReposReport:
         with patch("sbom_graph_api.routes.reports.inventory.get_falkordb_service") as mock_get_svc:
             mock_svc = MagicMock()
             mock_svc.get_all_source_repos.return_value = mock_repos
+            mock_svc.count_source_repos.return_value = 1
             mock_get_svc.return_value = mock_svc
 
             response = client.get(
@@ -141,10 +142,10 @@ class TestSourceReposReport:
         assert response.status_code == 200
         assert "application/json" in response.content_type
         data = response.get_json()
+        # Phase 1: unified streamed JSON envelope (data + stats + report_type)
         assert "data" in data
         assert data["data"] == mock_repos
-        assert data["total"] == 1
-        assert "report_type" in data
+        assert data["stats"]["total_repositories"] == 1
         assert data["report_type"] == "source-repos"
 
 

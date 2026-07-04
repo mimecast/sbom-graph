@@ -6,23 +6,32 @@ from unittest.mock import MagicMock, patch
 class TestAllVulnerabilitiesRoute:
     """Tests for the all_vulnerabilities report endpoint."""
 
+    def _make_mock_service(self, page=None, count=0, stats=None):
+        """Build a mock service wired to the new paged contract."""
+        mock_service = MagicMock()
+        mock_service.get_all_vulnerabilities_paged.return_value = page or []
+        mock_service.count_all_vulnerabilities.return_value = count
+        mock_service.get_vulnerability_summary_stats.return_value = stats or {
+            "total": count,
+            "with_vex": 0,
+            "severity_counts": {},
+            "total_affected": 0,
+        }
+        return mock_service
+
     def test_vex_filter_hide_not_affected(self, client):
         """vex_filter=hide_not_affected excludes not_affected vulnerabilities."""
-        mock_service = MagicMock()
-        mock_service.get_all_vulnerabilities.return_value = [
-            {
-                "defect_id": "CVE-1",
-                "severity": "HIGH",
-                "vex_status": "not_affected",
-                "affected_versions": [{"project_name": "lib", "version": "1.0"}],
-            },
-            {
-                "defect_id": "CVE-2",
-                "severity": "MEDIUM",
-                "vex_status": "affected",
-                "affected_versions": [{"project_name": "lib", "version": "1.0"}],
-            },
-        ]
+        mock_service = self._make_mock_service(
+            page=[
+                {
+                    "defect_id": "CVE-2",
+                    "severity": "MEDIUM",
+                    "vex_status": "affected",
+                    "affected_versions": [{"project_name": "lib", "version": "1.0"}],
+                },
+            ],
+            count=1,
+        )
 
         with patch(
             "sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service",
@@ -36,21 +45,17 @@ class TestAllVulnerabilitiesRoute:
 
     def test_vex_filter_under_investigation(self, client):
         """vex_filter=under_investigation shows only under_investigation vulns."""
-        mock_service = MagicMock()
-        mock_service.get_all_vulnerabilities.return_value = [
-            {
-                "defect_id": "CVE-1",
-                "severity": "HIGH",
-                "vex_status": "affected",
-                "affected_versions": [],
-            },
-            {
-                "defect_id": "CVE-2",
-                "severity": "MEDIUM",
-                "vex_status": "under_investigation",
-                "affected_versions": [],
-            },
-        ]
+        mock_service = self._make_mock_service(
+            page=[
+                {
+                    "defect_id": "CVE-2",
+                    "severity": "MEDIUM",
+                    "vex_status": "under_investigation",
+                    "affected_versions": [],
+                },
+            ],
+            count=1,
+        )
 
         with patch(
             "sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service",
@@ -64,21 +69,24 @@ class TestAllVulnerabilitiesRoute:
 
     def test_vex_coverage_in_stats(self, client):
         """VEX coverage percentage is included in stats."""
-        mock_service = MagicMock()
-        mock_service.get_all_vulnerabilities.return_value = [
-            {
-                "defect_id": "CVE-1",
-                "severity": "HIGH",
-                "vex_status": "not_affected",
-                "affected_versions": [],
-            },
-            {
-                "defect_id": "CVE-2",
-                "severity": "LOW",
-                "vex_status": None,
-                "affected_versions": [],
-            },
-        ]
+        mock_service = self._make_mock_service(
+            page=[
+                {
+                    "defect_id": "CVE-1",
+                    "severity": "HIGH",
+                    "vex_status": "not_affected",
+                    "affected_versions": [],
+                },
+                {
+                    "defect_id": "CVE-2",
+                    "severity": "LOW",
+                    "vex_status": None,
+                    "affected_versions": [],
+                },
+            ],
+            count=2,
+            stats={"total": 2, "with_vex": 1, "severity_counts": {}, "total_affected": 0},
+        )
 
         with patch(
             "sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service",
@@ -92,8 +100,7 @@ class TestAllVulnerabilitiesRoute:
 
     def test_empty_vulns_vex_coverage_zero(self, client):
         """When no vulns, VEX coverage is 0%."""
-        mock_service = MagicMock()
-        mock_service.get_all_vulnerabilities.return_value = []
+        mock_service = self._make_mock_service(page=[], count=0)
 
         with patch(
             "sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service",
@@ -105,9 +112,8 @@ class TestAllVulnerabilitiesRoute:
         assert b"0.0%" in response.data or b"0%" in response.data
 
     def test_defect_id_match_passed_to_service(self, client):
-        """defect_id_match query param is forwarded when valid."""
-        mock_service = MagicMock()
-        mock_service.get_all_vulnerabilities.return_value = []
+        """defect_id_match query param is forwarded to the paged service method."""
+        mock_service = self._make_mock_service(page=[], count=0)
 
         with patch(
             "sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service",
@@ -115,10 +121,9 @@ class TestAllVulnerabilitiesRoute:
         ):
             client.get("/reports/vulnerabilities?defect_id_match=CVE-2024")
 
-        mock_service.get_all_vulnerabilities.assert_called_with(
-            False,
-            "CVE-2024",
-        )
+        mock_service.get_all_vulnerabilities_paged.assert_called_once()
+        call_args = mock_service.get_all_vulnerabilities_paged.call_args
+        assert call_args.args[1] == "CVE-2024" or call_args.kwargs.get("defect_id_match") == "CVE-2024"
 
     """Tests for GET /reports/vulnerability-dependants/<defect_id>."""
 

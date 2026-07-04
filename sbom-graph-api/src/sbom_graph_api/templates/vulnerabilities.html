@@ -133,6 +133,8 @@
     <div class="empty-message">No vulnerabilities found</div>
     {% endif %}
 
+    {% include '_pagination.html' %}
+
     <script>
         function applyDefectIdMatchToUrl(currentUrl) {
             const raw = document.getElementById('defectIdMatchInput').value.trim();

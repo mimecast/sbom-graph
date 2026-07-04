@@ -29,30 +29,6 @@ RUN uv pip install --target=/app/dependencies --native-tls --no-cache --no-sourc
 
 RUN mkdir -p /data /certs && chown -R nonroot:nonroot /app /data /certs
 
-
-# Install build dependencies
-# RUN apt-get update && apt-get install -y --no-install-recommends \
-#     gcc \
-#     libffi-dev \
-#     && rm -rf /var/lib/apt/lists/*
-
-# Install uv for dependency management
-# COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-
-# Set working directory
-# WORKDIR /app
-
-# Copy dependency files first for better layer caching
-# COPY ./sbom-graph-model/dist/*.whl ./deps/
-# COPY ./sbom-graph-api/pyproject.toml ./sbom-graph-api/uv.lock ./sbom-graph-api/README.md ./
-# Copy application source code
-# COPY ./sbom-graph-api/src/ ./src/
-# COPY ./sbom-graph-api/scripts/ ./scripts/
-# COPY ./sbom-graph-api/gunicorn.conf.py ./
-# COPY ./sbom-graph-api/entrypoint.sh ./
-# RUN uv pip install --target=/app/dependencies --no-cache --no-sources ./deps/*.whl .
-
-
 # ============================================================================
 # Stage 2: Runtime - python:3.14-slim (matches builder for C extension ABI)
 # ============================================================================
@@ -139,34 +115,3 @@ USER daemon
 # TLS is automatically enabled when TLS_ENABLED=true and cert/key files are set
 # The gunicorn_config.py reads environment variables for TLS configuration
 ENTRYPOINT ["python", "-m", "gunicorn", "-c", "/app/gunicorn.conf.py", "sbom_graph_api.wsgi:app"]
-
-# FROM python:3.14-slim
-
-# Create nonroot user (UID 65532 matches Kubernetes runAsUser)
-# RUN groupadd --gid 65532 nonroot \
-#     && useradd --uid 65532 --gid nonroot --shell /usr/sbin/nologin --no-create-home nonroot
-
-# Set working directory
-# WORKDIR /app
-
-# Copy installed dependencies from builder
-# COPY --from=builder /app/dependencies /app/dependencies
-
-# Copy application source (needed for imports)
-# COPY --from=builder /app/src /app/src
-
-# Copy gunicorn configuration file
-# COPY --from=builder /app/gunicorn.conf.py /app/gunicorn.conf.py
-
-# Copy scripts (populate_acme_corp for init-data job)
-# COPY --from=builder /app/scripts /app/scripts
-
-# Copy and set up entrypoint (logs startup for debugging empty logs)
-# COPY --from=builder /app/entrypoint.sh /app/entrypoint.sh
-# RUN chmod +x /app/entrypoint.sh
-
-# Create volume directories and set ownership
-# RUN mkdir -p /data /certs && chown -R nonroot:nonroot /app /data /certs
-
-# Set Python path to include our dependencies and source
-# ENV PYTHONPATH=/app/dependencies:/app/src

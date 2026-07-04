@@ -45,6 +45,27 @@ class TestSecretFromEnvOrFile:
 class TestFalkorDBConfig:
     """Tests for FalkorDBConfig class."""
 
+    def _kwargs(self, **overrides):
+        base = {
+            "host": "h", "port": 6379, "password": None, "graph_name": "g",
+            "socket_timeout": 30.0, "socket_connect_timeout": 10.0,
+            "internal_label": "INTERNAL", "ssl": False, "ssl_ca_certs": None,
+        }
+        base.update(overrides)
+        return base
+
+    def test_rejects_unsafe_internal_label(self):
+        """SECURITY (CWE-943): an internal_label that isn't a safe Cypher
+        identifier must be rejected — it is interpolated into Cypher labels."""
+        import pytest
+        for bad in ["INTERNAL' OR 1=1 //", "Bad Label", "1NTERNAL", "x;y", ""]:
+            with pytest.raises(ValueError):
+                FalkorDBConfig(**self._kwargs(internal_label=bad))
+
+    def test_accepts_safe_internal_label(self):
+        cfg = FalkorDBConfig(**self._kwargs(internal_label="INTERNAL"))
+        assert cfg.internal_label == "INTERNAL"
+
     # Positive tests
 
     def test_from_env_with_defaults(self, monkeypatch):

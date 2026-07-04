@@ -32,13 +32,35 @@ FalkorDB password:
     -n {{ .Release.Namespace }} \
     -o jsonpath='{.data.password}' | base64 -d; echo
 
-Webhook HMAC secret (configure in your SonaType webhook):
+Webhook HMAC secret (generate once, configure in Sonatype Lifecycle Admin → Webhooks):
+
+  ./scripts/generate-webhook-secret.sh --k8s-secret {{ .Release.Namespace }} {{ include "sbom-graph.webhookSecret.secretName" . }}
+
+  Or retrieve the value Helm stored in Secret {{ include "sbom-graph.webhookSecret.secretName" . }}:
 
   kubectl get secret {{ include "sbom-graph.webhookSecret.secretName" . }} \
     -n {{ .Release.Namespace }} \
     -o jsonpath='{.data.webhook-secret}' | base64 -d; echo
 
-  SonaType must send header:  X-Webhook-Signature: sha256=<HMAC-SHA256 hex digest of body>
+  Sonatype must send header:  X-Nexus-Webhook-Signature: sha256=<HMAC-SHA256 hex digest of body>
+
+Configure the Lifecycle webhook URL (pick one):
+
+{{- if .Values.ingress.enabled }}
+  External (Traefik):  https://{{ .Values.ingress.host }}{{ .Values.ingress.webhookPath | default "/webhook" }}
+{{- end }}
+  In-cluster:          http://{{ include "sbom-graph.releaseListener.clusterHostname" . }}{{ .Values.ingress.webhookPath | default "/webhook" }}
+
+Sonatype API credentials (outbound SBOM fetch) — pre-create Secret {{ include "sbom-graph.sonatype.secretName" . }}:
+
+  kubectl create secret generic {{ include "sbom-graph.sonatype.secretName" . }} \
+    -n {{ .Release.Namespace }} \
+    --from-literal=sonatype-username='<iq-user>' \
+    --from-literal=sonatype-password='<iq-pass>'
+
+  Chart uses releaseListener.sonatype.existingSecret (default sbom-graph-sonatype) so Helm
+  does not try to adopt a manually created Secret. Local dev: set existingSecret="" and pass
+  --set releaseListener.sonatype.username=... --set releaseListener.sonatype.password=...
 
 SBOM Graph API application secrets:
 
@@ -56,7 +78,19 @@ SBOM Graph API application secrets:
 
 ─── Access ───
 
+{{- if .Values.ingress.enabled }}
+
 Access the SBOM Graph API UI:
+
+  https://{{ .Values.ingress.host }}{{ .Values.ingress.path }}
+
+Release listener webhook (when ingress enabled):
+
+  https://{{ .Values.ingress.host }}{{ .Values.ingress.webhookPath | default "/webhook" }}
+
+{{- else }}
+
+Access the SBOM Graph API UI (port-forward):
 
 {{- if .Values.falkordb.tls.enabled }}
   kubectl port-forward svc/{{ include "sbom-graph.sbomGraphApi.fullname" . }} 8443:{{ .Values.sbomGraphApi.service.port }}
@@ -67,4 +101,5 @@ Then open https://localhost:8443 in your browser.
   kubectl port-forward svc/{{ include "sbom-graph.sbomGraphApi.fullname" . }} 8080:{{ .Values.sbomGraphApi.service.port }}
 
 Then open http://localhost:8080 in your browser.
+{{- end }}
 {{- end }}

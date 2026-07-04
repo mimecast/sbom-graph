@@ -4,16 +4,24 @@ This module creates visualizations showing all dependants of a library
 traversing back to the leaf nodes (applications that have no dependants).
 """
 
+import logging
+
 import networkx as nx
 from markupsafe import escape
 from pyvis.network import Network
 
 from sbom_graph_api.services.falkordb_service import FalkorDBService, get_falkordb_service
+from sbom_graph_api.visualizations._bounded import bound_nodes_edges, inject_truncation_banner
 from sbom_graph_api.visualizations.kpartite import (
     calculate_partitions_longest_path,
     format_properties_for_tooltip,
     get_partition_color,
 )
+
+logger = logging.getLogger(__name__)
+
+MAX_VIZ_NODES = 2000
+MAX_VIZ_EDGES = 5000
 
 
 def create_dependants_graph_visualization(
@@ -67,6 +75,14 @@ def create_dependants_graph_visualization(
     )
 
     root_id = f"{project_name}:{version_name}"
+    nodes, edges, _truncated, _dropped = bound_nodes_edges(
+        nodes, edges, MAX_VIZ_NODES, MAX_VIZ_EDGES, root_id=root_id
+    )
+    if _truncated:
+        logger.warning(
+            "Dependants graph for %s@%s truncated at %d nodes (%d dropped)",
+            project_name, version_name, MAX_VIZ_NODES, _dropped,
+        )
 
     # Build NetworkX graph for layout calculation
     # Note: We reverse the edges for partition calculation since we want
@@ -214,4 +230,7 @@ def create_dependants_graph_visualization(
     for edge in edges:
         net.add_edge(edge["source"], edge["target"], title=edge["type"], arrows="to")
 
-    return net.generate_html()
+    html = net.generate_html()
+    if _truncated:
+        html = inject_truncation_banner(html, MAX_VIZ_NODES, _dropped)
+    return html

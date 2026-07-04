@@ -11,13 +11,13 @@ from datetime import timedelta
 from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
 from flask_jwt_extended import JWTManager
 from flask_wtf.csrf import CSRFError, CSRFProtect
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from sbom_graph_api.config import get_config
 from sbom_graph_api.routes import (
     admin,
     api_v1,
     auth,
-    exports,
     ingest,
     reports,
     schemas,
@@ -48,6 +48,15 @@ def create_app() -> Flask:
     static_dir = os.path.join(os.path.dirname(__file__), "static")
     app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 
+    # Behind a reverse proxy / K8s ingress, trust X-Forwarded-* so request.remote_addr
+    # reflects the real client IP (rate limiters key on it). TRUSTED_PROXY_HOPS=0
+    # disables this for direct-exposure deployments (where XFF would be spoofable).
+    _proxy_hops = int(os.environ.get("TRUSTED_PROXY_HOPS", "1"))
+    if _proxy_hops > 0:
+        app.wsgi_app = ProxyFix(  # type: ignore[method-assign]
+            app.wsgi_app, x_for=_proxy_hops, x_proto=_proxy_hops, x_host=_proxy_hops
+        )
+
     config = get_config()
 
     # Reject known insecure default secrets in non-debug mode
@@ -63,8 +72,13 @@ def create_app() -> Flask:
                     f"Set a strong, unique value via environment variable before deploying."
                 )
 
-    # Warn if LDAP is enabled without SSL
+    # LDAP without TLS sends bind credentials in cleartext (CWE-319).
     if config.ldap.enabled and not config.ldap.use_ssl:
+        if not config.debug:
+            raise RuntimeError(
+                "LDAP is enabled without TLS (LDAP_USE_SSL=false); bind credentials "
+                "would be sent in cleartext. Set LDAP_USE_SSL=true before deploying."
+            )
         logger.warning(
             "LDAP is enabled without SSL (LDAP_USE_SSL=false). "
             "Credentials will be sent in cleartext. Set LDAP_USE_SSL=true for production."
@@ -124,7 +138,6 @@ def create_app() -> Flask:
     app.register_blueprint(admin.bp)
     app.register_blueprint(auth.bp)
     app.register_blueprint(visualizations.bp)
-    app.register_blueprint(exports.bp)
     app.register_blueprint(reports.bp)
     app.register_blueprint(schemas.bp)
     app.register_blueprint(ingest.bp)
@@ -152,6 +165,20 @@ def create_app() -> Flask:
         response.headers.setdefault(
             "Permissions-Policy",
             "geolocation=(), microphone=(), camera=()",
+        )
+        # PyVis visualizations embed inline JS/CSS (cdn_resources="in_line"), so
+        # script/style-src must allow 'unsafe-inline'; everything else is locked to
+        # 'self'. frame-ancestors 'none' complements X-Frame-Options: DENY.
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "base-uri 'self'; "
+            "form-action 'self'; "
+            "frame-ancestors 'none'",
         )
         return response
 
@@ -251,8 +278,6 @@ def create_app() -> Flask:
 
 def _is_api_request() -> bool:
     """Check if the current request is an API request."""
-    from flask import request
-
     return (
         request.is_json
         or request.headers.get("Accept") == "application/json"

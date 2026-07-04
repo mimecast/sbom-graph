@@ -199,13 +199,31 @@ class TestRecommendation:
         )
 
 
+_TRUST_SCORES_SUMMARY = {
+    "total": 1,
+    "avg_direct": 7.5,
+    "avg_effective": 6.8,
+    "low": 0,
+    "medium": 1,
+    "high": 0,
+}
+
+
+def _make_trust_scores_mock(rows=None, count=0) -> MagicMock:
+    """Return a mock service with all trust-scores methods stubbed."""
+    mock_service = MagicMock()
+    mock_service.get_all_trust_scores_for_report.return_value = rows or []
+    mock_service.count_all_trust_scores_for_report.return_value = count
+    mock_service.get_trust_scores_summary.return_value = _TRUST_SCORES_SUMMARY
+    return mock_service
+
+
 class TestTrustScoresReport:
     """Tests for GET /reports/trust-scores."""
 
     def test_returns_html(self, client) -> None:
         """Default format returns HTML."""
-        mock_service = MagicMock()
-        mock_service.get_all_trust_scores_for_report.return_value = [
+        rows = [
             {
                 "purl": "pkg:npm/foo@1.0",
                 "project_name": "foo",
@@ -216,6 +234,7 @@ class TestTrustScoresReport:
                 "sources_used": ["osv", "scorecard"],
             },
         ]
+        mock_service = _make_trust_scores_mock(rows=rows, count=1)
 
         with patch(
             "sbom_graph_api.routes.reports.trust_scores.get_falkordb_service",
@@ -228,9 +247,8 @@ class TestTrustScoresReport:
         assert b"foo" in resp.data
 
     def test_returns_json(self, client) -> None:
-        """format=json returns JSON."""
-        mock_service = MagicMock()
-        mock_service.get_all_trust_scores_for_report.return_value = [
+        """format=json returns streamed JSON with report_type in meta."""
+        rows = [
             {
                 "purl": "pkg:npm/foo@1.0",
                 "project_name": "foo",
@@ -241,6 +259,7 @@ class TestTrustScoresReport:
                 "sources_used": ["osv", "scorecard"],
             },
         ]
+        mock_service = _make_trust_scores_mock(rows=rows, count=1)
 
         with patch(
             "sbom_graph_api.routes.reports.trust_scores.get_falkordb_service",
@@ -251,13 +270,11 @@ class TestTrustScoresReport:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["report_type"] == "trust-scores"
-        assert data["count"] == 1
-        assert data["trust_scores"][0]["purl"] == "pkg:npm/foo@1.0"
+        assert any(r["purl"] == "pkg:npm/foo@1.0" for r in data["data"])
 
     def test_returns_excel(self, client) -> None:
         """format=excel returns Excel download."""
-        mock_service = MagicMock()
-        mock_service.get_all_trust_scores_for_report.return_value = [
+        rows = [
             {
                 "purl": "pkg:npm/foo@1.0",
                 "project_name": "foo",
@@ -268,6 +285,7 @@ class TestTrustScoresReport:
                 "sources_used": ["osv"],
             },
         ]
+        mock_service = _make_trust_scores_mock(rows=rows, count=1)
 
         with patch(
             "sbom_graph_api.routes.reports.trust_scores.get_falkordb_service",
@@ -280,8 +298,7 @@ class TestTrustScoresReport:
 
     def test_internal_only_passed_to_service(self, client) -> None:
         """internal_only param is passed to service."""
-        mock_service = MagicMock()
-        mock_service.get_all_trust_scores_for_report.return_value = []
+        mock_service = _make_trust_scores_mock()
 
         with patch(
             "sbom_graph_api.routes.reports.trust_scores.get_falkordb_service",
@@ -291,6 +308,117 @@ class TestTrustScoresReport:
 
         call_kwargs = mock_service.get_all_trust_scores_for_report.call_args.kwargs
         assert call_kwargs.get("internal_only") is True
+
+    def test_name_filter_threaded_and_search_box_renders(self, client) -> None:
+        """The name param reaches page/count/summary and the search box is prefilled."""
+        mock_service = _make_trust_scores_mock()
+
+        with patch(
+            "sbom_graph_api.routes.reports.trust_scores.get_falkordb_service",
+            return_value=mock_service,
+        ):
+            resp = client.get("/reports/trust-scores?name=foo")
+
+        assert resp.status_code == 200
+        assert mock_service.get_all_trust_scores_for_report.call_args.kwargs.get("name") == "foo"
+        assert mock_service.count_all_trust_scores_for_report.call_args.kwargs.get("name") == "foo"
+        assert mock_service.get_trust_scores_summary.call_args.kwargs.get("name") == "foo"
+        html = resp.data.decode("utf-8")
+        assert "nameSearch" in html
+        assert 'value="foo"' in html
+
+    def test_html_includes_avg_direct_score(self, client) -> None:
+        """HTML stats block includes Avg Direct Score (restored in Phase 1.6)."""
+        mock_service = _make_trust_scores_mock()
+        mock_service.get_trust_scores_summary.return_value = {
+            "total": 3,
+            "avg_direct": 6.20,
+            "avg_effective": 5.80,
+            "low": 1,
+            "medium": 1,
+            "high": 1,
+        }
+
+        with patch(
+            "sbom_graph_api.routes.reports.trust_scores.get_falkordb_service",
+            return_value=mock_service,
+        ):
+            resp = client.get("/reports/trust-scores")
+
+        assert resp.status_code == 200
+        assert b"Avg Direct Score" in resp.data
+        assert b"6.20" in resp.data
+
+    def test_html_includes_avg_effective_score(self, client) -> None:
+        """HTML stats block includes Avg Effective Score (restored in Phase 1.6)."""
+        mock_service = _make_trust_scores_mock()
+        mock_service.get_trust_scores_summary.return_value = {
+            "total": 3,
+            "avg_direct": 6.20,
+            "avg_effective": 5.80,
+            "low": 1,
+            "medium": 1,
+            "high": 1,
+        }
+
+        with patch(
+            "sbom_graph_api.routes.reports.trust_scores.get_falkordb_service",
+            return_value=mock_service,
+        ):
+            resp = client.get("/reports/trust-scores")
+
+        assert resp.status_code == 200
+        assert b"Avg Effective Score" in resp.data
+        assert b"5.80" in resp.data
+
+    def test_html_includes_distribution(self, client) -> None:
+        """HTML stats block includes Distribution (Low/Med/High) (restored in Phase 1.6)."""
+        mock_service = _make_trust_scores_mock()
+        mock_service.get_trust_scores_summary.return_value = {
+            "total": 3,
+            "avg_direct": 6.20,
+            "avg_effective": 5.80,
+            "low": 1,
+            "medium": 1,
+            "high": 1,
+        }
+
+        with patch(
+            "sbom_graph_api.routes.reports.trust_scores.get_falkordb_service",
+            return_value=mock_service,
+        ):
+            resp = client.get("/reports/trust-scores")
+
+        assert resp.status_code == 200
+        assert b"Distribution (Low/Med/High)" in resp.data
+        assert b"1/1/1" in resp.data
+
+    def test_json_stats_include_avg_and_distribution(self, client) -> None:
+        """JSON stats block includes avg scores and distribution (Phase 1.6)."""
+        mock_service = _make_trust_scores_mock()
+        mock_service.get_trust_scores_summary.return_value = {
+            "total": 2,
+            "avg_direct": 8.00,
+            "avg_effective": 7.50,
+            "low": 0,
+            "medium": 0,
+            "high": 2,
+        }
+        mock_service.count_all_trust_scores_for_report.return_value = 2
+
+        with patch(
+            "sbom_graph_api.routes.reports.trust_scores.get_falkordb_service",
+            return_value=mock_service,
+        ):
+            resp = client.get("/reports/trust-scores?format=json")
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        stats = data.get("stats", {})
+        assert "Avg Direct Score" in stats
+        assert "Avg Effective Score" in stats
+        assert "Distribution (Low/Med/High)" in stats
+        assert stats["Distribution (Low/Med/High)"] == "0/0/2"
 
 
 class TestTrustScoreGapsReport:
@@ -345,7 +473,7 @@ class TestTrustScoreGapsReport:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["report_type"] == "trust-score-gaps"
-        assert data["count"] == 1
+        assert data["stats"]["count"] == 1
 
     def test_limit_param_passed_to_service(self, client) -> None:
         """limit param is passed to service."""
@@ -411,7 +539,7 @@ class TestTrustScoreHeatmap:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["report_type"] == "trust-score-heatmap"
-        assert data["count"] == 1
+        assert data["stats"]["count"] == 1
         assert len(data["packages"]) == 1
 
 

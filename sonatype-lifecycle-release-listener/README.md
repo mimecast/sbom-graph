@@ -106,40 +106,22 @@ docker run -p 8000:8000 \
 
 ### Kubernetes (Helm)
 
+Deployment is via the monorepo **umbrella chart** at `helm/charts/sbom-graph` (the former
+standalone `sonatype-lifecycle-release-listener/helm/` chart was removed). To deploy the listener
+on its own — e.g. against an existing/external FalkorDB — disable the other components:
+
 ```bash
-# Install the Helm chart
-helm install sonatype-lifecycle-release-listener ./helm/sonatype-lifecycle-release-listener \
-  --set secrets.sonatypeUsername=your_user \
-  --set secrets.sonatypePassword=your_pass \
-  --set sonatype.host=https://nexus.example.com \
-  --set falkordb.host=falkordb-service \
-  --set falkordb.graphName=acme-corp
-
-# With FalkorDB password (from values or existing secret)
-helm install sonatype-lifecycle-release-listener ./helm/sonatype-lifecycle-release-listener \
-  --set secrets.sonatypeUsername=your_user \
-  --set secrets.sonatypePassword=your_pass \
-  --set falkordb.host=falkordb \
-  --set falkordb.graphName=acme-corp \
-  --set falkordb.password=secret
-
-# Or using an existing secret
-helm install sonatype-lifecycle-release-listener ./helm/sonatype-lifecycle-release-listener \
-  --set secrets.existingSecret=my-secret \
-  --set secrets.existingSecretFalkordbPasswordKey=falkordb-password \
-  --set falkordb.host=falkordb-service
-
-# Upgrade an existing release
-helm upgrade sonatype-lifecycle-release-listener ./helm/sonatype-lifecycle-release-listener \
-  --reuse-values
-
-# Uninstall
-helm uninstall sonatype-lifecycle-release-listener
+helm upgrade --install sbom-graph ../helm/charts/sbom-graph \
+  --set releaseListener.enabled=true \
+  --set sbomGraphApi.enabled=false \
+  --set enrichment.enabled=false \
+  --set falkordb.enabled=false \
+  --set falkordb.connectHost=<external-falkordb-host> \
+  --set falkordb.password=<external-falkordb-password>
 ```
 
-Key Helm values: `sonatype.host`, `falkordb.host`, `falkordb.port`,
-`falkordb.graphName`, `falkordb.password`, `config.caCerts`, `config.caCertsPath`,
-`config.internalPrefixes`. See `helm/sonatype-lifecycle-release-listener/values.yaml`.
+Sonatype credentials and the webhook HMAC secret are configured under `releaseListener.*` — see
+`helm/charts/sbom-graph/values.yaml` for the full, authoritative value schema.
 
 #### INTERNAL_PREFIXES Configuration
 
@@ -148,10 +130,10 @@ Projects can be marked as INTERNAL based on configurable field prefixes. Set
 comma-separated string of `field:prefix` pairs. Format: `"group:com.acme,name:acme-"`.
 Supported fields: `group`, `name`, `purl`.
 
-Example with Helm:
+Example with Helm (umbrella chart uses `global.internalPrefixes`):
 ```bash
-helm install sonatype-lifecycle-release-listener ./helm/sonatype-lifecycle-release-listener \
-  --set config.internalPrefixes="group:com.acme,name:acme-" \
+helm upgrade --install sbom-graph ../helm/charts/sbom-graph \
+  --set global.internalPrefixes="group:com.acme, name:acme-" \
   ...
 ```
 

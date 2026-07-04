@@ -54,10 +54,13 @@ class TestProjectsJsonFormat:
                 {"project_name": "project-a", "version": "2.0.0"},
                 {"project_name": "project-b", "version": "1.0.0"},
             ]
+            # Phase 1: streamed JSON reports stats come from count_* queries.
+            mock_service.count_all_projects.return_value = 3
+            mock_service.count_unique_projects.return_value = 2
             mock_get_service.return_value = mock_service
 
             response = client.get("/reports/projects?format=json")
-            data = json.loads(response.data)
+            data = json.loads(b"".join(response.response) if response.is_streamed else response.data)
 
             assert data["stats"]["total_project_versions"] == 3
             assert data["stats"]["unique_projects"] == 2

@@ -8,7 +8,7 @@ class TestLicensesReport:
 
     def test_json_format(self, client) -> None:
         mock_service = MagicMock()
-        mock_service.get_all_licenses.return_value = [
+        license_rows = [
             {"spdx_id": "MIT", "name": "MIT", "risk_category": "permissive", "usage_count": 42},
             {
                 "spdx_id": "GPL-3.0-only",
@@ -17,6 +17,8 @@ class TestLicensesReport:
                 "usage_count": 3,
             },
         ]
+        mock_service.get_all_licenses.return_value = license_rows
+        mock_service.count_all_licenses.return_value = 2
 
         with patch(
             "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
@@ -26,12 +28,14 @@ class TestLicensesReport:
 
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["total"] == 2
-        assert data["licenses"][0]["spdx_id"] == "MIT"
+        # new format: streamed JSON has "data" array and "report_type" in meta
+        assert data["report_type"] == "licenses"
+        assert any(r["spdx_id"] == "MIT" for r in data["data"])
 
     def test_html_format(self, client) -> None:
         mock_service = MagicMock()
         mock_service.get_all_licenses.return_value = []
+        mock_service.count_all_licenses.return_value = 0
 
         with patch(
             "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
@@ -45,15 +49,18 @@ class TestLicensesReport:
     def test_internal_only_toggle(self, client) -> None:
         mock_service = MagicMock()
         mock_service.get_all_licenses.return_value = []
+        mock_service.count_all_licenses.return_value = 0
 
         with patch(
             "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
             return_value=mock_service,
         ):
-            resp = client.get("/reports/licenses?internal_only=false&format=json")
+            resp = client.get("/reports/licenses?internal_only=false&format=html")
 
         assert resp.status_code == 200
-        mock_service.get_all_licenses.assert_called_once_with(internal_only=False)
+        # new paged format — get_all_licenses is called with internal_only=False plus limit+offset
+        call_kwargs = mock_service.get_all_licenses.call_args.kwargs
+        assert call_kwargs["internal_only"] is False
 
 
 class TestLicenseSummaryReport:
@@ -116,6 +123,33 @@ class TestLicenseConflictsReport:
         data = resp.get_json()
         assert data["total"] == 1
         assert "GPL-3.0-only" in data["conflicts"][0]["licenses"]
+
+    def test_html_paginates(self, client) -> None:
+        """HTML renders ONE bounded page (computed-once list sliced) + pagination controls."""
+        conflicts = [
+            {
+                "project_group": "g",
+                "project_name": f"app-{i}",
+                "version_name": "1.0.0",
+                "licenses": ["MIT", "GPL-3.0-only"],
+                "risk_categories": ["permissive", "strong_copyleft"],
+            }
+            for i in range(5)
+        ]
+        mock_service = MagicMock()
+        mock_service.get_license_conflicts.return_value = conflicts
+
+        with patch(
+            "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
+            return_value=mock_service,
+        ):
+            resp = client.get("/reports/license-conflicts?page=1&page_size=2")
+
+        assert resp.status_code == 200
+        html = resp.data.decode()
+        assert "app-0" in html and "app-1" in html
+        assert "app-2" not in html  # bounded to page 1, not full render
+        assert "Page 1 of 3" in html  # 5 conflicts / 2 per page
 
 
 class TestPackageLicensesApi:

@@ -100,9 +100,9 @@ Examples:
   ./build-images.sh --multi-arch --push --adv-tag registry.example/sbom-graph-api:v1 sbom-graph-api
 
 Environment variables:
-  ADV_TAG    Override sbom-graph-api image tag (empty = auto from pyproject)
-  RL_TAG     Override sonatype-lifecycle-release-listener image tag (empty = auto)
-  ENR_TAG    Override sbom-graph-enrichment image tag (empty = auto)
+  ADV_TAG                 Override sbom-graph-api image tag (empty = auto from pyproject)
+  RL_TAG                  Override sonatype-lifecycle-release-listener image tag (empty = auto)
+  ENR_TAG                 Override sbom-graph-enrichment image tag (empty = auto)
   DOCKER_BUILD_PLATFORMS  Comma-separated platforms (default: linux/amd64). Example: linux/amd64,linux/arm64
   DOCKER_BUILD_PUSH       Set to 1 to push during build (same as --push)
   DOCKER_BUILDX_BUILDER   buildx builder name for multi-arch (default: sbom-graph-buildx)

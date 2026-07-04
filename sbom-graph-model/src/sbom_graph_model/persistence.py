@@ -18,6 +18,8 @@ from .model import (
     Version,
     Defect,
     VersionDefect,
+    PolicyType,
+    VexStatus,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,11 +59,31 @@ _SBOM_GRAPH_CONFIG_ID_VALUE = "__sbom_graph__"
 INTERNAL_PREFIX_OVERLAY_PROP = "internal_prefixes_overlay"
 _MAX_INTERNAL_PREFIX_OVERLAY_CHARS = 16_384
 
-# Maps SBOM-derived rule fields onto Version-node property names used in Cypher.
-INTERNAL_RULE_FIELD_TO_VERSION_PROPERTY: dict[str, str] = {
-    "group": "project_group",
-    "name": "project_name",
-    "purl": "package_url",
+# Pre-built, fully-literal Cypher per internal-prefix field. Selecting a complete
+# query from this lookup table (rather than f-string-interpolating the column name)
+# keeps the property name out of dynamic string building and avoids training an
+# unsafe Cypher-construction pattern (L7). The only runtime substitution is the
+# allowlist-validated secondary label — Cypher cannot parameterise a label — and it
+# is backtick-quoted so a hyphenated label is still valid (see L9).
+_INTERNAL_LABEL_BACKFILL_BY_FIELD: dict[str, str] = {
+    "group": (
+        "MATCH (v:Version)\n"
+        "WHERE v.project_group IS NOT NULL "
+        "AND toString(v.project_group) STARTS WITH $prefix "
+        "SET v:`{label}` RETURN count(v) AS cnt"
+    ),
+    "name": (
+        "MATCH (v:Version)\n"
+        "WHERE v.project_name IS NOT NULL "
+        "AND toString(v.project_name) STARTS WITH $prefix "
+        "SET v:`{label}` RETURN count(v) AS cnt"
+    ),
+    "purl": (
+        "MATCH (v:Version)\n"
+        "WHERE v.package_url IS NOT NULL "
+        "AND toString(v.package_url) STARTS WITH $prefix "
+        "SET v:`{label}` RETURN count(v) AS cnt"
+    ),
 }
 
 # CycloneDX 1.6 component type taxonomy (used as Cypher node labels).
@@ -157,6 +179,17 @@ class Persistence:
             connection_kwargs["ssl_keyfile"] = ssl_keyfile
         if ssl and _host_is_ipv4_literal(host):
             # TLS certs typically name the Service DNS name; ClusterIP connectHost would fail verify.
+            # With hostname verification disabled, a network MitM could present any
+            # CA-trusted certificate (issued for any name) and be accepted. Require
+            # mutual TLS in this mode so the channel is still mutually authenticated by
+            # the client certificate (CWE-297).
+            if not (ssl_certfile and ssl_keyfile):
+                raise ValueError(
+                    "FalkorDB TLS to an IPv4-literal host disables hostname "
+                    "verification; mutual TLS is required in this mode. Provide "
+                    "both a client certificate and key (FALKORDB_CLIENT_CERT / "
+                    "FALKORDB_CLIENT_KEY) or connect via the Service DNS name."
+                )
             connection_kwargs["ssl_check_hostname"] = False
         self.db = FalkorDB(**connection_kwargs)
         self.graph: Graph = self.db.select_graph(graph_name)
@@ -167,6 +200,25 @@ class Persistence:
                     f"Invalid internal prefix field {field!r}: "
                     f"must be one of {sorted(INTERNAL_PREFIX_FIELDS)}"
                 )
+
+    def close(self) -> None:
+        """Close the underlying FalkorDB connection and release its sockets.
+
+        Callers that create a short-lived ``Persistence`` (e.g. per request)
+        must call this — or use the instance as a context manager — to avoid
+        leaking the FalkorDB/redis connection pool. Long-lived process
+        singletons do not need it. Safe to call more than once.
+        """
+        try:
+            self.db.close()
+        except Exception:  # pragma: no cover - best-effort teardown
+            logger.debug("Error closing FalkorDB connection", exc_info=True)
+
+    def __enter__(self) -> "Persistence":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
 
     def is_internal(self, project: Project) -> bool:
         """Check whether a project matches any configured internal prefix.
@@ -350,11 +402,10 @@ class Persistence:
         """
         validated = self._validate_secondary_label_fragment(internal_label)
         per_rule: list[dict[str, Any]] = []
-        prop_map = INTERNAL_RULE_FIELD_TO_VERSION_PROPERTY
         for field, prefix in prefixes:
-            if field not in prop_map:
+            template = _INTERNAL_LABEL_BACKFILL_BY_FIELD.get(field)
+            if template is None:
                 raise ValueError(f"unsupported prefix field {field!r}")
-            qlit_prop = prop_map[field]
             if not prefix:
                 logger.debug("Skipping empty-prefix rule for field=%s", field)
                 per_rule.append(
@@ -365,15 +416,9 @@ class Persistence:
                     },
                 )
                 continue
-            q_fragment = cast(
-                LiteralString,
-                (
-                    "MATCH (v:Version)\n"
-                    f"WHERE v.{qlit_prop} IS NOT NULL "
-                    f"AND toString(v.{qlit_prop}) STARTS WITH $prefix "
-                    f"SET v:{validated} RETURN count(v) AS cnt"
-                ),
-            )
+            # Only the validated label is substituted; the column name comes from
+            # the literal template selected above, not from interpolation.
+            q_fragment = cast(LiteralString, template.format(label=validated))
             res = self.run_query(
                 q_fragment,
                 params={"prefix": prefix},
@@ -593,6 +638,22 @@ class Persistence:
             params=params,
             main_fields=main_fields,
         )
+        # purl is part of the MERGE identity so components sharing
+        # name/project_name/project_group but differing by purl become distinct
+        # nodes (provenance preserved). Null/empty purls are skipped by
+        # _append_to_main_fields, falling back to the name/project_name/
+        # project_group triplet bucket.
+        purl_value = (
+            version.project.purl
+            if version.project and version.project.purl
+            else None
+        )
+        main_fields, params = self._append_to_main_fields(
+            field_name="package_url",
+            value=purl_value,
+            params=params,
+            main_fields=main_fields,
+        )
 
         name_value_pairs: list[tuple[str, Any]] = [
             ("app_id", version.project.application_id if version.project else None),
@@ -626,9 +687,12 @@ class Persistence:
         # internal_label is a hardcoded literal chosen by a boolean;
         # main_fields/extended_query use only hardcoded field names with
         # parameterized values — cast(LiteralString, ...) is acceptable.
+        # project_type is backtick-quoted because allowlisted values such as
+        # "Machine-Learning-Model" contain hyphens, which are a Cypher syntax
+        # error as a bare label (CWE-20: latent runtime error, not injection).
         query = f"""
             MERGE (
-                n:Version:{project_type}{internal_label} {{
+                n:Version:`{project_type}`{internal_label} {{
                     {main_fields}
                 }}
             )
@@ -642,7 +706,7 @@ class Persistence:
             project_type,
             internal,
         )
-        logger.debug("Version MERGE query: %s | params: %s", query, params)
+        logger.debug("Version MERGE query: %s | param_keys: %s", query, sorted(params))
         self.run_query(query=cast(LiteralString, query), params=params)
 
         # Add scan_id to the version's scan_ids list
@@ -653,23 +717,44 @@ class Persistence:
                 version.version,
                 version.project.name,
             )
-            self.run_query(
-                query="""
-                    MATCH (p:Version {
-                        name: $version_name,
-                        project_name: $project_name,
-                        project_group: $project_group
-                    })
+            self._append_scan_id(version, purl_value)
+
+    def _append_scan_id(self, version: Version, purl_value: Optional[str]) -> None:
+        """Append the version's scan_id to the matching Version node.
+
+        Matches the same identity used by the MERGE in
+        :meth:`create_project_version`: it includes ``package_url`` when present
+        so the scan_id attaches to the correct node after the purl split, and
+        omits it to hit the name/project_name/project_group triplet-bucket node.
+
+        Args:
+            version: The version whose scan_id is being recorded.
+            purl_value: The normalised purl (``None`` when null/empty).
+        """
+        match_fields = (
+            "name: $version_name,\n"
+            "                        project_name: $project_name,\n"
+            "                        project_group: $project_group"
+        )
+        params: dict[str, Any] = {
+            "version_name": version.version,
+            "project_name": version.project.name if version.project else None,
+            "project_group": version.project.group if version.project else None,
+            "scan_id": version.scan_id,
+        }
+        if purl_value is not None:
+            match_fields += ",\n                        package_url: $package_url"
+            params["package_url"] = purl_value
+        # Safety: match_fields uses only hardcoded field names with
+        # parameterized values — cast(LiteralString, ...) is acceptable.
+        query = f"""
+                    MATCH (p:Version {{
+                        {match_fields}
+                    }})
                     WHERE NOT $scan_id IN coalesce(p.scan_ids, [])
                     SET p.scan_ids = coalesce(p.scan_ids, []) + [$scan_id]
-                """,
-                params={
-                    "version_name": version.version,
-                    "project_name": version.project.name,
-                    "project_group": version.project.group,
-                    "scan_id": version.scan_id,
-                },
-            )
+                """
+        self.run_query(query=cast(LiteralString, query), params=params)
 
     def create_defect(self, defect: Defect) -> None:
         """Persist a Defect node to the database.
@@ -718,7 +803,7 @@ class Persistence:
         logger.info(
             "Creating Defect node id=%s severity=%s", defect.id, defect.severity
         )
-        logger.debug("Defect MERGE query: %s | params: %s", query, params)
+        logger.debug("Defect MERGE query: %s | param_keys: %s", query, sorted(params))
         self.run_query(query=cast(LiteralString, query), params=params)
 
     def update_defect_enrichment(
@@ -809,8 +894,6 @@ class Persistence:
         if not annotation_id:
             logger.warning("Cannot create policy annotation: annotation_id is empty")
             return
-
-        from .model import PolicyType
 
         safe_type = PolicyType.from_str(policy_type)
 
@@ -979,8 +1062,6 @@ class Persistence:
         if not statement_id:
             logger.warning("Cannot create VEX statement: statement_id is empty")
             return
-
-        from .model import VexStatus
 
         safe_status = VexStatus.from_str(status)
 
@@ -1256,7 +1337,7 @@ class Persistence:
             child.project.name if child.project else "?",
             child.version,
         )
-        logger.debug("Dependency MERGE query: %s | params: %s", query, params)
+        logger.debug("Dependency MERGE query: %s | param_keys: %s", query, sorted(params))
         self.run_query(query=cast(LiteralString, query), params=params)
 
     def create_version_defect(self, version_defect: VersionDefect) -> None:
@@ -1332,10 +1413,21 @@ class Persistence:
             project.name,
             version_defect.defect.id,
         )
-        logger.debug("VersionDefect MERGE query: %s | params: %s", query, params)
+        logger.debug("VersionDefect MERGE query: %s | param_keys: %s", query, sorted(params))
         self.run_query(query=cast(LiteralString, query), params=params)
 
     # License methods
+
+    @staticmethod
+    def _clean_license_text(value: str) -> str:
+        """Sanitise SBOM-derived freetext license identifiers.
+
+        Strips CR/LF/tab (prevents log + stored injection, CWE-117) and bounds
+        length (CWE-400). ``spdx_id`` is used as the License MERGE key, so a
+        newline in an attacker-supplied freetext license name must not reach the
+        logs or the graph verbatim.
+        """
+        return value.replace("\r", " ").replace("\n", " ").replace("\t", " ").strip()[:255]
 
     def create_license(
         self,
@@ -1356,9 +1448,12 @@ class Persistence:
             risk_category: A :class:`LicenseRiskCategory` value.
                 Unrecognised strings are normalised to ``"unknown"``.
         """
+        spdx_id = self._clean_license_text(spdx_id) if spdx_id else spdx_id
         if not spdx_id:
             logger.warning("Cannot create license: spdx_id is empty")
             return
+        if name:
+            name = self._clean_license_text(name)
 
         safe_category = LicenseRiskCategory.from_str(risk_category)
 

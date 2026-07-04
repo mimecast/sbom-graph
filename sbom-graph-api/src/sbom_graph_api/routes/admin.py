@@ -11,7 +11,7 @@ from flask import (
 )
 from flask.typing import ResponseReturnValue
 
-from sbom_graph_api.routes.auth import admin_required, auth_required, get_current_user
+from sbom_graph_api.routes.auth import admin_required, get_current_user
 from sbom_graph_api.services.falkordb_service import get_falkordb_service
 from sbom_graph_api.utils.validation import validate_purl, validate_search_term
 
@@ -28,7 +28,7 @@ bp = Blueprint("admin", __name__, url_prefix="/admin")
 
 
 @bp.route("/policies", methods=["GET"])
-@auth_required
+@admin_required
 def policy_admin_page() -> ResponseReturnValue:
     """Render the policy admin page with search and filter."""
     search = validate_search_term(request.args.get("search")) or ""

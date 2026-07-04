@@ -19,6 +19,17 @@
             </label>
             <span class="toggle-status" id="toggleStatus">{{ 'Internal Only' if internal_only else 'All projects' }}</span>
         </div>
+        {% if show_name_search %}
+        <div class="search-container">
+            <span class="toggle-label">Name:</span>
+            <input type="text" id="nameSearch" class="name-search-input"
+                   placeholder="Filter by name…" value="{{ name_search or '' }}">
+            <button type="button" id="nameSearchBtn" class="download-link secondary">Search</button>
+            {% if name_search %}
+            <button type="button" id="nameClearBtn" class="download-link secondary">Clear</button>
+            {% endif %}
+        </div>
+        {% endif %}
         <div class="download-links">
             {% if excel_url %}
             <a href="{{ excel_url }}" class="download-link">Download as Excel</a>
@@ -65,6 +76,14 @@
     <div class="empty-message">No trust scores found</div>
     {% endif %}
 
+    {% if pagination %}
+    <div class="pagination-controls">
+        {% if pagination.prev_url %}<a href="{{ pagination.prev_url }}">&laquo; Previous</a>{% endif %}
+        <span>Page {{ pagination.page }} of {{ pagination.total_pages }}</span>
+        {% if pagination.next_url %}<a href="{{ pagination.next_url }}">Next &raquo;</a>{% endif %}
+    </div>
+    {% endif %}
+
     <script>
         document.getElementById('internalOnlyToggle').addEventListener('change', function() {
             const isChecked = this.checked;
@@ -76,6 +95,32 @@
             }
             window.location.href = currentUrl.toString();
         });
+
+        // Handle name search: set/clear the ?name= param and reset to page 1.
+        (function () {
+            const input = document.getElementById('nameSearch');
+            if (!input) return;
+
+            function applySearch(value) {
+                const url = new URL(window.location.href);
+                const term = (value || '').trim();
+                if (term) {
+                    url.searchParams.set('name', term);
+                } else {
+                    url.searchParams.delete('name');
+                }
+                url.searchParams.delete('page');
+                window.location.href = url.toString();
+            }
+
+            const btn = document.getElementById('nameSearchBtn');
+            if (btn) btn.addEventListener('click', function () { applySearch(input.value); });
+            input.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') applySearch(input.value);
+            });
+            const clearBtn = document.getElementById('nameClearBtn');
+            if (clearBtn) clearBtn.addEventListener('click', function () { applySearch(''); });
+        })();
     </script>
 </body>
 </html>

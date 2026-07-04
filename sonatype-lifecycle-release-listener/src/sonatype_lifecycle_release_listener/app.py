@@ -44,9 +44,10 @@ def _configure_logging():
             except (OSError, ValueError):
                 continue
 
-    # Fall back to basic configuration
+    # Fall back to basic configuration (INFO, not DEBUG — a DEBUG fallback in
+    # production would leak request/exception detail to logs).
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=logging.INFO,
         format="%(asctime)s - %(name)s - %(funcName)s - %(levelname)s - %(message)s",
     )
 
@@ -138,9 +139,9 @@ def create_app(config: Optional[dict] = None) -> Flask:
     app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024  # 1 MB
 
     if not app.config["WEBHOOK_SECRET"]:
-        logger.warning(
-            "WEBHOOK_SECRET is not set -- webhook endpoint is unauthenticated. "
-            "Set WEBHOOK_SECRET to enable HMAC signature verification."
+        logger.error(
+            "WEBHOOK_SECRET is not set -- the /webhook endpoint will REJECT all "
+            "requests (fail-closed). Set WEBHOOK_SECRET to enable HMAC verification."
         )
 
     @app.route("/health", methods=["GET"])
@@ -154,22 +155,30 @@ def create_app(config: Optional[dict] = None) -> Flask:
         Handle incoming webhook messages from SonaType.
 
         Processes release scan events and ingests dependency trees into FalkorDB.
-        When WEBHOOK_SECRET is configured, the request must include an
-        ``X-Webhook-Signature`` header with the value ``sha256=<hex_digest>``
-        where the digest is HMAC-SHA256 of the raw request body.
+        When WEBHOOK_SECRET is configured, the request must include Sonatype's
+        ``X-Nexus-Webhook-Signature`` header containing the plain hex digest
+        of HMAC-SHA1 over the raw request body (see Lifecycle Webhooks docs).
         """
         request_id = uuid.uuid4().hex[:12]
 
         try:
             webhook_secret = app.config.get("WEBHOOK_SECRET", "")
-            if webhook_secret:
-                sig_header = request.headers.get("X-Webhook-Signature", "")
-                if not _verify_hmac(webhook_secret, request.get_data(), sig_header):
-                    logger.warning(
-                        "Webhook signature verification failed",
-                        extra={"request_id": request_id},
-                    )
-                    return jsonify({"error": "Invalid signature"}), 403
+            if not webhook_secret:
+                # Fail closed (CWE-306): never process webhooks unauthenticated. The
+                # umbrella Helm chart auto-provisions WEBHOOK_SECRET, so a missing
+                # secret means a misconfigured/standalone deploy — reject, don't skip.
+                logger.error(
+                    "WEBHOOK_SECRET not configured; rejecting webhook (fail-closed)",
+                    extra={"request_id": request_id},
+                )
+                return jsonify({"error": "Webhook authentication is not configured"}), 503
+            sig_header = request.headers.get("X-Nexus-Webhook-Signature", "")
+            if not _verify_hmac(webhook_secret, request.get_data(), sig_header):
+                logger.warning(
+                    "Webhook signature verification failed",
+                    extra={"request_id": request_id},
+                )
+                return jsonify({"error": "Invalid signature"}), 403
 
             try:
                 message = request.get_json()
@@ -278,11 +287,13 @@ def create_app(config: Optional[dict] = None) -> Flask:
 
 
 def _verify_hmac(secret: str, body: bytes, signature_header: str) -> bool:
-    """Verify HMAC-SHA256 signature of the request body."""
-    if not signature_header.startswith("sha256="):
+    """Verify Sonatype Lifecycle HMAC-SHA1 webhook signature of the request body."""
+    received_sig = signature_header.strip()
+    if not received_sig:
         return False
-    received_sig = signature_header[7:]
-    expected_sig = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    expected_sig = hmac.new(
+        secret.encode("utf-8"), body, hashlib.sha1  # noqa: S324  # nosec B324
+    ).hexdigest()
     return hmac.compare_digest(expected_sig, received_sig)
 
 
@@ -358,6 +369,11 @@ class CycloneDXHelper:
         self.sonatype_client = SonaTypeClient(config)
         self.cyclonedx_processor = CycloneDXProcessor(persistence=self.persistence)
 
+    def close(self) -> None:
+        """Release the Sonatype HTTP session and FalkorDB connection."""
+        self.sonatype_client.close()
+        self.persistence.close()
+
     def process_cyclonedx_sbom(
         self,
         app_id: str,
@@ -394,12 +410,18 @@ class CycloneDXHelper:
             logger.exception("Error processing CycloneDX SBOM")
             raise
 
-        # Store SBOM provenance
-        record_id = str(uuid.uuid4())
+        # Store SBOM provenance. Derive a *deterministic* record id from the SBOM
+        # content (and the app it belongs to) so a re-delivered webhook converges to
+        # the same SBOMRecord node + PRODUCED_BY_SBOM edges instead of accumulating a
+        # fresh duplicate on every replay (idempotent ingest — SAST L2). Identical
+        # content for the same app => identical record_id => the MERGE is a no-op.
         ingested_at = datetime.now(UTC).isoformat()
         document_hash = hashlib.sha256(
             json.dumps(sbom, sort_keys=True).encode("utf-8")
         ).hexdigest()
+        record_id = str(
+            uuid.uuid5(uuid.NAMESPACE_URL, f"sbom:{public_app_id}:{document_hash}")
+        )
         tool_name, tool_version = _extract_cyclonedx_tool_info(sbom)
         serial_number = (
             sbom.get("serialNumber")
@@ -448,6 +470,11 @@ class VexHelper:
         self.sonatype_client = SonaTypeClient(config)
         self.vex_processor = VexProcessor(persistence=self.persistence)
 
+    def close(self) -> None:
+        """Release the Sonatype HTTP session and FalkorDB connection."""
+        self.sonatype_client.close()
+        self.persistence.close()
+
     def process_vex_for_application(
         self,
         app_id: str,
@@ -486,6 +513,10 @@ class SonaTypeClient:
             username=self.sonatype_username, password=self.sonatype_password
         )
         self.api_url = f"https://{self.sonatype_host}/api/v2/"
+
+    def close(self) -> None:
+        """Close the underlying requests session (releases pooled sockets)."""
+        self.session.close()
 
     def get_cyclonedx_sbom(
         self,
@@ -589,11 +620,13 @@ def process_release_scan(
     :param config: Application configuration dictionary
     :return: Dictionary with success status and any error message
     """
+    cyclone_helper = None
     try:
         cyclone_helper = CycloneDXHelper(config)
         cyclone_helper.process_cyclonedx_sbom(app_id=app_id, public_app_id=public_id)
 
         # Attempt VEX processing (non-blocking)
+        vex_helper = None
         try:
             vex_helper = VexHelper(config)
             vex_result = vex_helper.process_vex_for_application(app_id)
@@ -604,11 +637,20 @@ def process_release_scan(
                 )
         except Exception:  # pylint: disable=broad-exception-caught
             logger.warning("VEX processing failed for %s (non-fatal)", public_id)
+        finally:
+            # Release the VEX helper's HTTP session + FalkorDB connection so a
+            # per-webhook instance does not leak them (these are created fresh
+            # per request, not process singletons).
+            if vex_helper is not None:
+                vex_helper.close()
 
         return {"success": True}
     except (NotFound, RedisError):
         logger.exception("Error processing release scan for %s", public_id)
         return {"success": False, "error": "SBOM processing failed"}
+    finally:
+        if cyclone_helper is not None:
+            cyclone_helper.close()
 
 
 # Create the default application instance

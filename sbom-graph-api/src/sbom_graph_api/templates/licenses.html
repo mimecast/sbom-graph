@@ -27,15 +27,17 @@
         </div>
 
         <div class="download-links">
-            <a href="{{ url_for('reports.licenses_report', format='excel', internal_only=internal_only) }}" class="download-link">Download as Excel</a>
-            <a href="{{ url_for('reports.licenses_report', format='json', internal_only=internal_only) }}" class="download-link">Download as JSON</a>
+            <a href="{{ excel_url }}" class="download-link">Download as Excel</a>
+            <a href="{{ json_url }}" class="download-link">Download as JSON</a>
             {% if schema_url %}
             <a href="{{ schema_url }}" class="download-link secondary">View JSON Schema</a>
             {% endif %}
         </div>
     </div>
 
-    <p>Generated at: {{ generated_at }}</p>
+    {% if pagination %}
+    <div class="pagination-info">Showing {{ pagination.page_size }} of {{ pagination.total }} licenses (page {{ pagination.page }}/{{ pagination.pages }})</div>
+    {% endif %}
 
     <table>
         <thead>
@@ -47,18 +49,26 @@
             </tr>
         </thead>
         <tbody>
-            {% for lic in licenses %}
+            {% for row in data %}
             <tr>
-                <td>{{ lic.spdx_id }}</td>
-                <td>{{ lic.name }}</td>
-                <td class="risk-{{ lic.risk_category }}">{{ lic.risk_category | replace('_', ' ') | title }}</td>
-                <td>{{ lic.usage_count }}</td>
+                <td>{{ row[0] }}</td>
+                <td>{{ row[1] }}</td>
+                <td class="risk-{{ row[2] }}">{{ row[2] | replace('_', ' ') | title }}</td>
+                <td>{{ row[3] }}</td>
             </tr>
             {% else %}
             <tr><td colspan="4">No licenses found.</td></tr>
             {% endfor %}
         </tbody>
     </table>
+
+    {% if pagination %}
+    <div class="pagination-controls">
+        {% if pagination.prev_url %}<a href="{{ pagination.prev_url }}">&laquo; Previous</a>{% endif %}
+        <span>Page {{ pagination.page }} of {{ pagination.pages }}</span>
+        {% if pagination.next_url %}<a href="{{ pagination.next_url }}">Next &raquo;</a>{% endif %}
+    </div>
+    {% endif %}
 
     <script>
         document.getElementById('internalOnlyToggle').addEventListener('change', function() {

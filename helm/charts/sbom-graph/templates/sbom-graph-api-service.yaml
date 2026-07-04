@@ -1,9 +1,17 @@
+{{- if .Values.sbomGraphApi.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "sbom-graph.sbomGraphApi.fullname" . }}
   labels:
     {{- include "sbom-graph.sbomGraphApi.labels" . | nindent 4 }}
+  {{- if .Values.ingress.enabled }}
+  annotations:
+    {{- if .Values.falkordb.tls.enabled }}
+    traefik.ingress.kubernetes.io/service.serversscheme: https
+    traefik.ingress.kubernetes.io/service.serverstransport: {{ include "sbom-graph.ingress.serversTransportRef" . }}
+    {{- end }}
+  {{- end }}
 spec:
   type: ClusterIP
   ports:
@@ -13,3 +21,4 @@ spec:
       name: http
   selector:
     {{- include "sbom-graph.sbomGraphApi.selectorLabels" . | nindent 4 }}
+{{- end }}

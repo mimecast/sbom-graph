@@ -29,7 +29,7 @@ from .certifiers.depsdev import DepsDevCertifier
 from .certifiers.eol import EOLCertifier
 from .certifiers.source_repo import SourceRepoCertifier
 from .certifiers.trust_score import TrustScoreCalculator
-from .persistence_helpers import create_persistence, get_persistence, get_http_client
+from .persistence_helpers import get_http_client, get_persistence
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +162,10 @@ def enrich_all_packages(
             certifier addition); never set this from the periodic
             beat schedule.
     """
-    persistence = create_persistence()
+    # Reuse the per-process cached Persistence (one FalkorDB connection per
+    # worker) instead of opening a fresh connection pool on every beat tick,
+    # which would leak connections/sockets over the worker's lifetime.
+    persistence = get_persistence()
 
     if force:
         query = (
@@ -179,7 +182,7 @@ def enrich_all_packages(
             "WHERE v.package_url IS NOT NULL "
             "AND (v.last_enriched_at IS NULL OR v.last_enriched_at < $cutoff) "
             "RETURN DISTINCT v.package_url AS purl"
-        )
+    )
         params = {"cutoff": cutoff_iso}
 
     result = persistence.run_query(query=query, params=params)
@@ -465,7 +468,9 @@ def propagate_effective_scores() -> dict[str, Any]:
     decay = float(os.environ.get("TRUST_SCORE_DECAY", "0.8"))
     max_depth = int(os.environ.get("TRUST_SCORE_MAX_DEPTH", "20"))
 
-    persistence = create_persistence()
+    # Reuse the per-process cached Persistence (see enrich_all_packages) rather
+    # than opening a new FalkorDB connection pool on each scheduled run.
+    persistence = get_persistence()
 
     scores_rows = persistence.get_all_trust_scores()
     direct_scores: dict[str, float] = {}

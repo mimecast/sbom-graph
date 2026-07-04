@@ -35,6 +35,13 @@ source on a local Kubernetes cluster (macOS) or a remote Linux cluster.
 | **Docker** | 24+ | Building container images |
 | **Helm** | 3.12+ | Deploying the Kubernetes chart |
 | **kubectl** | 1.28+ | Interacting with the Kubernetes cluster |
+| **yq** | 4+ | Updating Helm `values.yaml` during local builds (`release.sh`, `sync-helm-tags.sh`); use [mikefarah/yq](https://github.com/mikefarah/yq) ([install](https://github.com/mikefarah/yq#install)) |
+
+Install **yq** on macOS with Homebrew:
+
+```bash
+brew install yq
+```
 
 ### Local Kubernetes (macOS)
 
@@ -163,6 +170,9 @@ direct access to FalkorDB.
 The `release.sh` script automates building, tagging, pushing, and Helm
 synchronisation in a single command. It reads versions from each sub-project's
 `pyproject.toml` and only rebuilds images whose tags don't already exist locally.
+
+Requires **yq** (see [Prerequisites](#prerequisites)) to update
+`helm/charts/sbom-graph/values.yaml`.
 
 ```
 ./release.sh [--registry REGISTRY] [--push] [--force-build] [--load-minikube] [--dry-run]
@@ -739,11 +749,10 @@ SCA scans complete. To set this up:
    ```
 
 3. **Set the signing secret** to the value retrieved in step 1.
-   Sonatype must send the header:
-
-   ```
-   X-Webhook-Signature: sha256=<HMAC-SHA256 hex digest of request body>
-   ```
+   Sonatype sends the signature automatically when a secret key is configured.
+   The listener verifies the `X-Nexus-Webhook-Signature` header (HMAC-SHA1 hex
+   digest of the raw request body). See
+   [Lifecycle Webhooks](https://help.sonatype.com/en/lifecycle-webhooks.html).
 
 4. **If using a pre-shared secret**, pass it at install time:
 

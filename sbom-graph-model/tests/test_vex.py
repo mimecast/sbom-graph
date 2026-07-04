@@ -89,6 +89,46 @@ class TestInvalidStatusSkipped:
         persistence.create_vex_statement.assert_not_called()
 
 
+class TestVulnIdValidation:
+    """L8 (CWE-20/290): a VEX statement may only create a Defect link via a
+    recognised vulnerability id (CVE/GHSA). Arbitrary strings are skipped so a
+    crafted VEX document cannot forge a VEX->Defect edge."""
+
+    @staticmethod
+    def _doc(vuln: dict) -> dict:
+        return {
+            "@id": "doc-1",
+            "statements": [{"status": "not_affected", "vulnerability": vuln}],
+        }
+
+    @pytest.mark.parametrize(
+        "vuln_id",
+        ["not-a-cve", "pkg:maven/x@1", "'; MATCH (n) DETACH DELETE n", "CVE-1", "GHSA"],
+    )
+    def test_unrecognised_vuln_id_not_linked(self, vuln_id):
+        persistence = MagicMock()
+        processor = VexProcessor(persistence)
+
+        result = processor.process_vex_document(self._doc({"@id": vuln_id}))
+
+        assert result["linked_vulnerabilities"] == 0
+        persistence.link_vex_to_defect.assert_not_called()
+        # the statement node itself is still recorded
+        persistence.create_vex_statement.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "vuln_id", ["CVE-2024-12345", "GHSA-xxxx-yyyy-zzzz", "ghsa-aaaa", "GHSA-xxxx"]
+    )
+    def test_recognised_vuln_id_linked(self, vuln_id):
+        persistence = MagicMock()
+        processor = VexProcessor(persistence)
+
+        result = processor.process_vex_document(self._doc({"@id": vuln_id}))
+
+        assert result["linked_vulnerabilities"] == 1
+        persistence.link_vex_to_defect.assert_called_once()
+
+
 class TestExtractPurl:
     """Tests for VexProcessor._extract_purl."""
 

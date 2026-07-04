@@ -16,6 +16,7 @@ users to change layouts without reloading the page.
 """
 
 import json
+import logging
 from typing import Any
 
 import networkx as nx
@@ -26,11 +27,17 @@ from sbom_graph_api.services.falkordb_service import (
     FalkorDBService,
     get_falkordb_service,
 )
+from sbom_graph_api.visualizations._bounded import bound_nodes_edges, inject_truncation_banner
 from sbom_graph_api.visualizations.kpartite import (
     calculate_partitions_longest_path,
     format_properties_for_tooltip,
     get_partition_color,
 )
+
+logger = logging.getLogger(__name__)
+
+MAX_VIZ_NODES = 2000
+MAX_VIZ_EDGES = 5000
 
 # Available layout types
 LAYOUT_TYPES = ["spring", "radial", "shell", "bfs", "circular"]
@@ -413,6 +420,15 @@ def create_multi_layout_visualization(
     """
     nodes, edges = graph_data
 
+    nodes, edges, _truncated, _dropped = bound_nodes_edges(
+        nodes, edges, MAX_VIZ_NODES, MAX_VIZ_EDGES, root_id=root_id
+    )
+    if _truncated:
+        logger.warning(
+            "Multi-layout graph for %s truncated at %d nodes (%d dropped)",
+            root_id, MAX_VIZ_NODES, _dropped,
+        )
+
     # Build node data dictionary
     node_data = {n["id"]: n for n in nodes}
 
@@ -577,6 +593,8 @@ def create_multi_layout_visualization(
     # Inject switcher before closing body tag
     html = html.replace("</body>", f"{switcher_html}</body>")
 
+    if _truncated:
+        html = inject_truncation_banner(html, MAX_VIZ_NODES, _dropped)
     return html
 
 

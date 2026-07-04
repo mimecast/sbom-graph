@@ -64,6 +64,18 @@ PROJECTS_SCHEMA: dict[str, Any] = {
                         "type": "string",
                         "description": "Version string of the project",
                     },
+                    "project_group": {
+                        "type": ["string", "null"],
+                        "description": "Group/namespace coordinate (e.g. Maven groupId)",
+                    },
+                    "package_url": {
+                        "type": ["string", "null"],
+                        "description": "Package URL (purl) identifying the component",
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Language/ecosystem derived from the purl type",
+                    },
                 },
             },
         },
@@ -155,6 +167,18 @@ APPLICATIONS_SCHEMA: dict[str, Any] = {
                     "is_internal": {
                         "type": "boolean",
                         "description": "Whether this is an internal application",
+                    },
+                    "project_group": {
+                        "type": ["string", "null"],
+                        "description": "Group/namespace coordinate (e.g. Maven groupId)",
+                    },
+                    "package_url": {
+                        "type": ["string", "null"],
+                        "description": "Package URL (purl) identifying the application",
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Language/ecosystem derived from the purl type",
                     },
                 },
             },
@@ -603,12 +627,215 @@ NON_SEMVER_VERSIONS_SCHEMA: dict[str, Any] = {
                     },
                     "reason": {
                         "type": "string",
-                        "description": "Category/reason for non-SemVer classification",
+                        "description": "Category/reason for non-SemVer or suspect classification",
+                    },
+                    "semver_compliant": {
+                        "type": "boolean",
+                        "description": "Whether the version matches the SemVer pattern",
+                    },
+                    "released": {
+                        "type": "boolean",
+                        "description": (
+                            "Whether it is a clean release (no pre-release/SNAPSHOT marker)"
+                        ),
                     },
                     "labels": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Node labels (e.g., internal organization label)",
+                    },
+                },
+            },
+        },
+    },
+}
+
+# ============================================================================
+# Duplicate / Provenance-Split Version Nodes Report Schema
+# ============================================================================
+DUPLICATE_NODES_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/duplicate-nodes",
+    "title": "Duplicate / Provenance-Split Version Nodes Report",
+    "description": (
+        "Version nodes grouped by (project_name, version) that span multiple"
+        " (project_group, package_url) coordinates or duplicate a single one"
+    ),
+    "type": "object",
+    "required": ["report_type", "generated_at", "stats", "data"],
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "duplicate-nodes",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "stats": {
+            "type": "object",
+            "properties": {
+                "affected_groups": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Count of (project_name, version) groups flagged",
+                },
+                "provenance_splits": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Groups spanning >1 (project_group, package_url) coordinate",
+                },
+                "genuine_duplicates": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Groups with >1 node for a single coordinate",
+                },
+            },
+            "required": ["affected_groups"],
+        },
+        "data": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["project_name", "version", "classification"],
+                "properties": {
+                    "project_name": {
+                        "type": "string",
+                        "description": "Name of the project",
+                    },
+                    "version": {
+                        "type": "string",
+                        "description": "Version string",
+                    },
+                    "classification": {
+                        "type": "string",
+                        "description": (
+                            "Provenance split, Genuine duplicate, or both"
+                        ),
+                    },
+                    "distinct_coordinates": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": (
+                            "Distinct (project_group, package_url) coordinates"
+                        ),
+                    },
+                    "total_nodes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Total Version nodes across all coordinates",
+                    },
+                    "max_node_count": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Largest node count for a single coordinate",
+                    },
+                    "is_genuine_duplicate": {
+                        "type": "boolean",
+                        "description": "A single coordinate is backed by >1 node",
+                    },
+                    "is_provenance_split": {
+                        "type": "boolean",
+                        "description": "The group spans >1 distinct coordinate",
+                    },
+                    "project_groups": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Distinct project_group values in the group",
+                    },
+                    "package_urls": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Distinct package_url values in the group",
+                    },
+                },
+            },
+        },
+    },
+}
+
+# ============================================================================
+# Bipartite Dependants Report Schema
+# ============================================================================
+BIPARTITE_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/bipartite",
+    "title": "Bipartite Dependants Report",
+    "description": (
+        "Dependants of a project's versions with latest / latest-1 classification"
+    ),
+    "type": "object",
+    "required": ["report_type", "generated_at", "stats", "data"],
+    "properties": {
+        "report_type": {
+            "type": "string",
+            "const": "bipartite",
+            "description": "Type identifier for this report",
+        },
+        "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when report was generated",
+        },
+        "project_name": {
+            "type": "string",
+            "description": "The project whose dependants are reported",
+        },
+        "filter": {
+            "type": "string",
+            "enum": ["all", "internal_only"],
+            "description": "Filter applied to the data",
+        },
+        "stats": {
+            "type": "object",
+            "properties": {
+                "total_dependants": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Total dependant rows after filtering",
+                },
+                "latest_version": {
+                    "type": ["string", "null"],
+                    "description": "Latest version of the target project",
+                },
+                "previous_version": {
+                    "type": ["string", "null"],
+                    "description": "Previous (latest-1) version of the target project",
+                },
+            },
+            "required": ["total_dependants"],
+        },
+        "data": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["target_project", "target_version"],
+                "properties": {
+                    "target_project": {
+                        "type": ["string", "null"],
+                        "description": "The depended-on project",
+                    },
+                    "target_version": {
+                        "type": ["string", "null"],
+                        "description": "The depended-on version",
+                    },
+                    "is_latest": {
+                        "type": "boolean",
+                        "description": "Whether target_version is the latest version",
+                    },
+                    "is_latest_or_prev": {
+                        "type": "boolean",
+                        "description": "Whether target_version is the latest or latest-1",
+                    },
+                    "dependant_project": {
+                        "type": ["string", "null"],
+                        "description": "The dependant project",
+                    },
+                    "dependant_version": {
+                        "type": ["string", "null"],
+                        "description": "The dependant version",
                     },
                 },
             },
@@ -1390,7 +1617,7 @@ LICENSE_DASHBOARD_SCHEMA: dict[str, Any] = {
         "drill-down to affected packages"
     ),
     "type": "object",
-    "required": ["report_type", "generated_at", "stats", "categories"],
+    "required": ["report_type", "generated_at", "stats", "data"],
     "properties": {
         "report_type": {
             "type": "string",
@@ -1427,26 +1654,21 @@ LICENSE_DASHBOARD_SCHEMA: dict[str, Any] = {
                 },
             },
         },
-        "categories": {
-            "type": "object",
-            "additionalProperties": {
+        "data": {
+            "type": "array",
+            "description": (
+                "Flat, streamed list of packages; each row is tagged with its "
+                "risk category so the document serialises incrementally"
+            ),
+            "items": {
                 "type": "object",
                 "properties": {
-                    "count": {"type": "integer"},
-                    "pct": {"type": "number"},
-                    "packages": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "purl": {"type": "string"},
-                                "project_name": {"type": "string"},
-                                "version_name": {"type": "string"},
-                                "spdx_id": {"type": "string"},
-                                "license_name": {"type": "string"},
-                            },
-                        },
-                    },
+                    "category": {"type": "string"},
+                    "purl": {"type": "string"},
+                    "project_name": {"type": "string"},
+                    "version_name": {"type": "string"},
+                    "spdx_id": {"type": "string"},
+                    "license_name": {"type": "string"},
                 },
             },
         },
@@ -2098,9 +2320,10 @@ SBOM_COVERAGE_SCHEMA: dict[str, Any] = {
     "required": [
         "report_type",
         "generated_at",
-        "coverage",
         "recent_days",
         "internal_only",
+        "stats",
+        "projects",
     ],
     "additionalProperties": False,
     "properties": {
@@ -2114,42 +2337,177 @@ SBOM_COVERAGE_SCHEMA: dict[str, Any] = {
             "format": "date-time",
             "description": "ISO 8601 timestamp when report was generated",
         },
-        "coverage": {
-            "type": "object",
-            "properties": {
-                "stats": {
-                    "type": "object",
-                    "properties": {
-                        "total_projects": {"type": "integer"},
-                        "fresh": {"type": "integer"},
-                        "stale": {"type": "integer"},
-                        "never": {"type": "integer"},
-                        "fresh_pct": {"type": "number"},
-                        "stale_pct": {"type": "number"},
-                        "never_pct": {"type": "number"},
-                    },
-                },
-                "projects": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "project_name": {"type": "string"},
-                            "version_name": {"type": "string"},
-                            "project_group": {"type": "string"},
-                            "status": {"type": "string"},
-                            "last_ingested": {"type": "string"},
-                            "tool_name": {"type": "string"},
-                        },
-                    },
-                },
-                "recent_days": {"type": "integer"},
-            },
-        },
         "recent_days": {"type": "integer"},
         "internal_only": {"type": "boolean"},
+        "stats": {
+            "type": "object",
+            "properties": {
+                "total_projects": {"type": "integer"},
+                "fresh": {"type": "integer"},
+                "stale": {"type": "integer"},
+                "never": {"type": "integer"},
+                "fresh_pct": {"type": "number"},
+                "stale_pct": {"type": "number"},
+                "never_pct": {"type": "number"},
+            },
+        },
+        "projects": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "project_name": {"type": "string"},
+                    "version_name": {"type": "string"},
+                    "project_group": {"type": "string"},
+                    "status": {"type": "string"},
+                    "last_ingested": {"type": "string"},
+                    "tool_name": {"type": "string"},
+                },
+            },
+        },
     },
 }
+
+# ============================================================================
+# Phase 7 reporting-gap report schemas
+# ============================================================================
+ECOSYSTEM_BREAKDOWN_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/ecosystem-breakdown",
+    "title": "Ecosystem Breakdown Report",
+    "description": "Component counts per purl ecosystem (package type)",
+    "type": "object",
+    "required": ["report_type", "generated_at", "stats", "data"],
+    "properties": {
+        "report_type": {"type": "string", "const": "ecosystem-breakdown"},
+        "generated_at": {"type": "string", "format": "date-time"},
+        "stats": {
+            "type": "object",
+            "properties": {"ecosystems": {"type": "integer", "minimum": 0}},
+            "required": ["ecosystems"],
+        },
+        "data": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["ecosystem", "language", "components", "projects"],
+                "properties": {
+                    "ecosystem": {"type": "string", "description": "purl package type"},
+                    "language": {"type": "string", "description": "Ecosystem/language label"},
+                    "components": {"type": "integer", "minimum": 0},
+                    "projects": {"type": "integer", "minimum": 0},
+                    "pct": {"type": "number", "minimum": 0, "description": "Share of components (%)"},
+                },
+            },
+        },
+    },
+}
+
+PURL_COVERAGE_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/purl-coverage",
+    "title": "PURL Identity Coverage Report",
+    "description": "Version nodes carrying a package_url vs the name/group fallback bucket",
+    "type": "object",
+    "required": ["report_type", "generated_at", "stats", "data"],
+    "properties": {
+        "report_type": {"type": "string", "const": "purl-coverage"},
+        "generated_at": {"type": "string", "format": "date-time"},
+        "stats": {
+            "type": "object",
+            "properties": {
+                "total": {"type": "integer", "minimum": 0},
+                "with_purl": {"type": "integer", "minimum": 0},
+                "without_purl": {"type": "integer", "minimum": 0},
+                "coverage_pct": {"type": "number", "minimum": 0},
+            },
+            "required": ["total", "with_purl", "without_purl", "coverage_pct"],
+        },
+        "data": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["bucket", "count"],
+                "properties": {
+                    "bucket": {"type": "string"},
+                    "count": {"type": "integer", "minimum": 0},
+                    "pct": {"type": "number", "minimum": 0},
+                },
+            },
+        },
+    },
+}
+
+UNRELEASED_IN_PROD_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/unreleased-in-prod",
+    "title": "Unreleased Dependencies In Production Report",
+    "description": "Applications depending on unreleased (SNAPSHOT/pre-release/non-SemVer) versions",
+    "type": "object",
+    "required": ["report_type", "generated_at", "stats", "data"],
+    "properties": {
+        "report_type": {"type": "string", "const": "unreleased-in-prod"},
+        "generated_at": {"type": "string", "format": "date-time"},
+        "stats": {
+            "type": "object",
+            "properties": {"unreleased_in_use": {"type": "integer", "minimum": 0}},
+            "required": ["unreleased_in_use"],
+        },
+        "data": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": [
+                    "application", "application_version",
+                    "dependency", "dependency_version", "reason",
+                ],
+                "properties": {
+                    "application": {"type": "string"},
+                    "application_version": {"type": "string"},
+                    "dependency": {"type": "string"},
+                    "dependency_version": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
+DEPENDENCY_FRESHNESS_SCHEMA: dict[str, Any] = {
+    "$schema": SCHEMA_VERSION,
+    "$id": "/schemas/dependency-freshness",
+    "title": "Dependency Freshness (Fleet) Report",
+    "description": "Per-library consumer counts on latest / latest-1 / stale, ranked by fan-in",
+    "type": "object",
+    "required": ["report_type", "generated_at", "stats", "data"],
+    "properties": {
+        "report_type": {"type": "string", "const": "dependency-freshness"},
+        "generated_at": {"type": "string", "format": "date-time"},
+        "stats": {
+            "type": "object",
+            "properties": {"libraries": {"type": "integer", "minimum": 0}},
+            "required": ["libraries"],
+        },
+        "data": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["target_project", "consumers", "stale"],
+                "properties": {
+                    "target_project": {"type": "string"},
+                    "latest": {"type": "string"},
+                    "prev": {"type": "string", "description": "Latest-1 version"},
+                    "consumers": {"type": "integer", "minimum": 0},
+                    "on_latest": {"type": "integer", "minimum": 0},
+                    "on_latest_or_prev": {"type": "integer", "minimum": 0},
+                    "stale": {"type": "integer", "minimum": 0},
+                    "pct_stale": {"type": "number", "minimum": 0},
+                },
+            },
+        },
+    },
+}
+
 
 # ============================================================================
 # Schema Index - list of all available schemas
@@ -2189,6 +2547,36 @@ SCHEMA_INDEX: dict[str, dict[str, Any]] = {
         "schema": NON_SEMVER_VERSIONS_SCHEMA,
         "endpoint": "/reports/non-semver-versions",
         "description": "Versions not following SemVer naming",
+    },
+    "duplicate-nodes": {
+        "schema": DUPLICATE_NODES_SCHEMA,
+        "endpoint": "/reports/duplicate-nodes",
+        "description": "Version nodes that duplicate or split on provenance",
+    },
+    "ecosystem-breakdown": {
+        "schema": ECOSYSTEM_BREAKDOWN_SCHEMA,
+        "endpoint": "/reports/ecosystem-breakdown",
+        "description": "Component counts per purl ecosystem (package type)",
+    },
+    "purl-coverage": {
+        "schema": PURL_COVERAGE_SCHEMA,
+        "endpoint": "/reports/purl-coverage",
+        "description": "Version nodes carrying a package_url vs the fallback bucket",
+    },
+    "unreleased-in-prod": {
+        "schema": UNRELEASED_IN_PROD_SCHEMA,
+        "endpoint": "/reports/unreleased-in-prod",
+        "description": "Applications depending on unreleased dependency versions",
+    },
+    "dependency-freshness": {
+        "schema": DEPENDENCY_FRESHNESS_SCHEMA,
+        "endpoint": "/reports/dependency-freshness",
+        "description": "Per-library consumers on latest / latest-1 / stale, ranked by fan-in",
+    },
+    "bipartite": {
+        "schema": BIPARTITE_SCHEMA,
+        "endpoint": "/reports/bipartite/{project_name}",
+        "description": "Dependants with latest / latest-1 target-version classification",
     },
     "version-dependencies": {
         "schema": VERSION_DEPENDENCIES_SCHEMA,

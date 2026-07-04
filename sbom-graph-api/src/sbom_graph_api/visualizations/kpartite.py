@@ -13,12 +13,19 @@ based on their longest path distance from a root node:
 """
 
 import json
+import logging
 
 import networkx as nx
 from markupsafe import escape
 from pyvis.network import Network
 
 from sbom_graph_api.services.falkordb_service import FalkorDBService, get_falkordb_service
+from sbom_graph_api.visualizations._bounded import bound_nodes_edges, inject_truncation_banner
+
+logger = logging.getLogger(__name__)
+
+MAX_VIZ_NODES = 2000
+MAX_VIZ_EDGES = 5000
 
 # Color palette for partition levels (expandable)
 PARTITION_COLORS = [
@@ -124,7 +131,10 @@ def format_properties_for_tooltip(properties: dict) -> str:
         else:
             value_str = str(value)
 
-        lines.append(f"{key}: {value_str}")
+        # Node properties originate from ingested (untrusted) SBOMs and this
+        # string is rendered as HTML in the PyVis ``title=`` tooltip — escape
+        # both key and value to prevent stored XSS (CWE-79).
+        lines.append(f"{escape(key)}: {escape(value_str)}")
 
     return "\n".join(lines)
 
@@ -176,6 +186,16 @@ def create_kpartite_visualization(
         internal_only,
         project_group=project_group,
     )
+
+    root_id = f"{project_name}:{version_name}"
+    nodes, edges, _truncated, _dropped = bound_nodes_edges(
+        nodes, edges, MAX_VIZ_NODES, MAX_VIZ_EDGES, root_id=root_id
+    )
+    if _truncated:
+        logger.warning(
+            "K-partite graph for %s@%s truncated at %d nodes (%d dropped)",
+            project_name, version_name, MAX_VIZ_NODES, _dropped,
+        )
 
     if not nodes:
         # Only root node
@@ -332,4 +352,7 @@ def create_kpartite_visualization(
         net.add_edge(edge["source"], edge["target"], title=edge["type"], arrows="to")
 
     # Generate HTML
-    return net.generate_html()
+    html = net.generate_html()
+    if _truncated:
+        html = inject_truncation_banner(html, MAX_VIZ_NODES, _dropped)
+    return html

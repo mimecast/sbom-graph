@@ -19,10 +19,15 @@ OPTIMIZATION NOTES:
 import fnmatch
 import re
 import ssl
-from collections.abc import Generator
+import uuid
+from collections import deque
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
+import networkx as nx
 from falkordb import FalkorDB, Graph
 from redis.exceptions import ResponseError
 from sbom_graph_model import LicenseRiskCategory
@@ -66,6 +71,65 @@ SEMVER_PATTERN = re.compile(
     r"$",
     re.IGNORECASE,
 )
+
+# Default page size used when streaming a full result set page-by-page.
+DB_STREAM_CHUNK = 1000
+
+
+def _split_semver(version: str) -> tuple[int, int, int, str]:
+    """Split a (loosely) SemVer string into (major, minor, patch, prerelease).
+
+    Strips an optional ``v`` prefix and Maven suffixes (``.RELEASE``, ``.Final``,
+    ``.GA``, ``.SNAPSHOT``) and build metadata. ``prerelease`` is the raw
+    pre-release string (``""`` when absent). Missing numeric components default
+    to ``0``.
+    """
+    v = version.lstrip("vV")
+    v = re.sub(r"[.\-](?:RELEASE|FINAL|GA|SNAPSHOT)$", "", v, flags=re.IGNORECASE)
+    parts = v.split("-", 1)
+    version_part = parts[0].split("+")[0]
+    prerelease = parts[1] if len(parts) > 1 else ""
+    nums = version_part.split(".")
+
+    def _int(index: int) -> int:
+        try:
+            return int(nums[index]) if len(nums) > index else 0
+        except ValueError:
+            return 0
+
+    return _int(0), _int(1), _int(2), prerelease
+
+
+def parse_semver(version: str) -> tuple[int, int, int, str]:
+    """Parse a SemVer string into a sort-comparable tuple.
+
+    Pre-release versions sort *below* their release (an empty pre-release maps to
+    ``"~"``, which sorts after any alphanumeric pre-release identifier).
+    """
+    major, minor, patch, prerelease = _split_semver(version)
+    return major, minor, patch, prerelease if prerelease else "~"
+
+
+def iterate_pages(
+    fetch_page: Callable[[int, int], list[Any]],
+    chunk: int = DB_STREAM_CHUNK,
+) -> Iterator[list[Any]]:
+    """Yield successive pages from any offset-aware fetcher until exhausted.
+
+    Holds at most one ``chunk`` in memory at a time, so a full export streams
+    page-by-page rather than materialising the entire result set (PERF-001 /
+    SEC-003). ``fetch_page(offset, limit)`` must return at most ``limit`` rows;
+    a short (or empty) page signals the end.
+    """
+    offset = 0
+    while True:
+        page = fetch_page(offset, chunk)
+        if not page:
+            return
+        yield page
+        if len(page) < chunk:
+            return
+        offset += chunk
 
 
 class FalkorDBService:
@@ -126,6 +190,18 @@ class FalkorDBService:
         if internal_only:
             return f"Version:{self.internal_label}"
         return "Version"
+
+    @staticmethod
+    def _page_clause(limit: int | None, offset: int = 0) -> tuple[str, dict[str, Any]]:
+        """Build a parameterised ``SKIP/LIMIT`` clause for paginated list queries.
+
+        Returns ``("", {})`` when ``limit`` is ``None`` (caller wants all rows),
+        keeping back-compat for non-paginated callers. ``offset``/``limit`` are
+        always passed as query parameters (never interpolated) — SEC-004.
+        """
+        if limit is None:
+            return "", {}
+        return "SKIP $offset LIMIT $limit", {"offset": int(offset), "limit": int(limit)}
 
     @contextmanager
     def get_graph(self) -> Generator[Graph, None, None]:
@@ -275,8 +351,58 @@ class FalkorDBService:
             }
         return None
 
+    @staticmethod
+    def _name_predicate(node_var: str, name: str | None, params: dict[str, Any]) -> str:
+        """Build a case-insensitive ``project_name`` substring predicate (no keyword).
+
+        Adds the bound ``$name`` parameter when *name* is set; returns ``""``
+        otherwise. Only the hardcoded *node_var* is interpolated — the search
+        term is passed as a query parameter (no injection). Use this for queries
+        that already carry a ``WHERE`` (combine with ``AND``); see
+        :meth:`_name_filter` for the standalone ``WHERE`` form.
+        """
+        if not name:
+            return ""
+        params["name"] = name
+        return f"toLower({node_var}.project_name) CONTAINS toLower($name)"
+
+    @staticmethod
+    def _name_filter(node_var: str, name: str | None, params: dict[str, Any]) -> str:
+        """Build a standalone case-insensitive ``project_name`` substring ``WHERE`` clause.
+
+        Returns ``""`` when *name* is unset. For queries that already have a
+        ``WHERE``, use :meth:`_name_predicate` and combine the result with ``AND``.
+        """
+        predicate = FalkorDBService._name_predicate(node_var, name, params)
+        return f"WHERE {predicate}" if predicate else ""
+
+    def count_all_projects(self, internal_only: bool = False, name: str | None = None) -> int:
+        """Count Version nodes for the projects report (same filter as the page query)."""
+        node_label = self.get_node_label(internal_only)
+        params: dict[str, Any] = {}
+        name_clause = self._name_filter("v", name, params)
+        result = self.execute_query(
+            f"MATCH (v:{node_label}) {name_clause} RETURN count(v) AS n", params
+        )
+        return int(result[0][0]) if result and result[0] and result[0][0] is not None else 0
+
+    def count_unique_projects(self, internal_only: bool = False, name: str | None = None) -> int:
+        """Count distinct project names (same filter as the page query)."""
+        node_label = self.get_node_label(internal_only)
+        params: dict[str, Any] = {}
+        name_clause = self._name_filter("v", name, params)
+        result = self.execute_query(
+            f"MATCH (v:{node_label}) {name_clause} RETURN count(DISTINCT v.project_name) AS n",
+            params,
+        )
+        return int(result[0][0]) if result and result[0] and result[0][0] is not None else 0
+
     def get_all_projects(
-        self, limit: int = 1000, internal_only: bool = False
+        self,
+        limit: int = 1000,
+        internal_only: bool = False,
+        offset: int = 0,
+        name: str | None = None,
     ) -> list[dict[str, Any]]:
         """Get all projects with their versions and licence info.
 
@@ -288,15 +414,23 @@ class FalkorDBService:
             List of project/version dicts with optional spdx_id and
             risk_category (aggregated from linked License nodes)
         """
+        # Local import avoids a circular import with utils.purl, which imports
+        # get_falkordb_service from this module at load time.
+        from sbom_graph_api.utils.purl import purl_ecosystem
+
         node_label = self.get_node_label(internal_only)
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        name_clause = self._name_filter("v", name, params)
         query = f"""
             MATCH (v:{node_label})
+            {name_clause}
             OPTIONAL MATCH (v)-[:HAS_LICENSE]->(l:License)
             OPTIONAL MATCH (v)-[:HAS_SOURCE]->(r:SourceRepository)
             OPTIONAL MATCH (v)-[:HAS_TRUST_SCORE]->(t:TrustScore)
             WITH v.project_name AS project_name,
                  v.name AS version,
                  v.package_url AS package_url,
+                 v.project_group AS project_group,
                  collect(DISTINCT l.spdx_id) AS spdx_ids,
                  collect(DISTINCT l.risk_category) AS risk_categories,
                  head(collect(DISTINCT r.url)) AS source_repo_url,
@@ -305,11 +439,11 @@ class FalkorDBService:
                  head(collect(t.confidence)) AS confidence
             RETURN project_name, version, package_url, spdx_ids,
                    risk_categories, source_repo_url,
-                   direct_score, effective_score, confidence
+                   direct_score, effective_score, confidence, project_group
             ORDER BY project_name, version
-            LIMIT $limit
+            SKIP $offset LIMIT $limit
         """
-        result = self.execute_query(query, {"limit": limit})
+        result = self.execute_query(query, params)
         rows: list[dict[str, Any]] = []
         for row in result:
             spdx_ids = [x for x in (row[3] or []) if x]
@@ -330,6 +464,8 @@ class FalkorDBService:
                     "project_name": row[0],
                     "version": row[1],
                     "package_url": row[2],
+                    "project_group": row[9],
+                    "language": purl_ecosystem(row[2]),
                     "spdx_id": spdx_id,
                     "risk_category": risk_category,
                     "source_repo_url": row[5] if row[5] else None,
@@ -340,11 +476,48 @@ class FalkorDBService:
             )
         return rows
 
+    def _application_label(self, internal_only: bool) -> str:
+        """Single source of the Application label filter (page + count parity)."""
+        return f"Application:{self.internal_label}" if internal_only else "Application"
+
+    def count_all_applications(
+        self, internal_only: bool = False, latest_only: bool = False, name: str | None = None
+    ) -> int:
+        """Count Application nodes (or distinct apps when latest_only) — same filter as page."""
+        label_filter = self._application_label(internal_only)
+        params: dict[str, Any] = {}
+        name_clause = self._name_filter("app", name, params)
+        if latest_only:
+            query = (
+                f"MATCH (app:{label_filter}) {name_clause} "
+                "RETURN count(DISTINCT app.project_name) AS n"
+            )
+        else:
+            query = f"MATCH (app:{label_filter}) {name_clause} RETURN count(app) AS n"
+        result = self.execute_query(query, params)
+        return int(result[0][0]) if result and result[0] and result[0][0] is not None else 0
+
+    def count_unique_applications(
+        self, internal_only: bool = False, name: str | None = None
+    ) -> int:
+        """Count distinct application project names (same filter as the page query)."""
+        label_filter = self._application_label(internal_only)
+        params: dict[str, Any] = {}
+        name_clause = self._name_filter("app", name, params)
+        result = self.execute_query(
+            f"MATCH (app:{label_filter}) {name_clause} "
+            "RETURN count(DISTINCT app.project_name) AS n",
+            params,
+        )
+        return int(result[0][0]) if result and result[0] and result[0][0] is not None else 0
+
     def get_all_applications(
         self,
         limit: int = 1000,
         internal_only: bool = False,
         latest_only: bool = False,
+        offset: int = 0,
+        name: str | None = None,
     ) -> list[dict[str, Any]]:
         """Get all applications with their versions.
 
@@ -358,14 +531,21 @@ class FalkorDBService:
         Returns:
             List of application dicts with project_name, version, and metadata
         """
+        # Local import avoids a circular import with utils.purl, which imports
+        # get_falkordb_service from this module at load time.
+        from sbom_graph_api.utils.purl import purl_ecosystem
+
         # Build label filter
         if internal_only:
             label_filter = f"Application:{self.internal_label}"
         else:
             label_filter = "Application"
 
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        name_clause = self._name_filter("app", name, params)
         query = f"""
             MATCH (app:{label_filter})
+            {name_clause}
             OPTIONAL MATCH (app)-[:HAS_LICENSE]->(l:License)
             OPTIONAL MATCH (app)-[:HAS_TRUST_SCORE]->(t:TrustScore)
             WITH app.project_name AS project_name,
@@ -374,6 +554,8 @@ class FalkorDBService:
                  app.app_id AS app_id,
                  app.public_id AS public_id,
                  app.repo_url AS repo_url,
+                 app.project_group AS project_group,
+                 app.package_url AS package_url,
                  labels(app) AS labels,
                  collect(DISTINCT l.spdx_id) AS spdx_ids,
                  collect(DISTINCT l.risk_category) AS risk_categories,
@@ -382,11 +564,12 @@ class FalkorDBService:
                  head(collect(t.confidence)) AS confidence
             RETURN project_name, version, scan_id, app_id, public_id,
                    repo_url, labels, spdx_ids, risk_categories,
-                   direct_score, effective_score, confidence
+                   direct_score, effective_score, confidence,
+                   project_group, package_url
             ORDER BY project_name, version
-            LIMIT $limit
+            SKIP $offset LIMIT $limit
         """
-        result = self.execute_query(query, {"limit": limit})
+        result = self.execute_query(query, params)
 
         applications = []
         for row in result:
@@ -413,6 +596,9 @@ class FalkorDBService:
                     "repo_url": row[5],
                     "labels": row[6] if row[6] else [],
                     "is_internal": self.internal_label in (row[6] or []),
+                    "project_group": row[12],
+                    "package_url": row[13],
+                    "language": purl_ecosystem(row[13]),
                     "spdx_id": spdx_id,
                     "risk_category": risk_category,
                     "direct_score": direct_score,
@@ -578,41 +764,58 @@ class FalkorDBService:
         if not versions:
             return None
 
-        # Parse and sort versions semantically
-        def parse_semver(version: str) -> tuple[int, int, int, str]:
-            """Parse a SemVer string into comparable tuple."""
-            # Remove 'v' prefix if present
-            v = version.lstrip("vV")
-
-            # Remove Maven suffixes for comparison
-            v = re.sub(r"[.\-](?:RELEASE|FINAL|GA|SNAPSHOT)$", "", v, flags=re.IGNORECASE)
-
-            # Split on '-' to separate pre-release
-            parts = v.split("-", 1)
-            version_part = parts[0]
-            prerelease = parts[1] if len(parts) > 1 else ""
-
-            # Split on '+' to remove build metadata
-            version_part = version_part.split("+")[0]
-
-            # Parse major.minor.patch
-            version_nums = version_part.split(".")
-            major = int(version_nums[0]) if len(version_nums) > 0 else 0
-            minor = int(version_nums[1]) if len(version_nums) > 1 else 0
-            patch = int(version_nums[2]) if len(version_nums) > 2 else 0
-
-            # Pre-release versions are lower than release versions
-            # Empty prerelease string sorts after any prerelease
-            prerelease_sort = prerelease if prerelease else "~"  # '~' sorts after letters
-
-            return (major, minor, patch, prerelease_sort)
-
         try:
             sorted_versions = sorted(versions, key=parse_semver, reverse=True)
             return sorted_versions[0] if sorted_versions else None
         except (ValueError, IndexError):
             # If parsing fails, return None
             return None
+
+    @staticmethod
+    def _latest_and_prev(versions: list[str]) -> tuple[str | None, str | None]:
+        """Rank version strings and return ``(latest, latest-1)``.
+
+        Uses semver-aware ordering when every version is SemVer-compliant;
+        otherwise falls back to descending string order, in which case the
+        classification is only approximate. Empty/blank entries are ignored.
+
+        Returns ``(None, None)`` when there are no versions; the second element
+        is ``None`` when there is only one.
+        """
+        vs = [v for v in versions if v]
+        if not vs:
+            return None, None
+
+        if all(SEMVER_PATTERN.match(v) for v in vs):
+            try:
+                ordered = sorted(vs, key=parse_semver, reverse=True)
+            except (ValueError, IndexError):
+                ordered = sorted(vs, reverse=True)
+        else:
+            ordered = sorted(vs, reverse=True)
+
+        return ordered[0], (ordered[1] if len(ordered) > 1 else None)
+
+    def get_target_version_recency(
+        self, project_name: str, internal_only: bool = False
+    ) -> tuple[str | None, str | None]:
+        """Return the latest and previous (latest-1) versions of a project.
+
+        Uses semver-aware ordering when every version is SemVer-compliant;
+        otherwise falls back to descending string order, in which case the
+        latest / latest-1 classification is only approximate.
+
+        Args:
+            project_name: The project whose versions are ranked.
+            internal_only: If True, only include internal-labeled nodes.
+
+        Returns:
+            Tuple ``(latest, prev)``; either element may be ``None`` when there
+            are too few versions.
+        """
+        return self._latest_and_prev(
+            self.get_all_versions_of_project(project_name, internal_only)
+        )
 
     def get_transitive_dependencies_for_report(
         self,
@@ -694,9 +897,7 @@ class FalkorDBService:
         )
         return dependencies
 
-    def get_transitive_dependency_purls(
-        self, purl: str, max_depth: int | None = None
-    ) -> list[str]:
+    def get_transitive_dependency_purls(self, purl: str, max_depth: int | None = None) -> list[str]:
         """Get transitive dependency purls for a package identified by purl.
 
         Resolves purl to project/version, runs BFS, returns list of dependency
@@ -1362,6 +1563,7 @@ class FalkorDBService:
         internal_only: bool = False,
         longest_only: bool = True,
         project_group: str | None = None,
+        name: str | None = None,
     ) -> dict[str, Any]:
         """Get dependants with partition levels and dependency paths.
 
@@ -1376,12 +1578,14 @@ class FalkorDBService:
             internal_only: If True, only include internal-labeled nodes
             longest_only: If True (default), only include the longest path per dependant
             project_group: Optional group for root node disambiguation
+            name: Optional case-insensitive substring filter on the dependant's
+                project_name. Applied to the listed dependants (and the derived
+                stats); the full graph is still traversed for path analysis.
 
         Returns:
             Dict with target info, stats, and dependants list
         """
-        import networkx as nx
-
+        name_lower = name.lower() if name else None
         # Get transitive dependants
         nodes, edges = self.get_transitive_dependants(
             project_name,
@@ -1453,8 +1657,6 @@ class FalkorDBService:
 
         # Get topological order starting from root (BFS-based for nodes reachable from root)
         # Process in BFS order to ensure we process shorter paths before longer ones
-        from collections import deque
-
         # Use BFS to get nodes in level order, then process
         visited_order: list[str] = []
         queue = deque([root_id])
@@ -1498,6 +1700,9 @@ class FalkorDBService:
             partition = partitions.get(node_id, -1)
             if partition < 0:
                 continue  # Not reachable
+
+            if name_lower and name_lower not in data.get("project_name", "").lower():
+                continue  # Doesn't match the name filter
 
             max_partition = max(max_partition, partition)
             unique_projects.add(data.get("project_name", ""))
@@ -1656,16 +1861,21 @@ class FalkorDBService:
             for row in result
         ]
 
-    def find_snapshot_dependencies(self, internal_only: bool = False) -> list[dict[str, Any]]:
+    def find_snapshot_dependencies(
+        self, internal_only: bool = False, limit: int | None = None, offset: int = 0
+    ) -> list[dict[str, Any]]:
         """Find all applications with SNAPSHOT dependencies.
 
         Args:
             internal_only: If True, only include internal-labeled nodes
+            limit: Page size for paginated reads (``None`` returns all rows)
+            offset: Number of rows to skip (paginated reads)
 
         Returns:
             List of dicts with application and dependency information
         """
         node_label = self.get_node_label(internal_only)
+        page_clause, params = self._page_clause(limit, offset)
         query = f"""
             MATCH (app:{node_label})-[r]->(dep:{node_label})
             WHERE dep.name CONTAINS 'SNAPSHOT'
@@ -1674,8 +1884,9 @@ class FalkorDBService:
                    dep.project_name as dependency,
                    dep.name as dep_version
             ORDER BY app.project_name, app.name
+            {page_clause}
         """
-        result = self.execute_query(query, {})
+        result = self.execute_query(query, params)
         return [
             {
                 "application": row[0],
@@ -1686,24 +1897,43 @@ class FalkorDBService:
             for row in result
         ]
 
-    def find_self_dependencies(self, internal_only: bool = False) -> list[dict[str, Any]]:
+    def count_snapshot_dependencies(self, internal_only: bool = False) -> int:
+        """Count SNAPSHOT dependency edges (same filter as the page query)."""
+        node_label = self.get_node_label(internal_only)
+        result = self.execute_query(
+            f"""
+            MATCH (app:{node_label})-[r]->(dep:{node_label})
+            WHERE dep.name CONTAINS 'SNAPSHOT'
+            RETURN count(r) AS n
+            """,
+            {},
+        )
+        return int(result[0][0]) if result and result[0] and result[0][0] is not None else 0
+
+    def find_self_dependencies(
+        self, internal_only: bool = False, limit: int | None = None, offset: int = 0
+    ) -> list[dict[str, Any]]:
         """Find nodes that depend on themselves.
 
         Args:
             internal_only: If True, only include internal-labeled nodes
+            limit: Page size for paginated reads (``None`` returns all rows)
+            offset: Number of rows to skip (paginated reads)
 
         Returns:
             List of dicts with self-dependency information
         """
         node_label = self.get_node_label(internal_only)
+        page_clause, params = self._page_clause(limit, offset)
         query = f"""
             MATCH (v:{node_label})-[r]->(v)
             RETURN v.project_name as project_name,
                    v.name as version,
                    type(r) as relationship_type
             ORDER BY v.project_name, v.name
+            {page_clause}
         """
-        result = self.execute_query(query, {})
+        result = self.execute_query(query, params)
         return [
             {
                 "project_name": row[0],
@@ -1713,11 +1943,100 @@ class FalkorDBService:
             for row in result
         ]
 
-    def find_non_semver_versions(self, internal_only: bool = False) -> list[dict[str, Any]]:
-        """Find all versions that don't follow SemVer naming convention.
+    def count_snapshot_applications(self, internal_only: bool = False) -> int:
+        """Count distinct applications that have SNAPSHOT dependencies."""
+        node_label = self.get_node_label(internal_only)
+        result = self.execute_query(
+            f"""
+            MATCH (app:{node_label})-[r]->(dep:{node_label})
+            WHERE dep.name CONTAINS 'SNAPSHOT'
+            RETURN count(DISTINCT app.project_name) AS n
+            """,
+            {},
+        )
+        return int(result[0][0]) if result and result[0] and result[0][0] is not None else 0
 
-        SemVer format: MAJOR.MINOR.PATCH with optional pre-release and build
-        metadata (e.g., 1.0.0, 1.2.3-alpha, 1.2.3+build, v2.0.0).
+    def count_snapshot_dependency_versions(self, internal_only: bool = False) -> int:
+        """Count distinct SNAPSHOT dependency project names."""
+        node_label = self.get_node_label(internal_only)
+        result = self.execute_query(
+            f"""
+            MATCH (app:{node_label})-[r]->(dep:{node_label})
+            WHERE dep.name CONTAINS 'SNAPSHOT'
+            RETURN count(DISTINCT dep.project_name) AS n
+            """,
+            {},
+        )
+        return int(result[0][0]) if result and result[0] and result[0][0] is not None else 0
+
+    def count_self_dependencies(self, internal_only: bool = False) -> int:
+        """Count self-dependency edges (same filter as the page query)."""
+        node_label = self.get_node_label(internal_only)
+        result = self.execute_query(
+            f"MATCH (v:{node_label})-[r]->(v) RETURN count(r) AS n", {}
+        )
+        return int(result[0][0]) if result and result[0] and result[0][0] is not None else 0
+
+    def count_self_dependency_projects(self, internal_only: bool = False) -> int:
+        """Count distinct projects that depend on themselves."""
+        node_label = self.get_node_label(internal_only)
+        result = self.execute_query(
+            f"MATCH (v:{node_label})-[r]->(v) RETURN count(DISTINCT v.project_name) AS n", {}
+        )
+        return int(result[0][0]) if result and result[0] and result[0][0] is not None else 0
+
+    def _classify_version_release(
+        self, version: str, base_counts: dict[tuple[int, int, int], int]
+    ) -> dict[str, Any]:
+        """Classify a version's SemVer compliance and release status.
+
+        Args:
+            version: The version string to classify.
+            base_counts: Map of ``(major, minor, patch)`` base → number of
+                pre-release versions of the same project sharing that base. Used
+                to flag suspected branch-name versioning.
+
+        Returns:
+            Dict with ``semver_compliant`` (bool), ``released`` (bool) and a
+            human-readable ``reason`` (``""`` for a clean released version).
+        """
+        semver_compliant = bool(SEMVER_PATTERN.match(version))
+        is_snapshot = "snapshot" in version.lower()
+
+        prerelease = ""
+        base: tuple[int, int, int] | None = None
+        if semver_compliant:
+            major, minor, patch, prerelease = _split_semver(version)
+            base = (major, minor, patch)
+        has_prerelease = bool(prerelease)
+
+        # A clean release is SemVer-compliant with no pre-release/SNAPSHOT marker.
+        released = semver_compliant and not (is_snapshot or has_prerelease)
+
+        if not semver_compliant:
+            reason = self._categorize_non_semver_version(version)
+        elif is_snapshot:
+            reason = "SNAPSHOT build (unreleased)"
+        elif has_prerelease:
+            if base is not None and base_counts.get(base, 0) >= 2:
+                reason = "Suspected branch-name versioning"
+            else:
+                reason = "Pre-release (unreleased)"
+        else:
+            reason = ""
+
+        return {
+            "semver_compliant": semver_compliant,
+            "released": released,
+            "reason": reason,
+        }
+
+    def find_non_semver_versions(self, internal_only: bool = False) -> list[dict[str, Any]]:
+        """Find versions that are non-SemVer *or* SemVer-but-suspect.
+
+        Returns versions that either fail ``SEMVER_PATTERN`` or, while technically
+        SemVer-compliant, are unreleased (pre-release / SNAPSHOT) or exhibit
+        suspected branch-name versioning. Clean released versions are omitted.
 
         Common non-SemVer patterns include:
         - SNAPSHOT versions (e.g., 1.0.0-SNAPSHOT)
@@ -1729,7 +2048,8 @@ class FalkorDBService:
             internal_only: If True, only include internal-labeled nodes
 
         Returns:
-            List of dicts with project_name, version, and reason
+            List of dicts with project_name, version, reason, semver_compliant,
+            released, and labels.
         """
         node_label = self.get_node_label(internal_only)
         query = f"""
@@ -1741,25 +2061,435 @@ class FalkorDBService:
         """
         result = self.execute_query(query, {})
 
-        non_semver_versions = []
+        # Materialise rows and per-project pre-release base counts (for branch-
+        # name detection) in a single pass over the result set.
+        rows: list[tuple[Any, str, Any]] = []
+        base_counts_by_project: dict[str, dict[tuple[int, int, int], int]] = {}
         for row in result:
-            project_name = row[0]
-            version = row[1]
-            labels = row[2]
+            project_name, version, labels = row[0], row[1], row[2]
+            if not version:
+                continue
+            rows.append((project_name, version, labels))
+            if SEMVER_PATTERN.match(version):
+                major, minor, patch, prerelease = _split_semver(version)
+                if prerelease:
+                    counts = base_counts_by_project.setdefault(project_name, {})
+                    base = (major, minor, patch)
+                    counts[base] = counts.get(base, 0) + 1
 
-            if version and not SEMVER_PATTERN.match(version):
-                # Categorize the type of non-SemVer version
-                reason = self._categorize_non_semver_version(version)
-                non_semver_versions.append(
-                    {
-                        "project_name": project_name,
-                        "version": version,
-                        "reason": reason,
-                        "labels": labels,
-                    }
-                )
+        suspect_versions = []
+        for project_name, version, labels in rows:
+            classification = self._classify_version_release(
+                version, base_counts_by_project.get(project_name, {})
+            )
+            # Clean released SemVer versions are not suspect — skip them.
+            if classification["semver_compliant"] and classification["released"]:
+                continue
+            suspect_versions.append(
+                {
+                    "project_name": project_name,
+                    "version": version,
+                    "reason": classification["reason"],
+                    "semver_compliant": classification["semver_compliant"],
+                    "released": classification["released"],
+                    "labels": labels,
+                }
+            )
 
-        return non_semver_versions
+        return suspect_versions
+
+    def count_duplicate_version_nodes(self) -> int:
+        """Count (project_name, name) groups with duplicate or split nodes.
+
+        A group qualifies when it spans more than one distinct
+        (project_group, package_url) coordinate (a provenance split) or when any
+        single coordinate is backed by more than one node (a genuine duplicate).
+
+        Returns:
+            The number of qualifying groups (same filter as the page query).
+        """
+        query = """
+            MATCH (v:Version)
+            WITH v.project_name AS project_name, v.name AS version,
+                 v.project_group AS project_group, v.package_url AS package_url,
+                 count(*) AS node_count
+            WITH project_name, version,
+                 count(*) AS distinct_coordinates,
+                 max(node_count) AS max_combo_count
+            WHERE distinct_coordinates > 1 OR max_combo_count > 1
+            RETURN count(*) AS n
+        """
+        result = self.execute_query(query, {})
+        return int(result[0][0]) if result and result[0] and result[0][0] is not None else 0
+
+    def get_duplicate_node_stats(self) -> dict[str, int]:
+        """Return duplicate/provenance-split KPI counters in one aggregation.
+
+        Promotes the Phase 3b diagnostic to a trendable data-quality KPI: the
+        total number of flagged ``(project_name, version)`` groups plus the
+        breakdown by kind. ``provenance_splits`` and ``genuine_duplicates``
+        overlap by design — a group that is both is counted in each.
+
+        Returns:
+            Dict with ``affected_groups``, ``provenance_splits`` and
+            ``genuine_duplicates`` counts (all ``0`` on an empty graph).
+        """
+        query = """
+            MATCH (v:Version)
+            WITH v.project_name AS project_name, v.name AS version,
+                 v.project_group AS project_group, v.package_url AS package_url,
+                 count(*) AS node_count
+            WITH project_name, version,
+                 count(*) AS distinct_coordinates,
+                 max(node_count) AS max_combo_count
+            WHERE distinct_coordinates > 1 OR max_combo_count > 1
+            RETURN count(*) AS affected_groups,
+                   sum(CASE WHEN distinct_coordinates > 1 THEN 1 ELSE 0 END)
+                       AS provenance_splits,
+                   sum(CASE WHEN max_combo_count > 1 THEN 1 ELSE 0 END)
+                       AS genuine_duplicates
+        """
+        result = self.execute_query(query, {})
+        if not result or result[0] is None or result[0][0] is None:
+            return {"affected_groups": 0, "provenance_splits": 0, "genuine_duplicates": 0}
+        row = result[0]
+        return {
+            "affected_groups": int(row[0]),
+            "provenance_splits": int(row[1]) if row[1] is not None else 0,
+            "genuine_duplicates": int(row[2]) if row[2] is not None else 0,
+        }
+
+    def find_duplicate_version_nodes(
+        self, limit: int = 1000, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        """Find Version nodes that duplicate or split on provenance.
+
+        Groups Version nodes by ``(project_name, name)`` and surfaces groups
+        that either:
+
+        - span multiple distinct ``(project_group, package_url)`` coordinates
+          (**provenance splits** — expected once purl is part of node identity,
+          but worth monitoring), or
+        - have more than one node for a single coordinate (**genuine
+          duplicates** — same project_name/name/project_group/package_url with
+          ``count > 1``, which should not happen).
+
+        Args:
+            limit: Maximum number of groups to return.
+            offset: Number of groups to skip (pagination).
+
+        Returns:
+            List of group dicts with coordinate/duplicate diagnostics.
+        """
+        query = """
+            MATCH (v:Version)
+            WITH v.project_name AS project_name, v.name AS version,
+                 v.project_group AS project_group, v.package_url AS package_url,
+                 count(*) AS node_count
+            WITH project_name, version,
+                 collect({
+                     project_group: project_group,
+                     package_url: package_url,
+                     node_count: node_count
+                 }) AS combos,
+                 sum(node_count) AS total_nodes,
+                 max(node_count) AS max_combo_count
+            WHERE size(combos) > 1 OR max_combo_count > 1
+            RETURN project_name, version, combos, total_nodes,
+                   size(combos) AS distinct_coordinates, max_combo_count
+            ORDER BY project_name, version
+            SKIP $offset LIMIT $limit
+        """
+        result = self.execute_query(query, {"limit": limit, "offset": offset})
+
+        rows: list[dict[str, Any]] = []
+        for row in result:
+            combos = row[2] or []
+            groups = sorted({(c.get("project_group") or "") for c in combos})
+            purls = sorted({(c.get("package_url") or "") for c in combos})
+            distinct_coordinates = int(row[4]) if row[4] is not None else len(combos)
+            max_combo_count = int(row[5]) if row[5] is not None else 1
+            is_genuine_duplicate = max_combo_count > 1
+            is_provenance_split = distinct_coordinates > 1
+            if is_genuine_duplicate and is_provenance_split:
+                classification = "Duplicate + provenance split"
+            elif is_genuine_duplicate:
+                classification = "Genuine duplicate"
+            else:
+                classification = "Provenance split"
+            rows.append(
+                {
+                    "project_name": row[0],
+                    "version": row[1],
+                    "distinct_coordinates": distinct_coordinates,
+                    "total_nodes": int(row[3]) if row[3] is not None else 0,
+                    "max_node_count": max_combo_count,
+                    "is_genuine_duplicate": is_genuine_duplicate,
+                    "is_provenance_split": is_provenance_split,
+                    "classification": classification,
+                    "project_groups": groups,
+                    "package_urls": purls,
+                }
+            )
+        return rows
+
+    # ------------------------------------------------------------------
+    # Phase 7 reporting-gap reports
+    # ------------------------------------------------------------------
+
+    def get_purl_coverage(self, internal_only: bool = False) -> dict[str, int]:
+        """Return purl-identity coverage counters over Version nodes.
+
+        Reports how many Version nodes carry a non-empty ``package_url`` (and
+        therefore participate in the Phase 3a purl node identity) versus the
+        total — the fraction still sitting in the name/project_name/
+        project_group fallback bucket is ``total - with_purl``.
+
+        Args:
+            internal_only: If True, only count internal-labeled nodes.
+
+        Returns:
+            Dict with ``total``, ``with_purl`` and ``without_purl`` counts.
+        """
+        node_label = self.get_node_label(internal_only)
+        query = f"""
+            MATCH (v:{node_label})
+            RETURN count(v) AS total,
+                   sum(CASE WHEN v.package_url IS NOT NULL AND v.package_url <> ''
+                            THEN 1 ELSE 0 END) AS with_purl
+        """
+        result = self.execute_query(query, {})
+        if not result or result[0] is None or result[0][0] is None:
+            return {"total": 0, "with_purl": 0, "without_purl": 0}
+        total = int(result[0][0])
+        with_purl = int(result[0][1]) if result[0][1] is not None else 0
+        return {
+            "total": total,
+            "with_purl": with_purl,
+            "without_purl": total - with_purl,
+        }
+
+    def get_ecosystem_breakdown(
+        self, internal_only: bool = False, limit: int | None = None, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        """Aggregate Version nodes per purl ecosystem (package type).
+
+        The package type is extracted from ``package_url`` in-query (a grouped
+        aggregation, so raw rows are never materialised) and mapped to a
+        language/ecosystem label in Python. Nodes with no/invalid purl fall into
+        an ``(none)`` bucket labelled ``Unknown``.
+
+        Args:
+            internal_only: If True, only include internal-labeled nodes.
+            limit: Max rows to return (``None`` = all); ecosystems are few.
+            offset: Rows to skip (pagination).
+
+        Returns:
+            List of dicts: ``ecosystem`` (purl type), ``language`` (label),
+            ``components``, ``projects``, ``pct`` (share of components).
+        """
+        # Local import: purl.py imports get_falkordb_service at module top, so a
+        # top-level import here would be circular (mirrors get_all_projects).
+        from sbom_graph_api.utils.purl import ecosystem_label
+
+        node_label = self.get_node_label(internal_only)
+        query = f"""
+            MATCH (v:{node_label})
+            WITH CASE
+                     WHEN v.package_url IS NOT NULL AND v.package_url STARTS WITH 'pkg:'
+                     THEN toLower(split(split(v.package_url, 'pkg:')[1], '/')[0])
+                     ELSE ''
+                 END AS ptype, v
+            WITH ptype, count(v) AS components, count(DISTINCT v.project_name) AS projects
+            RETURN ptype, components, projects
+        """
+        result = self.execute_query(query, {})
+
+        raw: list[tuple[str, int, int]] = []
+        total_components = 0
+        for row in result:
+            ptype = row[0] or ""
+            components = int(row[1]) if row[1] is not None else 0
+            projects = int(row[2]) if row[2] is not None else 0
+            raw.append((ptype, components, projects))
+            total_components += components
+
+        rows: list[dict[str, Any]] = []
+        for ptype, components, projects in raw:
+            pct = round(components / total_components * 100, 1) if total_components else 0.0
+            rows.append(
+                {
+                    "ecosystem": ptype or "(none)",
+                    "language": ecosystem_label(ptype) or "Unknown",
+                    "components": components,
+                    "projects": projects,
+                    "pct": pct,
+                }
+            )
+        rows.sort(key=lambda r: (-r["components"], r["language"]))
+
+        if limit is not None:
+            return rows[offset : offset + limit]
+        return rows
+
+    def count_ecosystems(self, internal_only: bool = False) -> int:
+        """Count distinct purl ecosystems (see :meth:`get_ecosystem_breakdown`)."""
+        return len(self.get_ecosystem_breakdown(internal_only=internal_only))
+
+    def get_unreleased_in_production(
+        self, internal_only: bool = False, limit: int | None = None, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        """Find applications depending on unreleased dependency versions.
+
+        Joins the Phase 4 ``released = False`` classification (SNAPSHOT /
+        pre-release / branch-name / non-SemVer) back to the dependants that
+        consume those versions, so the result is consumer-centric: which apps
+        ship against a version that is not a clean release.
+
+        Args:
+            internal_only: If True, only include internal-labeled nodes.
+            limit: Max rows to return (``None`` = all); ``offset`` to skip.
+            offset: Rows to skip (pagination).
+
+        Returns:
+            List of dicts: ``application``, ``application_version``,
+            ``dependency``, ``dependency_version``, ``reason``.
+        """
+        suspects = [
+            s
+            for s in self.find_non_semver_versions(internal_only)
+            if not s.get("released", True)
+        ]
+        if not suspects:
+            return []
+
+        reason_by_key = {(s["project_name"], s["version"]): s["reason"] for s in suspects}
+        target_projects = sorted({s["project_name"] for s in suspects})
+
+        node_label = self.get_node_label(internal_only)
+        query = f"""
+            MATCH (dep:{node_label})-[r]->(v:{node_label})
+            WHERE v.project_name IN $projects
+            RETURN DISTINCT dep.project_name AS application,
+                   dep.name AS application_version,
+                   v.project_name AS dependency,
+                   v.name AS dependency_version
+            ORDER BY dep.project_name, dep.name, v.project_name, v.name
+        """
+        result = self.execute_query(query, {"projects": target_projects})
+
+        rows: list[dict[str, Any]] = []
+        for row in result:
+            key = (row[2], row[3])
+            reason = reason_by_key.get(key)
+            if reason is None:
+                # Edge points at a released version of a project that also has
+                # unreleased versions — not the one we're flagging.
+                continue
+            rows.append(
+                {
+                    "application": row[0],
+                    "application_version": row[1],
+                    "dependency": row[2],
+                    "dependency_version": row[3],
+                    "reason": reason,
+                }
+            )
+
+        if limit is not None:
+            return rows[offset : offset + limit]
+        return rows
+
+    def count_unreleased_in_production(self, internal_only: bool = False) -> int:
+        """Count application→unreleased-dependency edges (see sibling method)."""
+        return len(self.get_unreleased_in_production(internal_only=internal_only))
+
+    def get_dependency_freshness(
+        self, internal_only: bool = False, limit: int | None = None, offset: int = 0
+    ) -> list[dict[str, Any]]:
+        """Fleet-wide dependency-freshness: consumers on latest / latest-1 / stale.
+
+        For every dependency library with at least one consumer, rank its
+        versions (semver-aware) to find latest / latest-1, then classify each
+        consuming edge and aggregate. Ordered by fan-in (consumer count) so the
+        highest-impact upgrade targets sort first. Libraries with no consumers
+        are omitted (nothing to upgrade).
+
+        Args:
+            internal_only: If True, only include internal-labeled nodes.
+            limit: Max rows to return (``None`` = all); ``offset`` to skip.
+            offset: Rows to skip (pagination).
+
+        Returns:
+            List of dicts: ``target_project``, ``latest``, ``prev``,
+            ``consumers``, ``on_latest``, ``on_latest_or_prev``, ``stale``,
+            ``pct_stale``.
+        """
+        node_label = self.get_node_label(internal_only)
+
+        # All versions per library, to establish the true latest / latest-1
+        # (the latest version may itself have zero consumers).
+        versions_by_lib: dict[str, list[str]] = {}
+        for row in self.execute_query(
+            f"""
+            MATCH (v:{node_label})
+            WITH v.project_name AS lib, collect(DISTINCT v.name) AS versions
+            RETURN lib, versions
+            """,
+            {},
+        ):
+            versions_by_lib[row[0]] = [v for v in (row[1] or []) if v]
+
+        # Consumer (fan-in) counts per (library, target version).
+        consumer_rows = self.execute_query(
+            f"""
+            MATCH (dep:{node_label})-[r]->(v:{node_label})
+            WITH v.project_name AS lib, v.name AS target_version,
+                 count(DISTINCT dep) AS consumers
+            RETURN lib, target_version, consumers
+            """,
+            {},
+        )
+
+        by_lib: dict[str, list[tuple[str, int]]] = {}
+        for row in consumer_rows:
+            lib, target_version = row[0], row[1]
+            consumers = int(row[2]) if row[2] is not None else 0
+            by_lib.setdefault(lib, []).append((target_version, consumers))
+
+        rows: list[dict[str, Any]] = []
+        for lib, edges in by_lib.items():
+            latest, prev = self._latest_and_prev(versions_by_lib.get(lib, []))
+            total_consumers = sum(c for _, c in edges)
+            on_latest = sum(c for tv, c in edges if latest is not None and tv == latest)
+            on_prev = sum(c for tv, c in edges if prev is not None and tv == prev)
+            on_latest_or_prev = on_latest + on_prev
+            stale = total_consumers - on_latest_or_prev
+            pct_stale = (
+                round(stale / total_consumers * 100, 1) if total_consumers else 0.0
+            )
+            rows.append(
+                {
+                    "target_project": lib,
+                    "latest": latest or "",
+                    "prev": prev or "",
+                    "consumers": total_consumers,
+                    "on_latest": on_latest,
+                    "on_latest_or_prev": on_latest_or_prev,
+                    "stale": stale,
+                    "pct_stale": pct_stale,
+                }
+            )
+
+        rows.sort(key=lambda r: (-r["consumers"], -r["pct_stale"], r["target_project"]))
+
+        if limit is not None:
+            return rows[offset : offset + limit]
+        return rows
+
+    def count_dependency_freshness(self, internal_only: bool = False) -> int:
+        """Count libraries with at least one consumer (see sibling method)."""
+        return len(self.get_dependency_freshness(internal_only=internal_only))
 
     def _categorize_non_semver_version(self, version: str) -> str:
         """Categorize why a version doesn't follow SemVer.
@@ -1941,6 +2671,7 @@ class FalkorDBService:
         self,
         project_name: str,
         internal_only: bool = False,
+        name: str | None = None,
     ) -> dict[str, Any]:
         """Get usage statistics for all versions of a library across the org.
 
@@ -1954,6 +2685,9 @@ class FalkorDBService:
         Args:
             project_name: The library/project name to analyze
             internal_only: Only include internal-labeled dependants
+            name: Optional case-insensitive substring filter on the dependant's
+                project_name. Versions with no matching dependant are dropped and
+                per-version / total counts are recomputed from the matches.
 
         Returns:
             Dict with:
@@ -1963,6 +2697,7 @@ class FalkorDBService:
                 - versions: List of version info with dependants for each
         """
         internal_label = self.config.internal_label
+        name_lower = name.lower() if name else None
 
         # Build the internal filter clause
         internal_filter = ""
@@ -2018,6 +2753,14 @@ class FalkorDBService:
 
             # Sort dependants by project name
             dependants_list.sort(key=lambda x: (x["project_name"], x["version"]))
+
+            if name_lower is not None:
+                dependants_list = [
+                    d for d in dependants_list if name_lower in d["project_name"].lower()
+                ]
+                if not dependants_list:
+                    continue  # No dependant matches the name filter
+                dependant_count = len(dependants_list)
 
             versions.append(
                 {
@@ -2332,6 +3075,219 @@ class FalkorDBService:
 
         return vulnerabilities
 
+    def get_vulnerability_summary_stats(
+        self,
+        internal_only: bool = False,
+        defect_id_match: str | None = None,
+    ) -> dict[str, Any]:
+        """Return aggregate stats (severity counts, VEX coverage) in a single query.
+
+        Used to build the stats block on the paginated HTML report without
+        fetching all row data (PERF-001).
+        """
+        where_clause = ""
+        query_params: dict[str, Any] = {}
+
+        if defect_id_match and not defect_id_match_uses_glob(defect_id_match):
+            where_clause = (
+                "                WHERE toLower(toString(COALESCE(d.defect_id, d.id, '')))"
+                " STARTS WITH $defect_id_prefix\n"
+            )
+            query_params["defect_id_prefix"] = defect_id_match_prefix_for_starts_with(
+                defect_id_match
+            )
+
+        version_label = self.get_node_label(internal_only)
+        query = f"""
+            MATCH (v:{version_label})-[:VERSION_DEFECT]->(d:Defect)
+            OPTIONAL MATCH (v)-[:HAS_VEX]->(s:VexStatement)-[:REFERS_TO]->(d)
+            WITH d,
+                 collect(DISTINCT {{version: v.name}}) AS affected_versions,
+                 collect(DISTINCT s.status) AS statuses
+{where_clause}            RETURN d.severity AS severity,
+                   size(affected_versions) AS affected_count,
+                   size([x IN statuses WHERE x IS NOT NULL]) AS vex_count
+        """
+        result = self.execute_query(query, query_params)
+
+        severity_counts: dict[str, int] = {}
+        total_affected = 0
+        total_with_vex = 0
+
+        for row in result:
+            sev = (row[0] or "UNKNOWN").upper()
+            severity_counts[sev] = severity_counts.get(sev, 0) + 1
+            total_affected += row[1] or 0
+            if row[2]:
+                total_with_vex += 1
+
+        if defect_id_match and defect_id_match_uses_glob(defect_id_match):
+            # glob: must fall back to the full list for accurate counts
+            all_vulns = self.get_all_vulnerabilities(internal_only, defect_id_match)
+            severity_counts = {}
+            total_affected = 0
+            total_with_vex = 0
+            for v in all_vulns:
+                sev = (v.get("severity") or "UNKNOWN").upper()
+                severity_counts[sev] = severity_counts.get(sev, 0) + 1
+                total_affected += len(v.get("affected_versions", []))
+                if v.get("vex_status"):
+                    total_with_vex += 1
+
+        total = sum(severity_counts.values())
+        return {
+            "total": total,
+            "with_vex": total_with_vex,
+            "severity_counts": severity_counts,
+            "total_affected": total_affected,
+        }
+
+    def get_all_vulnerabilities_paged(
+        self,
+        internal_only: bool = False,
+        defect_id_match: str | None = None,
+        vex_filter: str | None = None,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Paged fetch of vulnerabilities with optional VEX/defect_id filters (PERF-001/SEC-003)."""
+        where_prefix = ""
+        query_params: dict[str, Any] = {}
+        use_glob_postfilter = False
+
+        if defect_id_match:
+            use_glob_postfilter = defect_id_match_uses_glob(defect_id_match)
+            if not use_glob_postfilter:
+                where_prefix = (
+                    "                WHERE toLower(toString(COALESCE(d.defect_id, d.id, '')))"
+                    " STARTS WITH $defect_id_prefix\n"
+                )
+                query_params["defect_id_prefix"] = defect_id_match_prefix_for_starts_with(
+                    defect_id_match
+                )
+
+        page_clause, page_params = self._page_clause(limit, offset)
+        query_params.update(page_params)
+
+        version_label = self.get_node_label(internal_only)
+        query = f"""
+            MATCH (v:{version_label})-[:VERSION_DEFECT]->(d:Defect)
+            OPTIONAL MATCH (v)-[:HAS_VEX]->(s:VexStatement)-[:REFERS_TO]->(d)
+            WITH d,
+                 collect(DISTINCT {{
+                     project_name: v.project_name,
+                     version: v.name,
+                     project_group: v.project_group
+                 }}) AS affected_versions,
+                 collect(DISTINCT {{
+                     status: s.status,
+                     timestamp: s.timestamp
+                 }}) AS vex_statements
+{where_prefix}            RETURN COALESCE(d.defect_id, d.id) AS defect_id,
+                   COALESCE(d.title, d.description) AS title,
+                   d.description AS description,
+                   d.severity AS severity,
+                   COALESCE(d.cvss_score, d.cvss) AS cvss_score,
+                   d.cwe_id AS cwe_id,
+                   d.published_date AS published_date,
+                   d.last_enriched_at AS last_enriched_at,
+                   d.aliases AS aliases,
+                   d.enrichment_source AS enrichment_source,
+                   affected_versions,
+                   vex_statements
+            ORDER BY
+                CASE d.severity
+                    WHEN 'CRITICAL' THEN 1
+                    WHEN 'critical' THEN 1
+                    WHEN 'HIGH' THEN 2
+                    WHEN 'high' THEN 2
+                    WHEN 'MEDIUM' THEN 3
+                    WHEN 'medium' THEN 3
+                    WHEN 'LOW' THEN 4
+                    WHEN 'low' THEN 4
+                    ELSE 5
+                END,
+                COALESCE(d.cvss_score, d.cvss) DESC
+            {page_clause}
+        """
+
+        result = self.execute_query(query, query_params)
+
+        vulnerabilities: list[dict[str, Any]] = []
+        for row in result:
+            vex_statements = row[11] or []
+            vex_status = self._latest_vex_status(vex_statements)
+            vulnerabilities.append({
+                "defect_id": row[0],
+                "title": row[1],
+                "description": row[2],
+                "severity": row[3],
+                "cvss_score": row[4],
+                "cwe_id": row[5],
+                "published_date": row[6],
+                "last_enriched_at": row[7],
+                "aliases": row[8] or [],
+                "enrichment_source": row[9],
+                "affected_versions": row[10] if row[10] else [],
+                "vex_status": vex_status,
+            })
+
+        if defect_id_match and use_glob_postfilter:
+            vulnerabilities = self._filter_vulnerabilities_defect_glob(
+                vulnerabilities, defect_id_match
+            )
+
+        if vex_filter == "hide_not_affected":
+            vulnerabilities = [v for v in vulnerabilities if v.get("vex_status") != "not_affected"]
+        elif vex_filter == "under_investigation":
+            vulnerabilities = [
+                v for v in vulnerabilities if v.get("vex_status") == "under_investigation"
+            ]
+
+        return vulnerabilities
+
+    def count_all_vulnerabilities(
+        self,
+        internal_only: bool = False,
+        defect_id_match: str | None = None,
+        vex_filter: str | None = None,
+    ) -> int:
+        """Count vulnerabilities matching filters (PERF-001 — backs pagination)."""
+        if vex_filter and vex_filter != "all":
+            all_vulns = self.get_all_vulnerabilities(internal_only, defect_id_match)
+            if vex_filter == "hide_not_affected":
+                return sum(1 for v in all_vulns if v.get("vex_status") != "not_affected")
+            if vex_filter == "under_investigation":
+                return sum(1 for v in all_vulns if v.get("vex_status") == "under_investigation")
+            return len(all_vulns)
+
+        where_clause = ""
+        query_params: dict[str, Any] = {}
+
+        if defect_id_match and not defect_id_match_uses_glob(defect_id_match):
+            where_clause = (
+                "                WHERE toLower(toString(COALESCE(d.defect_id, d.id, '')))"
+                " STARTS WITH $defect_id_prefix\n"
+            )
+            query_params["defect_id_prefix"] = defect_id_match_prefix_for_starts_with(
+                defect_id_match
+            )
+
+        version_label = self.get_node_label(internal_only)
+        query = f"""
+            MATCH (v:{version_label})-[:VERSION_DEFECT]->(d:Defect)
+            WITH d
+{where_clause}            RETURN COUNT(DISTINCT d) AS total
+        """
+        result = self.execute_query(query, query_params)
+        raw = result[0][0] if result else 0
+
+        if defect_id_match and defect_id_match_uses_glob(defect_id_match):
+            all_vulns = self.get_all_vulnerabilities(internal_only, defect_id_match)
+            return len(all_vulns)
+
+        return int(raw) if raw is not None else 0
+
     def _latest_vex_status(
         self,
         vex_statements: list[dict[str, Any]],
@@ -2595,16 +3551,24 @@ class FalkorDBService:
                 worst = c or "unknown"
         return worst
 
-    def get_all_licenses(self, internal_only: bool = True) -> list[dict[str, Any]]:
+    def get_all_licenses(
+        self,
+        internal_only: bool = True,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
         """Return all licenses with their usage counts.
 
         Args:
             internal_only: If True, only count versions labelled INTERNAL.
+            limit: Maximum rows to return (None = all).
+            offset: Row offset for pagination.
 
         Returns:
             List of dicts: ``{spdx_id, name, risk_category, usage_count}``.
         """
         label = f":{self.internal_label}" if internal_only else ""
+        page_clause, page_params = self._page_clause(limit, offset)
         query = f"""
             MATCH (v:Version{label})-[:HAS_LICENSE]->(l:License)
             RETURN
@@ -2613,8 +3577,9 @@ class FalkorDBService:
                 l.risk_category AS risk_category,
                 COUNT(DISTINCT v) AS usage_count
             ORDER BY usage_count DESC
+            {page_clause}
         """
-        result = self.execute_query(query)
+        result = self.execute_query(query, page_params)
         return [
             {
                 "spdx_id": row[0] or "",
@@ -2624,6 +3589,16 @@ class FalkorDBService:
             }
             for row in result
         ]
+
+    def count_all_licenses(self, internal_only: bool = True) -> int:
+        """Return total count of distinct licenses matching the filter."""
+        label = f":{self.internal_label}" if internal_only else ""
+        query = f"""
+            MATCH (v:Version{label})-[:HAS_LICENSE]->(l:License)
+            RETURN COUNT(DISTINCT l) AS total
+        """
+        result = self.execute_query(query)
+        return int(result[0][0]) if result else 0
 
     def get_license_summary(
         self,
@@ -2884,76 +3859,151 @@ class FalkorDBService:
         conflicts.sort(key=lambda c: c["project_name"])
         return conflicts
 
-    def get_license_risk_dashboard(self, internal_only: bool = False) -> dict[str, Any]:
-        """Return licence compliance dashboard data by risk category.
+    # Worst-risk-category selector, expressed in Cypher over a ``cats`` list of
+    # (trimmed, lower-cased) risk categories. MUST stay in sync with the
+    # priority order in :meth:`_worst_license_risk`
+    # (strong_copyleft > weak_copyleft > proprietary > permissive > unknown).
+    _WORST_LICENSE_RISK_CASE = (
+        "CASE "
+        "WHEN 'strong_copyleft' IN cats THEN 'strong_copyleft' "
+        "WHEN 'weak_copyleft' IN cats THEN 'weak_copyleft' "
+        "WHEN 'proprietary' IN cats THEN 'proprietary' "
+        "WHEN 'permissive' IN cats THEN 'permissive' "
+        "ELSE 'unknown' END"
+    )
 
-        Counts all Version nodes (optionally internal-only) and their
-        associated License nodes, grouping by risk category.
+    #: Risk categories in the fixed display/priority order (worst last-but-one;
+    #: ``unknown`` always last). Used to seed count dicts deterministically.
+    LICENSE_RISK_CATEGORIES = (
+        "permissive",
+        "weak_copyleft",
+        "strong_copyleft",
+        "proprietary",
+        "unknown",
+    )
+
+    def get_license_risk_stats(self, internal_only: bool = False) -> dict[str, Any]:
+        """Return licence-risk category counts/percentages without row buffering.
+
+        Computes each package's worst risk category *in-query* and returns only
+        the per-category counts and percentages (a tiny fixed-size result),
+        never the package rows — so memory stays flat regardless of graph size
+        (PERF: aggregate-materialization ceiling). Percentages are derived in
+        Python from the small counts dict.
 
         Args:
             internal_only: If True, only include internal-labeled nodes.
 
         Returns:
-            Dict with total_packages and categories (permissive,
-            weak_copyleft, strong_copyleft, unknown), each containing
-            count, pct, and packages list.
+            Dict with ``total_packages`` and ``categories`` (each
+            ``{count, pct}``).
         """
         label = f":{self.internal_label}" if internal_only else ""
         query = f"""
             MATCH (v:Version{label})
             WHERE v.package_url IS NOT NULL
             OPTIONAL MATCH (v)-[:HAS_LICENSE]->(l:License)
-            WITH v.project_name AS project_name,
-                 v.name AS version_name,
+            WITH v.project_name AS project_name, v.name AS version_name,
                  v.package_url AS purl,
-                 collect(DISTINCT l.spdx_id) AS spdx_ids,
-                 collect(DISTINCT l.name) AS license_names,
-                 collect(DISTINCT l.risk_category) AS risk_categories
-            RETURN project_name, version_name, purl, spdx_ids,
-                   license_names, risk_categories
+                 collect(DISTINCT trim(toLower(l.risk_category))) AS cats
+            WITH {self._WORST_LICENSE_RISK_CASE} AS worst
+            RETURN worst, count(*) AS cnt
         """
         result = self.execute_query(query, {})
 
-        categories: dict[str, dict[str, Any]] = {
-            "permissive": {"count": 0, "pct": 0.0, "packages": []},
-            "weak_copyleft": {"count": 0, "pct": 0.0, "packages": []},
-            "strong_copyleft": {"count": 0, "pct": 0.0, "packages": []},
-            "proprietary": {"count": 0, "pct": 0.0, "packages": []},
-            "unknown": {"count": 0, "pct": 0.0, "packages": []},
-        }
-
+        counts: dict[str, int] = dict.fromkeys(self.LICENSE_RISK_CATEGORIES, 0)
         for row in result:
-            project_name = row[0] or ""
-            version_name = row[1] or ""
-            purl = row[2] or ""
+            key = row[0] if row[0] in counts else "unknown"
+            counts[key] += int(row[1]) if row[1] is not None else 0
+
+        total = sum(counts.values())
+        categories = {
+            cat: {
+                "count": cnt,
+                "pct": round(cnt / total * 100, 1) if total else 0.0,
+            }
+            for cat, cnt in counts.items()
+        }
+        return {"total_packages": total, "categories": categories}
+
+    def get_license_risk_rows(
+        self,
+        internal_only: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
+        category: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return licence-dashboard package rows, paged and streamable.
+
+        Each row is one package (``project_name``/``version``/``purl`` combo)
+        tagged with its worst risk ``category``. Callers stream the full set
+        page-by-page via :func:`iterate_pages` (JSON/Excel) or request a bounded
+        per-``category`` sample (HTML drill-down) — the aggregate is never held
+        in memory in one piece.
+
+        Args:
+            internal_only: If True, only include internal-labeled nodes.
+            limit: Max rows to return (``None`` = all); ``offset`` to skip.
+            offset: Rows to skip (pagination).
+            category: Optional worst-category filter (e.g. ``strong_copyleft``).
+
+        Returns:
+            List of dicts: ``category``, ``purl``, ``project_name``,
+            ``version_name``, ``spdx_id``, ``license_name``.
+        """
+        label = f":{self.internal_label}" if internal_only else ""
+        page_clause, params = self._page_clause(limit, offset)
+        where_worst = ""
+        if category:
+            where_worst = "WHERE worst = $category"
+            params = {**params, "category": category}
+        query = f"""
+            MATCH (v:Version{label})
+            WHERE v.package_url IS NOT NULL
+            OPTIONAL MATCH (v)-[:HAS_LICENSE]->(l:License)
+            WITH v.project_name AS project_name, v.name AS version_name,
+                 v.package_url AS purl,
+                 collect(DISTINCT l.spdx_id) AS spdx_ids,
+                 collect(DISTINCT l.name) AS license_names,
+                 collect(DISTINCT trim(toLower(l.risk_category))) AS cats
+            WITH project_name, version_name, purl, spdx_ids, license_names,
+                 {self._WORST_LICENSE_RISK_CASE} AS worst
+            {where_worst}
+            RETURN project_name, version_name, purl, spdx_ids, license_names, worst
+            ORDER BY project_name, version_name, purl
+            {page_clause}
+        """
+        result = self.execute_query(query, params)
+
+        rows: list[dict[str, Any]] = []
+        for row in result:
             spdx_ids = [x for x in (row[3] or []) if x]
             license_names = [x for x in (row[4] or []) if x]
-            risk_cats = [x for x in (row[5] or []) if x]
+            rows.append(
+                {
+                    "category": row[5] or "unknown",
+                    "purl": row[2] or "",
+                    "project_name": row[0] or "",
+                    "version_name": row[1] or "",
+                    "spdx_id": ", ".join(sorted(set(spdx_ids))) if spdx_ids else "",
+                    "license_name": (
+                        ", ".join(sorted(set(license_names))) if license_names else ""
+                    ),
+                }
+            )
+        return rows
 
-            spdx_id = ", ".join(sorted(set(spdx_ids))) if spdx_ids else ""
-            license_name = ", ".join(sorted(set(license_names))) if license_names else ""
-            risk_category = self._worst_license_risk(risk_cats) if risk_cats else "unknown"
-
-            pkg = {
-                "purl": purl,
-                "project_name": project_name,
-                "version_name": version_name,
-                "spdx_id": spdx_id,
-                "license_name": license_name,
-            }
-
-            cat_key = risk_category if risk_category in categories else "unknown"
-            categories[cat_key]["count"] += 1
-            categories[cat_key]["packages"].append(pkg)
-
-        total = sum(c["count"] for c in categories.values())
-        for cat_data in categories.values():
-            cat_data["pct"] = round((cat_data["count"] / total * 100) if total else 0, 1)
-
-        return {
-            "total_packages": total,
-            "categories": categories,
-        }
+    def count_license_risk_rows(self, internal_only: bool = False) -> int:
+        """Count distinct licence-dashboard package rows (matches stats total)."""
+        label = f":{self.internal_label}" if internal_only else ""
+        query = f"""
+            MATCH (v:Version{label})
+            WHERE v.package_url IS NOT NULL
+            WITH DISTINCT v.project_name AS p, v.name AS n, v.package_url AS u
+            RETURN count(*) AS total
+        """
+        result = self.execute_query(query, {})
+        return int(result[0][0]) if result and result[0] and result[0][0] is not None else 0
 
     def get_package_licenses(self, purl: str) -> list[dict[str, Any]]:
         """Return licenses for a specific package by purl.
@@ -2983,14 +4033,20 @@ class FalkorDBService:
             for row in result
         ]
 
-    def get_vulnerability_freshness(self, internal_only: bool = False) -> list[dict[str, Any]]:
+    def get_vulnerability_freshness(
+        self,
+        internal_only: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
         """Return packages with enrichment freshness status.
 
         Each row contains the package purl, project info, and the most recent
         ``last_enriched_at`` timestamp from linked defect nodes (or null if
         never enriched).
         """
-        label = f":{self.internal_label}" if internal_only else ":Version"
+        label = f":{self.get_node_label(internal_only)}"
+        page_clause, page_params = self._page_clause(limit, offset)
         query = f"""
             MATCH (v{label})
             WHERE v.package_url IS NOT NULL
@@ -3003,8 +4059,9 @@ class FalkorDBService:
                    v.package_url AS purl,
                    latest_enrichment
             ORDER BY latest_enrichment ASC
+            {page_clause}
         """
-        result = self.execute_query(query, {})
+        result = self.execute_query(query, page_params)
         rows = []
         for row in result:
             rows.append(
@@ -3017,6 +4074,17 @@ class FalkorDBService:
                 }
             )
         return rows
+
+    def count_vulnerability_freshness(self, internal_only: bool = False) -> int:
+        """Return total count of packages with enrichment freshness data."""
+        label = f":{self.get_node_label(internal_only)}"
+        query = f"""
+            MATCH (v{label})
+            WHERE v.package_url IS NOT NULL
+            RETURN COUNT(v) AS total
+        """
+        result = self.execute_query(query, {})
+        return int(result[0][0]) if result else 0
 
     def get_enrichment_coverage(
         self,
@@ -3036,9 +4104,7 @@ class FalkorDBService:
             Dict with total, recent, stale, never counts and percentages,
             plus a packages list with per-package details.
         """
-        from datetime import UTC, datetime, timedelta
-
-        label = f":{self.internal_label}" if internal_only else ":Version"
+        label = f":{self.get_node_label(internal_only)}"
         query = f"""
             MATCH (v{label})
             WHERE v.package_url IS NOT NULL
@@ -3388,7 +4454,7 @@ class FalkorDBService:
             List of dicts with purl, annotation_type (bad/good/hold),
             justification, created_by, created_at, annotation_id, etc.
         """
-        label = f":{self.internal_label}" if internal_only else ":Version"
+        label = f":{self.get_node_label(internal_only)}"
         params: dict[str, Any] = {}
 
         type_clause = ""
@@ -3437,13 +4503,19 @@ class FalkorDBService:
             )
         return annotations
 
-    def get_policy_violations(self, internal_only: bool = False) -> list[dict[str, Any]]:
+    def get_policy_violations(
+        self,
+        internal_only: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
         """Return all 'bad' policy annotations that are still in use.
 
         For each bad-annotated package, returns the count of dependant
         applications that transitively depend on it.
         """
-        label = f":{self.internal_label}" if internal_only else ":Version"
+        label = f":{self.get_node_label(internal_only)}"
+        page_clause, page_params = self._page_clause(limit, offset)
         query = f"""
             MATCH (v{label})-[:HAS_POLICY]->(a:PolicyAnnotation {{type: 'bad'}})
             WHERE v.package_url IS NOT NULL
@@ -3459,8 +4531,9 @@ class FalkorDBService:
                    v.name AS version_name,
                    dependant_count
             ORDER BY dependant_count DESC
+            {page_clause}
         """
-        result = self.execute_query(query, {})
+        result = self.execute_query(query, page_params)
         violations: list[dict[str, Any]] = []
         for row in result:
             violations.append(
@@ -3477,6 +4550,31 @@ class FalkorDBService:
                 }
             )
         return violations
+
+    def count_policy_violations(self, internal_only: bool = False) -> int:
+        """Return total count of 'bad' policy violation packages."""
+        label = f":{self.get_node_label(internal_only)}"
+        query = f"""
+            MATCH (v{label})-[:HAS_POLICY]->(a:PolicyAnnotation {{type: 'bad'}})
+            WHERE v.package_url IS NOT NULL
+            RETURN COUNT(DISTINCT v) AS total
+        """
+        result = self.execute_query(query, {})
+        return int(result[0][0]) if result else 0
+
+    def get_policy_violations_total_dependants(self, internal_only: bool = False) -> int:
+        """Return SUM of dependant_count over ALL policy violations (full set)."""
+        label = f":{self.get_node_label(internal_only)}"
+        query = f"""
+            MATCH (v{label})-[:HAS_POLICY]->(a:PolicyAnnotation {{type: 'bad'}})
+            WHERE v.package_url IS NOT NULL
+            WITH DISTINCT v
+            OPTIONAL MATCH (app:Application)-[:DEPENDENCY_VERSION*1..5]->(v)
+            WITH count(DISTINCT app) AS dependant_count
+            RETURN sum(dependant_count) AS total_dependants
+        """
+        result = self.execute_query(query, {})
+        return int(result[0][0]) if result else 0
 
     def add_policy_annotation(
         self,
@@ -3500,9 +4598,6 @@ class FalkorDBService:
             Dict with purl, annotation_id, type, created_at, or None if
             the package was not found in the graph.
         """
-        from datetime import UTC, datetime
-        from uuid import uuid4
-
         version_exists = self.execute_query(
             "MATCH (v:Version {package_url: $purl}) RETURN 1 LIMIT 1",
             {"purl": purl},
@@ -3694,7 +4789,7 @@ class FalkorDBService:
             "description": defect_row[4],
         }
 
-        label = f":{self.internal_label}" if internal_only else ":Version"
+        label = f":{self.get_node_label(internal_only)}"
         level0_query = f"""
             MATCH (v{label})-[:VERSION_DEFECT]->(d:Defect)
             WHERE d.id = $defect_id OR d.defect_id = $defect_id
@@ -3818,7 +4913,7 @@ class FalkorDBService:
         Returns:
             Dict with package info, affected dependants by depth, and total count.
         """
-        label = f":{self.internal_label}" if internal_only else ":Version"
+        label = f":{self.get_node_label(internal_only)}"
         frontiers: list[dict[str, Any]] = []
         visited: set[str] = {purl}
         current: set[str] = {purl}
@@ -4057,7 +5152,7 @@ class FalkorDBService:
 
         Counts vulnerabilities with and without VEX statements.
         """
-        label = f":{self.internal_label}" if internal_only else ":Version"
+        label = f":{self.get_node_label(internal_only)}"
 
         total_query = f"""
             MATCH (v{label})-[:VERSION_DEFECT]->(d:Defect)
@@ -4089,17 +5184,22 @@ class FalkorDBService:
     def get_all_source_repos(
         self,
         internal_only: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         """Return all source repositories with linked package counts.
 
         Args:
             internal_only: Restrict to INTERNAL-labeled versions.
+            limit: Page size for paginated reads (``None`` returns all rows).
+            offset: Number of rows to skip (paginated reads).
 
         Returns:
             List of dicts with url, vcs_type, namespace, name, and
             package_count.
         """
-        label = f":{self.internal_label}" if internal_only else ":Version"
+        label = f":{self.get_node_label(internal_only)}"
+        page_clause, params = self._page_clause(limit, offset)
 
         query = f"""
             MATCH (v{label})-[:HAS_SOURCE]->(r:SourceRepository)
@@ -4109,8 +5209,9 @@ class FalkorDBService:
                    r.name AS name,
                    count(DISTINCT v) AS package_count
             ORDER BY package_count DESC
+            {page_clause}
         """
-        result = self.execute_query(query, {})
+        result = self.execute_query(query, params)
         repos = []
         for row in result:
             repos.append(
@@ -4123,6 +5224,16 @@ class FalkorDBService:
                 }
             )
         return repos
+
+    def count_source_repos(self, internal_only: bool = False) -> int:
+        """Count distinct source repositories (same filter as the page query)."""
+        label = f":{self.get_node_label(internal_only)}"
+        result = self.execute_query(
+            f"MATCH (v{label})-[:HAS_SOURCE]->(r:SourceRepository) "
+            f"RETURN count(DISTINCT r) AS n",
+            {},
+        )
+        return int(result[0][0]) if result and result[0] and result[0][0] is not None else 0
 
     def get_packages_by_source_repo(self, repo_url: str) -> list[dict[str, Any]]:
         """Return all packages sourced from a given repository.
@@ -4372,12 +5483,15 @@ class FalkorDBService:
     def get_vulnerabilities_with_vex(
         self,
         internal_only: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         """Return all vulnerabilities with their latest VEX status.
 
         Each vulnerability includes its latest VEX status (if any).
         """
-        label = f":{self.internal_label}" if internal_only else ":Version"
+        label = f":{self.get_node_label(internal_only)}"
+        page_clause, page_params = self._page_clause(limit, offset)
 
         query = f"""
             MATCH (v{label})-[:VERSION_DEFECT]->(d:Defect)
@@ -4404,8 +5518,9 @@ class FalkorDBService:
                     WHEN 'LOW' THEN 4 WHEN 'low' THEN 4
                     ELSE 5
                 END
+            {page_clause}
         """
-        result = self.execute_query(query, {})
+        result = self.execute_query(query, page_params)
         vulns = []
         for row in result:
             vulns.append(
@@ -4419,6 +5534,16 @@ class FalkorDBService:
                 }
             )
         return vulns
+
+    def count_vulnerabilities_with_vex(self, internal_only: bool = False) -> int:
+        """Return total count of distinct defects reachable from versions."""
+        label = f":{self.get_node_label(internal_only)}"
+        query = f"""
+            MATCH (v{label})-[:VERSION_DEFECT]->(d:Defect)
+            RETURN COUNT(DISTINCT d) AS total
+        """
+        result = self.execute_query(query, {})
+        return int(result[0][0]) if result else 0
 
     # Trust Score methods
 
@@ -4687,6 +5812,9 @@ class FalkorDBService:
         internal_only: bool = False,
         min_score: float = 0.0,
         sort_by: str = "effective_score",
+        limit: int | None = None,
+        offset: int = 0,
+        name: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return all packages with trust scores for report listing.
 
@@ -4694,6 +5822,9 @@ class FalkorDBService:
             internal_only: If True, restrict to INTERNAL-labeled versions.
             min_score: Minimum effective_score (or direct_score) filter.
             sort_by: Sort key - "effective_score" or "direct_score".
+            limit: Maximum rows to return (None = all).
+            offset: Row offset for pagination.
+            name: Optional case-insensitive project_name substring filter.
 
         Returns:
             List of dicts with purl, project_name, direct_score, effective_score,
@@ -4701,9 +5832,13 @@ class FalkorDBService:
         """
         label_filter = f":{self.internal_label}" if internal_only else ""
         sort_field = "effective_score" if sort_by == "effective_score" else "direct_score"
+        page_clause, page_params = self._page_clause(limit, offset)
+        params: dict[str, Any] = {"min_score": min_score, **page_params}
+        name_pred = self._name_predicate("v", name, params)
+        name_clause = f"AND {name_pred}" if name_pred else ""
         query = f"""
             MATCH (v:Version{label_filter})-[:HAS_TRUST_SCORE]->(t:TrustScore)
-            WHERE t.{sort_field} IS NOT NULL AND t.{sort_field} >= $min_score
+            WHERE t.{sort_field} IS NOT NULL AND t.{sort_field} >= $min_score {name_clause}
             RETURN t.purl AS purl,
                    v.project_name AS project_name,
                    v.name AS version,
@@ -4712,8 +5847,9 @@ class FalkorDBService:
                    t.confidence AS confidence,
                    t.sources_used AS sources_used
             ORDER BY t.{sort_field} ASC
+            {page_clause}
         """
-        result = self.execute_query(query, {"min_score": min_score})
+        result = self.execute_query(query, params)
         return [
             {
                 "purl": row[0],
@@ -4726,6 +5862,68 @@ class FalkorDBService:
             }
             for row in result
         ]
+
+    def count_all_trust_scores_for_report(
+        self,
+        internal_only: bool = False,
+        min_score: float = 0.0,
+        sort_by: str = "effective_score",
+        name: str | None = None,
+    ) -> int:
+        """Return total count of packages with trust scores matching the filter."""
+        label_filter = f":{self.internal_label}" if internal_only else ""
+        sort_field = "effective_score" if sort_by == "effective_score" else "direct_score"
+        params: dict[str, Any] = {"min_score": min_score}
+        name_pred = self._name_predicate("v", name, params)
+        name_clause = f"AND {name_pred}" if name_pred else ""
+        query = f"""
+            MATCH (v:Version{label_filter})-[:HAS_TRUST_SCORE]->(t:TrustScore)
+            WHERE t.{sort_field} IS NOT NULL AND t.{sort_field} >= $min_score {name_clause}
+            RETURN COUNT(DISTINCT t) AS total
+        """
+        result = self.execute_query(query, params)
+        return int(result[0][0]) if result else 0
+
+    def get_trust_scores_summary(
+        self,
+        internal_only: bool = False,
+        min_score: float = 0.0,
+        sort_by: str = "effective_score",
+        name: str | None = None,
+    ) -> dict[str, Any]:
+        """Return aggregate stats for trust scores report (FULL SET, no pagination).
+
+        Honors the same internal_only / min_score / name filter as the paginated
+        query. Returns total, avg_direct, avg_effective, low/medium/high counts.
+        """
+        label_filter = f":{self.internal_label}" if internal_only else ""
+        sort_field = "effective_score" if sort_by == "effective_score" else "direct_score"
+        params: dict[str, Any] = {"min_score": min_score}
+        name_pred = self._name_predicate("v", name, params)
+        name_clause = f"AND {name_pred}" if name_pred else ""
+        query = f"""
+            MATCH (v:Version{label_filter})-[:HAS_TRUST_SCORE]->(t:TrustScore)
+            WHERE t.{sort_field} IS NOT NULL AND t.{sort_field} >= $min_score {name_clause}
+            RETURN
+                count(t) AS total,
+                avg(t.direct_score) AS avg_direct,
+                avg(t.effective_score) AS avg_effective,
+                sum(CASE WHEN t.effective_score < 4 THEN 1 ELSE 0 END) AS low,
+                sum(CASE WHEN t.effective_score >= 4 AND t.effective_score < 7 THEN 1 ELSE 0 END) AS medium,
+                sum(CASE WHEN t.effective_score >= 7 THEN 1 ELSE 0 END) AS high
+        """
+        result = self.execute_query(query, params)
+        if not result:
+            return {"total": 0, "avg_direct": None, "avg_effective": None, "low": 0, "medium": 0, "high": 0}
+        row = result[0]
+        return {
+            "total": int(row[0]) if row[0] is not None else 0,
+            "avg_direct": float(row[1]) if row[1] is not None else None,
+            "avg_effective": float(row[2]) if row[2] is not None else None,
+            "low": int(row[3]) if row[3] is not None else 0,
+            "medium": int(row[4]) if row[4] is not None else 0,
+            "high": int(row[5]) if row[5] is not None else 0,
+        }
 
     def get_trust_scores_heatmap(
         self,
@@ -4942,6 +6140,171 @@ class FalkorDBService:
             for row in result
         ]
 
+    def _sbom_inventory_params(
+        self,
+        search: str | None,
+        tool: str | None,
+        sbom_format: str | None,
+        date_from: str | None,
+        date_to: str | None,
+    ) -> dict[str, Any]:
+        """Build shared query params for SBOM inventory queries."""
+        search_val = (search or "").strip()
+        tool_val = (tool or "").strip()
+        format_val = (sbom_format or "").strip()
+        date_from_val = (date_from or "").strip()
+        date_to_val = (date_to or "").strip()
+        return {
+            "search": search_val,
+            "tool": tool_val,
+            "format_filter": format_val,
+            "date_from": date_from_val + "T00:00:00Z" if date_from_val else "",
+            "date_to": date_to_val + "T23:59:59Z" if date_to_val else "",
+        }
+
+    def get_sbom_inventory_paged(
+        self,
+        search: str | None = None,
+        tool: str | None = None,
+        sbom_format: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        offset: int = 0,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Paged version of get_sbom_inventory (PERF-001/SEC-003)."""
+        params = self._sbom_inventory_params(search, tool, sbom_format, date_from, date_to)
+        page_clause, page_params = self._page_clause(limit, offset)
+        params.update(page_params)
+        query = f"""
+            MATCH (s:SBOMRecord)
+            WHERE ($search = "" OR coalesce(s.record_id, "") CONTAINS $search
+                   OR coalesce(s.tool_name, "") CONTAINS $search
+                   OR toLower(toString(coalesce(s.format, ""))) CONTAINS toLower($search))
+              AND ($tool = "" OR s.tool_name = $tool)
+              AND ($format_filter = "" OR toLower(toString(s.format)) = toLower($format_filter))
+              AND ($date_from = "" OR s.ingested_at >= $date_from)
+              AND ($date_to = "" OR s.ingested_at <= $date_to)
+            OPTIONAL MATCH (v:Version)-[:PRODUCED_BY_SBOM]->(s)
+            WITH s, count(v) AS version_count
+            RETURN s.record_id AS record_id,
+                    s.format AS format,
+                    s.ingested_at AS ingested_at,
+                    s.source AS source,
+                    s.tool_name AS tool_name,
+                    s.tool_version AS tool_version,
+                    s.serial_number AS serial_number,
+                    s.document_hash AS document_hash,
+                    version_count
+            ORDER BY s.ingested_at DESC
+            {page_clause}
+        """
+        result = self.execute_query(query, params)
+        return [
+            {
+                "record_id": row[0],
+                "format": row[1],
+                "ingested_at": row[2],
+                "source": row[3],
+                "tool_name": row[4],
+                "tool_version": row[5],
+                "serial_number": row[6],
+                "document_hash": row[7],
+                "version_count": row[8] or 0,
+            }
+            for row in result
+        ]
+
+    def count_sbom_inventory(
+        self,
+        search: str | None = None,
+        tool: str | None = None,
+        sbom_format: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> int:
+        """Count SBOMRecord nodes matching filters (backs pagination, PERF-001)."""
+        params = self._sbom_inventory_params(search, tool, sbom_format, date_from, date_to)
+        query = """
+            MATCH (s:SBOMRecord)
+            WHERE ($search = "" OR coalesce(s.record_id, "") CONTAINS $search
+                   OR coalesce(s.tool_name, "") CONTAINS $search
+                   OR toLower(toString(coalesce(s.format, ""))) CONTAINS toLower($search))
+              AND ($tool = "" OR s.tool_name = $tool)
+              AND ($format_filter = "" OR toLower(toString(s.format)) = toLower($format_filter))
+              AND ($date_from = "" OR s.ingested_at >= $date_from)
+              AND ($date_to = "" OR s.ingested_at <= $date_to)
+            RETURN COUNT(s) AS total
+        """
+        result = self.execute_query(query, params)
+        return int(result[0][0]) if result else 0
+
+    def get_sbom_inventory_tools(
+        self,
+        search: str | None = None,
+        tool: str | None = None,
+        sbom_format: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> list[str]:
+        """Return distinct tool names for the SBOM inventory filter UI."""
+        params = self._sbom_inventory_params(search, tool, sbom_format, date_from, date_to)
+        query = """
+            MATCH (s:SBOMRecord)
+            WHERE ($search = "" OR coalesce(s.record_id, "") CONTAINS $search
+                   OR coalesce(s.tool_name, "") CONTAINS $search
+                   OR toLower(toString(coalesce(s.format, ""))) CONTAINS toLower($search))
+              AND ($tool = "" OR s.tool_name = $tool)
+              AND ($format_filter = "" OR toLower(toString(s.format)) = toLower($format_filter))
+              AND ($date_from = "" OR s.ingested_at >= $date_from)
+              AND ($date_to = "" OR s.ingested_at <= $date_to)
+            WITH s.tool_name AS tn WHERE tn IS NOT NULL
+            RETURN DISTINCT tn ORDER BY tn
+        """
+        result = self.execute_query(query, params)
+        return [row[0] for row in result if row[0]]
+
+    def get_sbom_inventory_summary(
+        self,
+        search: str | None = None,
+        tool: str | None = None,
+        sbom_format: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> dict[str, Any]:
+        """Return aggregate stats for SBOM inventory report (FULL SET, no pagination).
+
+        Returns total, by_format dict, by_source dict — honoring the same filters
+        as the paged query.
+        """
+        params = self._sbom_inventory_params(search, tool, sbom_format, date_from, date_to)
+        query = """
+            MATCH (s:SBOMRecord)
+            WHERE ($search = "" OR coalesce(s.record_id, "") CONTAINS $search
+                   OR coalesce(s.tool_name, "") CONTAINS $search
+                   OR toLower(toString(coalesce(s.format, ""))) CONTAINS toLower($search))
+              AND ($tool = "" OR s.tool_name = $tool)
+              AND ($format_filter = "" OR toLower(toString(s.format)) = toLower($format_filter))
+              AND ($date_from = "" OR s.ingested_at >= $date_from)
+              AND ($date_to = "" OR s.ingested_at <= $date_to)
+            RETURN
+                coalesce(toString(s.format), "Unknown") AS fmt,
+                coalesce(s.source, "Unknown") AS src,
+                count(s) AS cnt
+        """
+        result = self.execute_query(query, params)
+        total = 0
+        by_format: dict[str, int] = {}
+        by_source: dict[str, int] = {}
+        for row in result:
+            fmt = str(row[0]) if row[0] is not None else "Unknown"
+            src = str(row[1]) if row[1] is not None else "Unknown"
+            cnt = int(row[2]) if row[2] is not None else 0
+            by_format[fmt] = by_format.get(fmt, 0) + cnt
+            by_source[src] = by_source.get(src, 0) + cnt
+            total += cnt
+        return {"total": total, "by_format": by_format, "by_source": by_source}
+
     def get_sbom_coverage(self, recent_days: int = 30) -> dict[str, int]:
         """Return SBOM coverage statistics for projects.
 
@@ -4952,8 +6315,6 @@ class FalkorDBService:
             Dict with total_projects, with_recent_sbom, with_stale_sbom,
             with_no_sbom.
         """
-        from datetime import UTC, datetime, timedelta
-
         cutoff = (datetime.now(UTC) - timedelta(days=recent_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         total_result = self.execute_query(
@@ -5015,8 +6376,6 @@ class FalkorDBService:
             and projects list (project_name, version_name, project_group,
             status, last_ingested, tool_name).
         """
-        from datetime import UTC, datetime, timedelta
-
         cutoff = (datetime.now(UTC) - timedelta(days=recent_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
         node_label = self.get_node_label(internal_only)
 
@@ -5253,9 +6612,6 @@ class FalkorDBService:
         Returns:
             List of created stubs with statement_id, defect_id, status.
         """
-        import uuid
-        from datetime import UTC, datetime
-
         query = """
             MATCH (v:Version {package_url: $purl})-[:VERSION_DEFECT]->(d:Defect)
             WHERE NOT (v)-[:HAS_VEX]->(:VexStatement)-[:REFERS_TO]->(d)

@@ -15,13 +15,13 @@ from sbom_graph_cli.utils import EXIT_ERROR, APIError
     "--api-url",
     envvar="SBOM_GRAPH_API_URL",
     default="http://localhost:5000",
-    help="Base URL of the sbom-graph API.",
+    help="Base URL of the sbom-graph API (use https:// off localhost).",
 )
 @click.option(
     "--token",
     envvar="SBOM_GRAPH_TOKEN",
     default=None,
-    help="API token for authentication.",
+    help="API token (prefer the SBOM_GRAPH_TOKEN env var over --token).",
 )
 @click.option(
     "--output",
@@ -42,6 +42,24 @@ def main(
     ctx.obj["api_url"] = api_url
     ctx.obj["token"] = token
     ctx.obj["output_format"] = output_format
+
+    # L3 (CWE-214): a token on the command line is visible to other local users
+    # (ps / /proc); steer to the env var instead.
+    token_src = ctx.get_parameter_source("token")
+    if token and token_src == click.core.ParameterSource.COMMANDLINE:
+        click.echo(
+            "WARNING: passing --token on the command line exposes it in the process "
+            "list; prefer the SBOM_GRAPH_TOKEN environment variable.",
+            err=True,
+        )
+    # L4 (CWE-319): non-local http:// API URL sends the bearer token in cleartext.
+    _local = any(h in api_url for h in ("localhost", "127.0.0.1", "[::1]"))
+    if token and api_url.startswith("http://") and not _local:
+        click.echo(
+            "WARNING: API URL uses plaintext http://; the API token will be sent "
+            "unencrypted. Use https://.",
+            err=True,
+        )
 
 
 # Register command groups and subcommands

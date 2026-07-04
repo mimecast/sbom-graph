@@ -1,6 +1,6 @@
 [project]
 name = "sbom-graph-cli"
-version = "0.2.0-beta.4"
+version = "1.0.0"
 description = "CLI for sbom-graph API"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,6 +25,8 @@ packages = ["src/sbom_graph_cli"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
+# src-layout: make the package importable under pytest without an editable install.
+pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 88

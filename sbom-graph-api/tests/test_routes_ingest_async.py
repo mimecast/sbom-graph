@@ -337,12 +337,16 @@ class TestJobStatusEndpoint:
 
         mock_celery_app = MagicMock()
 
-        # Stack both patches so the endpoint sees a stub Celery app and a
-        # stub AsyncResult.  We avoid touching the real broker entirely.
+        # Patch where ``ingest`` binds the names (module-level imports), not
+        # the defining modules — otherwise the route still calls the real
+        # AsyncResult and hits Redis when ``.state`` is read.
         return _CombinedPatch(
-            patch("celery.result.AsyncResult", mock_async_result_cls),
             patch(
-                "sbom_graph_api.services.celery_client.get_celery_client",
+                "sbom_graph_api.routes.ingest.AsyncResult",
+                mock_async_result_cls,
+            ),
+            patch(
+                "sbom_graph_api.routes.ingest.get_celery_client",
                 return_value=mock_celery_app,
             ),
         )
@@ -416,7 +420,7 @@ class TestJobStatusEndpoint:
         job_id = str(uuid.uuid4())
 
         with patch(
-            "sbom_graph_api.services.celery_client.get_celery_client",
+            "sbom_graph_api.routes.ingest.get_celery_client",
             side_effect=RuntimeError("broker init failed: secret-host/secret-pw"),
         ):
             response = client.get(f"/ingest/jobs/{job_id}")

@@ -43,6 +43,21 @@ def _make_raw_result(
 # ---------------------------------------------------------------------------
 
 
+class TestCleanLicenseText:
+    """Tests for Persistence._clean_license_text (CWE-117 / CWE-400)."""
+
+    def test_strips_crlf_and_tabs(self):
+        out = Persistence._clean_license_text("MIT\nERROR fake-log-line\r\tx")
+        assert "\n" not in out and "\r" not in out and "\t" not in out
+        assert out == "MIT ERROR fake-log-line  x"
+
+    def test_truncates_to_255(self):
+        assert len(Persistence._clean_license_text("A" * 5000)) == 255
+
+    def test_preserves_normal_value(self):
+        assert Persistence._clean_license_text("Apache-2.0") == "Apache-2.0"
+
+
 class TestValidateLabel:
     """Tests for Persistence._validate_label."""
 
@@ -215,9 +230,11 @@ class TestPersistenceInit:
             )
             mock_fdb_instance.select_graph.assert_called_once_with("prod")
 
-    def test_connection_ssl_ipv4_sets_ssl_check_hostname_false(
+    def test_connection_ssl_ipv4_requires_mtls_sets_ssl_check_hostname_false(
         self, mock_graph: MagicMock
     ):
+        """IPv4 + TLS disables hostname verification; with a client cert/key
+        (mutual TLS) the connection is allowed and ssl_check_hostname=False."""
         with patch("sbom_graph_model.persistence.FalkorDB") as mock_fdb:
             mock_fdb_instance = MagicMock()
             mock_fdb_instance.select_graph.return_value = mock_graph
@@ -230,6 +247,8 @@ class TestPersistenceInit:
                 password="secret",
                 ssl=True,
                 ssl_ca_certs="/ca.crt",
+                ssl_certfile="/client.crt",
+                ssl_keyfile="/client.key",
             )
             mock_fdb.assert_called_once_with(
                 host="10.100.141.68",
@@ -237,8 +256,51 @@ class TestPersistenceInit:
                 password="secret",
                 ssl=True,
                 ssl_ca_certs="/ca.crt",
+                ssl_certfile="/client.crt",
+                ssl_keyfile="/client.key",
                 ssl_check_hostname=False,
             )
+
+    def test_connection_ssl_ipv4_without_client_cert_raises(
+        self, mock_graph: MagicMock
+    ):
+        """SECURITY (CWE-297): IPv4 + TLS turns off hostname verification, so
+        mutual TLS is mandatory. Without a client cert/key the connection is
+        refused rather than silently accepting any CA-trusted certificate."""
+        with patch("sbom_graph_model.persistence.FalkorDB") as mock_fdb:
+            mock_fdb_instance = MagicMock()
+            mock_fdb_instance.select_graph.return_value = mock_graph
+            mock_fdb.return_value = mock_fdb_instance
+
+            with pytest.raises(ValueError, match="mutual TLS is required"):
+                Persistence(
+                    host="10.100.141.68",
+                    port=6379,
+                    graph_name="g",
+                    password="secret",
+                    ssl=True,
+                    ssl_ca_certs="/ca.crt",
+                )
+            mock_fdb.assert_not_called()
+
+    def test_close_releases_connection(self, mock_persistence: Persistence):
+        """close() must release the FalkorDB connection (avoids leaking the
+        pool when a short-lived Persistence is used per request)."""
+        mock_persistence.close()
+        mock_persistence.db.close.assert_called_once()
+
+    def test_context_manager_closes_connection(self, mock_graph: MagicMock):
+        """Using Persistence as a context manager closes it on exit."""
+        with patch("sbom_graph_model.persistence.FalkorDB") as mock_fdb:
+            mock_fdb_instance = MagicMock()
+            mock_fdb_instance.select_graph.return_value = mock_graph
+            mock_fdb.return_value = mock_fdb_instance
+
+            with Persistence(
+                host="localhost", port=6379, graph_name="g", password="p", ssl=False
+            ):
+                pass
+            mock_fdb_instance.close.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -336,6 +398,58 @@ class TestCreateProjectVersion:
         mock_persistence.create_project_version(sample_version)
         assert mock_graph.query.call_count >= 2
 
+    def test_purl_in_merge_key_when_present(
+        self, mock_persistence, mock_graph, sample_version
+    ):
+        """A present purl becomes part of the Version MERGE identity."""
+        mock_persistence.create_project_version(sample_version)
+        merge_call = mock_graph.query.call_args_list[0]
+        assert "package_url: $package_url" in merge_call.kwargs["q"]
+        assert merge_call.kwargs["params"]["package_url"] == sample_version.project.purl
+
+    def test_purl_absent_from_merge_key_when_none(
+        self, mock_persistence, mock_graph, sample_version
+    ):
+        """A null purl falls back to the name/project_name/project_group bucket."""
+        sample_version.project.purl = None
+        mock_persistence.create_project_version(sample_version)
+        merge_call = mock_graph.query.call_args_list[0]
+        assert "package_url: $package_url" not in merge_call.kwargs["q"]
+        assert "package_url" not in merge_call.kwargs["params"]
+
+    def test_purl_absent_from_merge_key_when_empty(
+        self, mock_persistence, mock_graph, sample_version
+    ):
+        """An empty-string purl is treated like null for the MERGE identity.
+
+        The property may still be written via the ON CREATE/MATCH SET section
+        (pre-existing behaviour); only the identity must fall back to the
+        name/project_name/project_group triplet.
+        """
+        sample_version.project.purl = ""
+        mock_persistence.create_project_version(sample_version)
+        merge_call = mock_graph.query.call_args_list[0]
+        assert "package_url: $package_url" not in merge_call.kwargs["q"]
+
+    def test_scan_id_match_includes_purl(
+        self, mock_persistence, mock_graph, sample_version
+    ):
+        """The scan_ids back-fill matches on package_url when present."""
+        mock_persistence.create_project_version(sample_version)
+        scan_call = mock_graph.query.call_args_list[1]
+        assert "package_url: $package_url" in scan_call.kwargs["q"]
+        assert scan_call.kwargs["params"]["package_url"] == sample_version.project.purl
+
+    def test_scan_id_match_omits_purl_when_none(
+        self, mock_persistence, mock_graph, sample_version
+    ):
+        """The scan_ids back-fill uses the triplet identity for a null purl."""
+        sample_version.project.purl = None
+        mock_persistence.create_project_version(sample_version)
+        scan_call = mock_graph.query.call_args_list[1]
+        assert "package_url: $package_url" not in scan_call.kwargs["q"]
+        assert "package_url" not in scan_call.kwargs["params"]
+
     def test_no_scan_id_append_when_missing_name(self, mock_persistence, mock_graph):
         v = Version()
         v.version = None
@@ -357,6 +471,24 @@ class TestCreateProjectVersion:
         v.project = p
         with pytest.raises(ValueError, match="Invalid node label"):
             mock_persistence.create_project_version(v)
+
+    def test_hyphenated_project_type_label_is_backtick_quoted(
+        self, mock_persistence, mock_graph
+    ):
+        """L9 (CWE-20): an allowlisted but hyphenated type such as
+        'Machine-Learning-Model' must be backtick-quoted as a Cypher label,
+        otherwise the MERGE is a syntax error and ingestion fails at runtime."""
+        v = Version()
+        v.version = "1.0"
+        p = Project()
+        p.name = "ml-model"
+        p.group = "com.test"
+        p.type = "Machine-Learning-Model"
+        v.project = p
+        mock_persistence.create_project_version(v)
+        merge_query = mock_graph.query.call_args_list[0].kwargs["q"]
+        assert "`Machine-Learning-Model`" in merge_query
+        assert "Version:Machine-Learning-Model" not in merge_query
 
 
 # ---------------------------------------------------------------------------

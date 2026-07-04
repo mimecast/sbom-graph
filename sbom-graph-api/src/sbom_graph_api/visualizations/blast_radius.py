@@ -8,8 +8,17 @@ applications, with nodes colour-coded by type:
 - Blue: applications
 """
 
+import logging
+
 from markupsafe import escape
 from pyvis.network import Network
+
+from sbom_graph_api.visualizations._bounded import bound_nodes_edges, inject_truncation_banner
+
+logger = logging.getLogger(__name__)
+
+MAX_VIZ_NODES = 2000
+MAX_VIZ_EDGES = 5000
 
 # Node type -> colour (hex)
 NODE_COLORS = {
@@ -37,6 +46,14 @@ def create_blast_radius_graph(
     Returns:
         HTML string (self-contained) for embedding
     """
+    graph_nodes, graph_edges, _truncated, _dropped = bound_nodes_edges(
+        graph_nodes, graph_edges, MAX_VIZ_NODES, MAX_VIZ_EDGES
+    )
+    if _truncated:
+        logger.warning(
+            "Blast radius graph truncated at %d nodes (%d dropped)", MAX_VIZ_NODES, _dropped
+        )
+
     net = Network(
         notebook=False,
         cdn_resources="in_line",
@@ -103,4 +120,7 @@ def create_blast_radius_graph(
         if src and tgt:
             net.add_edge(src, tgt, arrows="to")
 
-    return net.generate_html()
+    html = net.generate_html()
+    if _truncated:
+        html = inject_truncation_banner(html, MAX_VIZ_NODES, _dropped)
+    return html

@@ -63,6 +63,11 @@ def _build_url(db: str) -> str:
     return f"{scheme}://{auth}{_REDIS_HOST}:{_REDIS_PORT}/{db}"
 
 
+def _redact_url_password(url: str) -> str:
+    """Redact password in a Redis URL before logging."""
+    return re.sub(r":([^@/]*)@", r":***@", url)
+
+
 def _build_ssl_opts() -> dict[str, object]:
     """Return Redis-SSL options matching the API's existing FALKORDB_* config.
 
@@ -169,8 +174,8 @@ def _build_app() -> Celery:
     app.conf.update(conf)
     logger.info(
         "Initialised ingest Celery client: broker=%s result=%s ssl=%s",
-        broker_url,
-        result_url,
+        _redact_url_password(broker_url),
+        _redact_url_password(result_url),
         _REDIS_SSL,
     )
     return app
