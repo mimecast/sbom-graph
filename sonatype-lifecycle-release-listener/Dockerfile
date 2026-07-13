@@ -26,32 +26,6 @@ RUN uv pip install --target=/app/dependencies --native-tls --no-cache --no-sourc
 # Copy application source code
 COPY ./logging.conf ./gunicorn.conf.py ./
 
-
-
-# Install build dependencies
-# RUN apt-get update && apt-get install -y --no-install-recommends \
-#     gcc \
-#     libffi-dev \
-#     && rm -rf /var/lib/apt/lists/*
-
-# Set working directory
-# WORKDIR /app
-
-# Install uv
-# COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-
-# Copy local wheel and project metadata
-# COPY ./sbom-graph-model/dist/*.whl ./deps/
-# COPY ./sonatype-lifecycle-release-listener/pyproject.toml ./sonatype-lifecycle-release-listener/uv.lock ./sonatype-lifecycle-release-listener/README.md ./
-
-# Install wheel + project deps, skipping [tool.uv.sources] (path doesn't exist in container)
-# RUN uv pip install --target=/app/dependencies --no-cache --no-sources ./deps/*.whl .
-
-# Copy application source code
-# COPY ./sonatype-lifecycle-release-listener/src/ ./src/
-# COPY ./sonatype-lifecycle-release-listener/logging.conf ./sonatype-lifecycle-release-listener/gunicorn.conf.py ./
-
-
 # ============================================================================
 # Stage 2: Runtime - Distroless Python image
 # ============================================================================

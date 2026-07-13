@@ -91,6 +91,23 @@ def minimal_spdx() -> dict:
 # ---------------------------------------------------------------------------
 
 
+class TestSPDXSizeLimit:
+    """M10 (CWE-400): SBOMs exceeding the entry cap are rejected."""
+
+    def test_too_many_packages_rejected(self, monkeypatch):
+        from sbom_graph_model.spdx import processor as spx
+
+        monkeypatch.setattr(spx, "MAX_SBOM_ENTRIES", 2)
+        data = {
+            "spdxVersion": "SPDX-2.3",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "name": "x",
+            "packages": [{}, {}, {}],
+        }
+        with pytest.raises(spx.SPDXValidationError, match="maximum allowed"):
+            spx.SPDXProcessor._validate_spdx_structure(data)
+
+
 class TestSPDXValidationError:
     """Tests for the SPDXValidationError exception."""
 

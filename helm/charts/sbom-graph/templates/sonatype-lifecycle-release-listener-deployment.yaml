@@ -1,3 +1,4 @@
+{{- if .Values.releaseListener.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -49,6 +50,22 @@ spec:
                 secretKeyRef:
                   name: {{ include "sbom-graph.webhookSecret.secretName" . }}
                   key: webhook-secret
+            {{- if .Values.releaseListener.sonatype.host }}
+            - name: SONATYPE_HOST
+              value: {{ .Values.releaseListener.sonatype.host | quote }}
+            {{- end }}
+            - name: SONATYPE_CACERTS
+              value: {{ .Values.releaseListener.sonatype.caCerts | quote }}
+            - name: SONATYPE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sbom-graph.sonatype.secretName" . }}
+                  key: {{ .Values.releaseListener.sonatype.usernameKey | default "sonatype-username" }}
+            - name: SONATYPE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sbom-graph.sonatype.secretName" . }}
+                  key: {{ .Values.releaseListener.sonatype.passwordKey | default "sonatype-password" }}
             - name: GUNICORN_WORKERS
               value: {{ .Values.releaseListener.gunicornWorkers | quote }}
             {{- $internalPrefixes := include "sbom-graph.internalPrefixesValue" . | trim }}
@@ -117,3 +134,4 @@ spec:
               - key: client.key
                 path: client.key
         {{- end }}
+{{- end }}

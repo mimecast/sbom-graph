@@ -91,7 +91,8 @@ class UserStorageService:
     def _get_session(self) -> Session:
         """Get a new database session."""
         self._get_engine()
-        assert self._session_factory is not None  # Set by _get_engine
+        if self._session_factory is None:  # _get_engine() initialises it
+            raise RuntimeError("Database session factory is not initialised")
         return self._session_factory()
 
     def _hash_password(self, password: str, salt: bytes | None = None) -> tuple[str, bytes]:
@@ -161,10 +162,9 @@ class UserStorageService:
             True if at least one user exists
         """
         try:
-            session = self._get_session()
-            count = session.query(LocalUser).count()
-            session.close()
-            return count > 0
+            with self._get_session() as session:
+                count = session.query(LocalUser).count()
+                return count > 0
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to check user count: %s", e)
             return False
@@ -194,47 +194,45 @@ class UserStorageService:
             Tuple of (LocalUser object, temp_password if generated else None)
         """
         try:
-            session = self._get_session()
+            with self._get_session() as session:
 
-            # Check if username already exists
-            existing = (
-                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
-            )
-            if existing:
-                session.close()
-                raise UserStorageError(f"Username '{username}' already exists")
+                # Check if username already exists
+                existing = (
+                    session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
+                )
+                if existing:
+                    raise UserStorageError(f"Username '{username}' already exists")
 
-            # Generate temp password if not provided
-            temp_password = None
-            if password is None:
-                temp_password = self._generate_temp_password()
-                password = temp_password
+                # Generate temp password if not provided
+                temp_password = None
+                if password is None:
+                    temp_password = self._generate_temp_password()
+                    password = temp_password
 
-            password_hash, _ = self._hash_password(password)
+                password_hash, _ = self._hash_password(password)
 
-            user = LocalUser(
-                username=username,
-                password_hash=password_hash,
-                email=email,
-                display_name=display_name or username,
-                is_admin=is_admin,
-                must_change_password=must_change_password,
-                created_by=created_by,
-            )
+                user = LocalUser(
+                    username=username,
+                    password_hash=password_hash,
+                    email=email,
+                    display_name=display_name or username,
+                    is_admin=is_admin,
+                    must_change_password=must_change_password,
+                    created_by=created_by,
+                )
 
-            session.add(user)
-            session.commit()
+                session.add(user)
+                session.commit()
 
-            # Refresh to get the ID
-            session.refresh(user)
-            user_id = user.id  # pyright: ignore[reportReturnType]
+                # Refresh to get the ID
+                session.refresh(user)
+                user_id = user.id  # pyright: ignore[reportReturnType]
 
-            session.close()
 
-            logger.info("Created user '%s' (admin=%s)", username, is_admin)
+                logger.info("Created user '%s' (admin=%s)", username, is_admin)
 
-            # Return a detached copy
-            return self.get_user_by_id(user_id), temp_password
+                # Return a detached copy
+                return self.get_user_by_id(user_id), temp_password
 
         except UserStorageError:
             raise
@@ -284,37 +282,34 @@ class UserStorageService:
             LocalUser if authentication succeeds, None otherwise
         """
         try:
-            session = self._get_session()
+            with self._get_session() as session:
 
-            user = (
-                session.query(LocalUser)
-                .filter(
-                    LocalUser.username == username,
-                    LocalUser.is_active.is_(True),
+                user = (
+                    session.query(LocalUser)
+                    .filter(
+                        LocalUser.username == username,
+                        LocalUser.is_active.is_(True),
+                    )
+                    .first()
                 )
-                .first()
-            )
 
-            if not user:
-                session.close()
-                return None
+                if not user:
+                    return None
 
-            if not self._verify_password(  # pyright: ignore[reportArgumentType]
-                password, user.password_hash
-            ):
-                session.close()
-                return None
+                if not self._verify_password(  # pyright: ignore[reportArgumentType]
+                    password, user.password_hash
+                ):
+                    return None
 
-            # Update last login time
-            user.last_login_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
-            session.commit()
+                # Update last login time
+                user.last_login_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
+                session.commit()
 
-            # Get user ID before closing session
-            user_id = user.id  # pyright: ignore[reportReturnType]
-            session.close()
+                # Get user ID before closing session
+                user_id = user.id  # pyright: ignore[reportReturnType]
 
-            # Return fresh copy
-            return self.get_user_by_id(user_id)
+                # Return fresh copy
+                return self.get_user_by_id(user_id)
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Authentication error: %s", e)
@@ -330,17 +325,16 @@ class UserStorageService:
             LocalUser or None if not found
         """
         try:
-            session = self._get_session()
-            user = (
-                session.query(LocalUser).filter(LocalUser.id == user_id).first()  # pyright: ignore[reportGeneralTypeIssues]
-            )
+            with self._get_session() as session:
+                user = (
+                    session.query(LocalUser).filter(LocalUser.id == user_id).first()  # pyright: ignore[reportGeneralTypeIssues]
+                )
 
-            if user:
-                # Create a detached copy
-                session.expunge(user)
+                if user:
+                    # Create a detached copy
+                    session.expunge(user)
 
-            session.close()
-            return user
+                return user
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to get user by ID: %s", e)
             return None
@@ -355,16 +349,15 @@ class UserStorageService:
             LocalUser or None if not found
         """
         try:
-            session = self._get_session()
-            user = (
-                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
-            )
+            with self._get_session() as session:
+                user = (
+                    session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
+                )
 
-            if user:
-                session.expunge(user)
+                if user:
+                    session.expunge(user)
 
-            session.close()
-            return user
+                return user
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to get user by username: %s", e)
             return None
@@ -376,17 +369,16 @@ class UserStorageService:
             List of LocalUser objects
         """
         try:
-            session = self._get_session()
-            users = (
-                session.query(LocalUser).order_by(LocalUser.username).all()  # pyright: ignore[reportGeneralTypeIssues]
-            )
+            with self._get_session() as session:
+                users = (
+                    session.query(LocalUser).order_by(LocalUser.username).all()  # pyright: ignore[reportGeneralTypeIssues]
+                )
 
-            # Detach all users
-            for user in users:
-                session.expunge(user)
+                # Detach all users
+                for user in users:
+                    session.expunge(user)
 
-            session.close()
-            return users
+                return users
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to list users: %s", e)
             return []
@@ -408,34 +400,31 @@ class UserStorageService:
             True if password changed successfully
         """
         try:
-            session = self._get_session()
+            with self._get_session() as session:
 
-            user = (
-                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
-            )
+                user = (
+                    session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
+                )
 
-            if not user:
-                session.close()
-                return False
+                if not user:
+                    return False
 
-            # Verify old password
-            if not self._verify_password(  # pyright: ignore[reportArgumentType]
-                old_password, user.password_hash
-            ):
-                session.close()
-                return False
+                # Verify old password
+                if not self._verify_password(  # pyright: ignore[reportArgumentType]
+                    old_password, user.password_hash
+                ):
+                    return False
 
-            # Set new password
-            new_hash, _ = self._hash_password(new_password)
-            user.password_hash = new_hash  # pyright: ignore[reportAttributeAccessIssue]
-            user.must_change_password = False  # pyright: ignore[reportAttributeAccessIssue]
-            user.updated_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
+                # Set new password
+                new_hash, _ = self._hash_password(new_password)
+                user.password_hash = new_hash  # pyright: ignore[reportAttributeAccessIssue]
+                user.must_change_password = False  # pyright: ignore[reportAttributeAccessIssue]
+                user.updated_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
 
-            session.commit()
-            session.close()
+                session.commit()
 
-            logger.info("Password changed for user '%s'", username)
-            return True
+                logger.info("Password changed for user '%s'", username)
+                return True
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to change password: %s", e)
@@ -452,29 +441,27 @@ class UserStorageService:
             The new temporary password, or None if failed
         """
         try:
-            session = self._get_session()
+            with self._get_session() as session:
 
-            user = (
-                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
-            )
+                user = (
+                    session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
+                )
 
-            if not user:
-                session.close()
-                return None
+                if not user:
+                    return None
 
-            # Generate new temporary password
-            temp_password = self._generate_temp_password()
-            new_hash, _ = self._hash_password(temp_password)
+                # Generate new temporary password
+                temp_password = self._generate_temp_password()
+                new_hash, _ = self._hash_password(temp_password)
 
-            user.password_hash = new_hash  # pyright: ignore[reportAttributeAccessIssue]
-            user.must_change_password = True  # pyright: ignore[reportAttributeAccessIssue]
-            user.updated_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
+                user.password_hash = new_hash  # pyright: ignore[reportAttributeAccessIssue]
+                user.must_change_password = True  # pyright: ignore[reportAttributeAccessIssue]
+                user.updated_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
 
-            session.commit()
-            session.close()
+                session.commit()
 
-            logger.info("Password reset for user '%s' by admin '%s'", username, admin_username)
-            return temp_password
+                logger.info("Password reset for user '%s' by admin '%s'", username, admin_username)
+                return temp_password
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to reset password: %s", e)
@@ -492,25 +479,23 @@ class UserStorageService:
             True if successful
         """
         try:
-            session = self._get_session()
+            with self._get_session() as session:
 
-            user = (
-                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
-            )
+                user = (
+                    session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
+                )
 
-            if not user:
-                session.close()
-                return False
+                if not user:
+                    return False
 
-            user.is_admin = is_admin  # pyright: ignore[reportAttributeAccessIssue]
-            user.updated_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
+                user.is_admin = is_admin  # pyright: ignore[reportAttributeAccessIssue]
+                user.updated_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
 
-            session.commit()
-            session.close()
+                session.commit()
 
-            action = "granted admin to" if is_admin else "removed admin from"
-            logger.info("Admin '%s' %s user '%s'", admin_username, action, username)
-            return True
+                action = "granted admin to" if is_admin else "removed admin from"
+                logger.info("Admin '%s' %s user '%s'", admin_username, action, username)
+                return True
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to set admin status: %s", e)
@@ -528,25 +513,23 @@ class UserStorageService:
             True if successful
         """
         try:
-            session = self._get_session()
+            with self._get_session() as session:
 
-            user = (
-                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
-            )
+                user = (
+                    session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
+                )
 
-            if not user:
-                session.close()
-                return False
+                if not user:
+                    return False
 
-            user.is_active = is_active  # pyright: ignore[reportAttributeAccessIssue]
-            user.updated_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
+                user.is_active = is_active  # pyright: ignore[reportAttributeAccessIssue]
+                user.updated_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
 
-            session.commit()
-            session.close()
+                session.commit()
 
-            action = "enabled" if is_active else "disabled"
-            logger.info("Admin '%s' %s user '%s'", admin_username, action, username)
-            return True
+                action = "enabled" if is_active else "disabled"
+                logger.info("Admin '%s' %s user '%s'", admin_username, action, username)
+                return True
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to set active status: %s", e)
@@ -563,22 +546,20 @@ class UserStorageService:
             True if successful
         """
         try:
-            session = self._get_session()
+            with self._get_session() as session:
 
-            user = (
-                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
-            )
+                user = (
+                    session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
+                )
 
-            if not user:
-                session.close()
-                return False
+                if not user:
+                    return False
 
-            session.delete(user)
-            session.commit()
-            session.close()
+                session.delete(user)
+                session.commit()
 
-            logger.info("Admin '%s' deleted user '%s'", admin_username, username)
-            return True
+                logger.info("Admin '%s' deleted user '%s'", admin_username, username)
+                return True
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to delete user: %s", e)
@@ -601,28 +582,26 @@ class UserStorageService:
             True if successful
         """
         try:
-            session = self._get_session()
+            with self._get_session() as session:
 
-            user = (
-                session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
-            )
+                user = (
+                    session.query(LocalUser).filter(LocalUser.username == username).first()  # pyright: ignore[reportGeneralTypeIssues]
+                )
 
-            if not user:
-                session.close()
-                return False
+                if not user:
+                    return False
 
-            if email is not None:
-                user.email = email  # pyright: ignore[reportAttributeAccessIssue]
-            if display_name is not None:
-                user.display_name = display_name  # pyright: ignore[reportAttributeAccessIssue]
+                if email is not None:
+                    user.email = email  # pyright: ignore[reportAttributeAccessIssue]
+                if display_name is not None:
+                    user.display_name = display_name  # pyright: ignore[reportAttributeAccessIssue]
 
-            user.updated_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
+                user.updated_at = datetime.now(UTC)  # pyright: ignore[reportAttributeAccessIssue]
 
-            session.commit()
-            session.close()
+                session.commit()
 
-            logger.info("Updated profile for user '%s'", username)
-            return True
+                logger.info("Updated profile for user '%s'", username)
+                return True
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to update user: %s", e)

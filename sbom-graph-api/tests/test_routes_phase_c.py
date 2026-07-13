@@ -413,7 +413,7 @@ class TestTrustScoresReport:
     """Tests for GET /reports/trust-scores."""
 
     def test_json_format(self, client) -> None:
-        """JSON format returns trust scores."""
+        """JSON format returns streamed trust scores with report_type in meta."""
         mock_service = MagicMock()
         mock_service.get_all_trust_scores_for_report.return_value = [
             {
@@ -425,6 +425,7 @@ class TestTrustScoresReport:
                 "sources_used": ["scorecard", "depsdev"],
             }
         ]
+        mock_service.count_all_trust_scores_for_report.return_value = 1
 
         with patch(
             "sbom_graph_api.routes.reports.trust_scores.get_falkordb_service",
@@ -434,8 +435,8 @@ class TestTrustScoresReport:
 
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["count"] == 1
-        assert data["trust_scores"][0]["purl"] == "pkg:maven/org/lib@1.0"
+        assert data["report_type"] == "trust-scores"
+        assert any(r["purl"] == "pkg:maven/org/lib@1.0" for r in data["data"])
 
     def test_html_template_renders(self, client) -> None:
         """HTML format renders trust_scores template with colour-coded scores."""
@@ -567,7 +568,7 @@ class TestTrustScoreGapsReport:
 
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["count"] == 1
+        assert data["stats"]["count"] == 1
         assert data["gaps"][0]["confidence"] == 0.3
 
     def test_html_template_renders_with_missing_factors(self, client) -> None:
@@ -652,19 +653,25 @@ class TestSbomInventoryReport:
     def test_json_format(self, client) -> None:
         """JSON format returns inventory."""
         mock_service = MagicMock()
-        mock_service.get_sbom_inventory.return_value = [
-            {
-                "record_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-                "format": "cyclonedx",
-                "ingested_at": "2024-01-15T00:00:00Z",
-                "source": "api_upload",
-                "tool_name": "trivy",
-                "tool_version": "0.48.0",
-                "serial_number": None,
-                "document_hash": None,
-                "version_count": 10,
-            }
-        ]
+        _row = {
+            "record_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            "format": "cyclonedx",
+            "ingested_at": "2024-01-15T00:00:00Z",
+            "source": "api_upload",
+            "tool_name": "trivy",
+            "tool_version": "0.48.0",
+            "serial_number": None,
+            "document_hash": None,
+            "version_count": 10,
+        }
+        mock_service.get_sbom_inventory_paged.return_value = [_row]
+        mock_service.count_sbom_inventory.return_value = 1
+        mock_service.get_sbom_inventory_tools.return_value = []
+        mock_service.get_sbom_inventory_summary.return_value = {
+            "total": 1,
+            "by_format": {"cyclonedx": 1},
+            "by_source": {"api_upload": 1},
+        }
 
         with patch(
             "sbom_graph_api.routes.reports.sbom_provenance.get_falkordb_service",
@@ -674,13 +681,13 @@ class TestSbomInventoryReport:
 
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["count"] == 1
+        assert data["report_type"] == "sbom-inventory"
         assert data["inventory"][0]["format"] == "cyclonedx"
 
     def test_excel_format(self, client) -> None:
         """Excel format returns download."""
         mock_service = MagicMock()
-        mock_service.get_sbom_inventory.return_value = [
+        mock_service.get_sbom_inventory_paged.return_value = [
             {
                 "record_id": "rec-001",
                 "format": "CycloneDX",
@@ -741,9 +748,9 @@ class TestSbomCoverageReport:
 
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["coverage"]["stats"]["total_projects"] == 100
-        assert data["coverage"]["stats"]["fresh"] == 60
-        assert len(data["coverage"]["projects"]) == 1
+        assert data["stats"]["total_projects"] == 100
+        assert data["stats"]["fresh"] == 60
+        assert len(data["projects"]) == 1
 
     def test_excel_format(self, client) -> None:
         """Excel format returns download."""

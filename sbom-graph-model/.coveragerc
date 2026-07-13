@@ -1,0 +1,15 @@
+[report]
+exclude_also =
+    no cover: start(.|\n)*?no cover: stop
+    def __repr__
+    if __name__ == .__main__.:
+
+omit =
+    */.local/*
+    /**/test_*.py
+
+[run]
+source = sbom_graph_model
+omit =
+    */.local/*
+    /**/test_*.py

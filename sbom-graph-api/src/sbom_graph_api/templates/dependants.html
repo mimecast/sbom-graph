@@ -44,6 +44,17 @@
             </label>
             <span class="toggle-status" id="pathToggleStatus">{{ 'Longest only' if longest_only else 'All paths' }}</span>
         </div>
+        {% if show_name_search %}
+        <div class="search-container">
+            <span class="toggle-label">Name:</span>
+            <input type="text" id="nameSearch" class="name-search-input"
+                   placeholder="Filter by name…" value="{{ name_search or '' }}">
+            <button type="button" id="nameSearchBtn" class="download-link secondary">Search</button>
+            {% if name_search %}
+            <button type="button" id="nameClearBtn" class="download-link secondary">Clear</button>
+            {% endif %}
+        </div>
+        {% endif %}
         <div class="download-links">
             <a href="{{ excel_url }}" class="download-link" id="excelLink">Download as Excel</a>
             <a href="{{ json_url }}" class="download-link" id="jsonLink">Download as JSON</a>
@@ -135,6 +146,31 @@
             }
             window.location.href = url.toString();
         });
+
+        // Handle name search: set/clear the ?name= param.
+        (function () {
+            const input = document.getElementById('nameSearch');
+            if (!input) return;
+
+            function applySearch(value) {
+                const url = new URL(window.location.href);
+                const term = (value || '').trim();
+                if (term) {
+                    url.searchParams.set('name', term);
+                } else {
+                    url.searchParams.delete('name');
+                }
+                window.location.href = url.toString();
+            }
+
+            const btn = document.getElementById('nameSearchBtn');
+            if (btn) btn.addEventListener('click', function () { applySearch(input.value); });
+            input.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') applySearch(input.value);
+            });
+            const clearBtn = document.getElementById('nameClearBtn');
+            if (clearBtn) clearBtn.addEventListener('click', function () { applySearch(''); });
+        })();
     </script>
 </body>
 </html>

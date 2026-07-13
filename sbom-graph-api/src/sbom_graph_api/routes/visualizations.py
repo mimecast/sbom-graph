@@ -4,6 +4,7 @@ from flask import Blueprint, Response, request
 from markupsafe import escape
 
 from sbom_graph_api.routes.auth import auth_required
+from sbom_graph_api.services.falkordb_service import get_falkordb_service
 from sbom_graph_api.utils.purl import resolve_purl, resolve_purl_project
 from sbom_graph_api.utils.validation import (
     validate_boolean,
@@ -25,6 +26,15 @@ from sbom_graph_api.visualizations.multi_layout import (
 )
 
 bp = Blueprint("visualizations", __name__, url_prefix="/visualizations")
+
+
+def _stream_html(html: str) -> Response:
+    """Stream an HTML string in chunks to avoid holding large copies in memory."""
+    def _chunks(text: str, size: int = 65536):
+        for i in range(0, len(text), size):
+            yield text[i : i + size]
+
+    return Response(_chunks(html), mimetype="text/html")
 
 
 def _kpartite_impl(
@@ -50,7 +60,7 @@ def _kpartite_impl(
     if html is None:
         return f"Project not found: {escape(project_name)} @ {escape(version)}", 404
 
-    return Response(html, mimetype="text/html")
+    return _stream_html(html)
 
 
 @bp.route("/kpartite/<project_name>/<version>")
@@ -94,18 +104,20 @@ def _bipartite_impl(
     height = validate_css_dimension(request.args.get("height", "100vh"), "100vh")
     width = validate_css_dimension(request.args.get("width", "100vw"), "100vw")
 
+    service = get_falkordb_service()
     html = create_bipartite_visualization(
         project_name=project_name,
         internal_only=internal_only,
         height=height,
         width=width,
+        service=service,
         project_group=project_group,
     )
 
     if html is None:
         return f"Project not found: {escape(project_name)}", 404
 
-    return Response(html, mimetype="text/html")
+    return _stream_html(html)
 
 
 @bp.route("/bipartite/<project_name>")
@@ -160,7 +172,7 @@ def _dependants_impl(
     if html is None:
         return f"Project not found: {escape(project_name)} @ {escape(version)}", 404
 
-    return Response(html, mimetype="text/html")
+    return _stream_html(html)
 
 
 @bp.route("/dependants/<project_name>/<version>")
@@ -224,7 +236,7 @@ def _dependencies_impl(
             404,
         )
 
-    return Response(html, mimetype="text/html")
+    return _stream_html(html)
 
 
 @bp.route("/dependencies/<project_name>/<version>")
@@ -292,7 +304,7 @@ def _dependants_multi_impl(
             404,
         )
 
-    return Response(html, mimetype="text/html")
+    return _stream_html(html)
 
 
 @bp.route("/dependants-multi/<project_name>/<version>")

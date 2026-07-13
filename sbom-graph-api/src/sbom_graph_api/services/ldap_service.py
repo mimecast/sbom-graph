@@ -11,6 +11,7 @@ from typing import Any
 from ldap3 import ALL, SUBTREE, Connection, Server
 from ldap3.core.exceptions import LDAPException
 from ldap3.utils.conv import escape_filter_chars
+from ldap3.utils.dn import escape_rdn
 
 from sbom_graph_api.config import LDAPConfig, get_config
 
@@ -78,8 +79,13 @@ class LDAPService:
         try:
             server = self._get_server()
 
-            # Build user DN from template
-            user_dn = self.config.user_dn_template.format(username=username)
+            # Build user DN from template. Escape RDN special chars (CWE-90):
+            # the username is attacker-controlled and is interpolated into the
+            # bind DN, so a value like `alice,cn=admin` could otherwise alter the
+            # DN structure. (The search *filter* is escaped separately in
+            # _get_user_info via escape_filter_chars.)
+            safe_dn_username = escape_rdn(username)
+            user_dn = self.config.user_dn_template.format(username=safe_dn_username)
 
             # Attempt to bind with user credentials
             conn = Connection(

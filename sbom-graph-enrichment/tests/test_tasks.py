@@ -818,7 +818,7 @@ class TestEnrichAllPackages:
         )
 
         with patch(
-            "sbom_graph_enrichment.tasks.create_persistence",
+            "sbom_graph_enrichment.tasks.get_persistence",
             return_value=mock_pers,
         ):
             result = enrich_all_packages.apply(args=[]).get()
@@ -837,7 +837,7 @@ class TestEnrichAllPackages:
         )
 
         with patch(
-            "sbom_graph_enrichment.tasks.create_persistence",
+            "sbom_graph_enrichment.tasks.get_persistence",
             return_value=mock_pers,
         ):
             result = enrich_all_packages.apply(args=[]).get()
@@ -864,7 +864,7 @@ class TestEnrichAllPackages:
         )
 
         with patch(
-            "sbom_graph_enrichment.tasks.create_persistence",
+            "sbom_graph_enrichment.tasks.get_persistence",
             return_value=mock_pers,
         ):
             result = enrich_all_packages.apply(kwargs={"force": True}).get()
@@ -919,7 +919,7 @@ class TestComputeTrustScore:
 class TestPropagateEffectiveScores:
     """Tests for the propagate_effective_scores task."""
 
-    @patch("sbom_graph_enrichment.tasks.create_persistence")
+    @patch("sbom_graph_enrichment.tasks.get_persistence")
     @patch("sbom_graph_enrichment.tasks._TRUST_SCORE_ENABLED", True)
     def test_propagate_updates_scores(self, mock_create_pers: MagicMock) -> None:
         mock_pers = MagicMock()
@@ -942,7 +942,7 @@ class TestPropagateEffectiveScores:
         result = propagate_effective_scores.apply(args=[]).get()
         assert result["skipped"] is True
 
-    @patch("sbom_graph_enrichment.tasks.create_persistence")
+    @patch("sbom_graph_enrichment.tasks.get_persistence")
     @patch("sbom_graph_enrichment.tasks._TRUST_SCORE_ENABLED", True)
     @patch.dict("os.environ", {"TRUST_SCORE_ALERT_THRESHOLD": "5.0"}, clear=False)
     def test_propagate_with_low_score_alerts(self, mock_create_pers: MagicMock) -> None:

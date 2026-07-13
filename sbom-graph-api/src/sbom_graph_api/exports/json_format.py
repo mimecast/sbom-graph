@@ -6,13 +6,17 @@ assembles the canonical JSON envelope (``report_type``, ``generated_at``,
 caller can pass the result straight to :func:`_build_json_response`.
 """
 
-from datetime import UTC, datetime
 from typing import Any
+
+from sbom_graph_api.utils.api_helpers import get_utc_timestamp
 
 
 def _ts() -> str:
-    """Return the current UTC time in ISO-8601 format."""
-    return datetime.now(UTC).isoformat()
+    """Return the current UTC time in ISO-8601 format.
+
+    Thin alias over the canonical :func:`get_utc_timestamp`.
+    """
+    return get_utc_timestamp()
 
 
 def _safe_name(raw: str) -> str:
@@ -21,94 +25,6 @@ def _safe_name(raw: str) -> str:
 
 
 # -- report formatters ------------------------------------------------
-
-
-def projects_json(
-    projects: list[dict[str, Any]],
-    unique_projects: int,
-    internal_only: bool,
-) -> tuple[dict[str, Any], str]:
-    """Build the JSON payload for the *projects* report."""
-    filename = "internal_projects.json" if internal_only else "all_projects.json"
-    payload = {
-        "report_type": "projects",
-        "generated_at": _ts(),
-        "filter": "internal_only" if internal_only else "all",
-        "stats": {
-            "total_project_versions": len(projects),
-            "unique_projects": unique_projects,
-        },
-        "data": projects,
-    }
-    return payload, filename
-
-
-def applications_json(
-    applications: list[dict[str, Any]],
-    unique_apps: int,
-    internal_only: bool,
-    latest_only: bool,
-) -> tuple[dict[str, Any], str]:
-    """Build the JSON payload for the *applications* report."""
-    parts: list[str] = []
-    if internal_only:
-        parts.append("internal")
-    if latest_only:
-        parts.append("latest")
-    parts.append("applications.json")
-    filename = "_".join(parts) if len(parts) > 1 else "applications.json"
-    payload = {
-        "report_type": "applications",
-        "generated_at": _ts(),
-        "filter": "internal_only" if internal_only else "all",
-        "version_mode": ("latest_only" if latest_only else "all_versions"),
-        "stats": {
-            "total_application_versions": len(applications),
-            "unique_applications": unique_apps,
-        },
-        "data": applications,
-    }
-    return payload, filename
-
-
-def snapshots_json(
-    data: list[dict[str, Any]],
-    internal_only: bool,
-    unique_apps: int,
-    unique_deps: int,
-) -> tuple[dict[str, Any], str]:
-    """Build the JSON payload for the *snapshots* report."""
-    payload = {
-        "report_type": "snapshots",
-        "generated_at": _ts(),
-        "filter": "internal_only" if internal_only else "all",
-        "stats": {
-            "total_snapshot_dependencies": len(data),
-            "affected_applications": unique_apps,
-            "unique_snapshot_dependencies": unique_deps,
-        },
-        "data": data,
-    }
-    return payload, "snapshot_dependencies.json"
-
-
-def self_dependencies_json(
-    data: list[dict[str, Any]],
-    internal_only: bool,
-    unique_projects: int,
-) -> tuple[dict[str, Any], str]:
-    """Build the JSON payload for the *self-dependencies* report."""
-    payload = {
-        "report_type": "self-dependencies",
-        "generated_at": _ts(),
-        "filter": "internal_only" if internal_only else "all",
-        "stats": {
-            "total_self_dependencies": len(data),
-            "affected_projects": unique_projects,
-        },
-        "data": data,
-    }
-    return payload, "self_dependencies.json"
 
 
 def multi_version_deps_json(
@@ -271,28 +187,6 @@ def dependants_json(
         "target": report_data.get("target", {}),
         "stats": report_data.get("stats", {}),
         "dependants": report_data.get("dependants", []),
-    }
-    return payload, filename
-
-
-def vulnerabilities_json(
-    vulnerabilities: list[dict[str, Any]],
-    internal_only: bool,
-    severity_counts: dict[str, int],
-    total_affected: int,
-) -> tuple[dict[str, Any], str]:
-    """Build the JSON payload for *vulnerabilities*."""
-    filename = "vulnerabilities_internal.json" if internal_only else "vulnerabilities.json"
-    payload = {
-        "report_type": "vulnerabilities",
-        "generated_at": _ts(),
-        "filter": "internal_only" if internal_only else "all",
-        "stats": {
-            "total_vulnerabilities": len(vulnerabilities),
-            "total_affected_versions": total_affected,
-            "by_severity": severity_counts,
-        },
-        "data": vulnerabilities,
     }
     return payload, filename
 
@@ -480,27 +374,6 @@ def vex_coverage_json(
         "data": vulns,
     }
     return payload, "vex_coverage.json"
-
-
-def license_dashboard_json(
-    data: dict[str, Any],
-    internal_only: bool,
-) -> tuple[dict[str, Any], str]:
-    """Build the JSON payload for *license-dashboard*."""
-    filename = "license_dashboard_internal.json" if internal_only else "license_dashboard.json"
-    payload = {
-        "report_type": "license-dashboard",
-        "generated_at": _ts(),
-        "filter": "internal_only" if internal_only else "all",
-        "stats": {
-            "total_packages": data["total_packages"],
-            "categories": {
-                k: {"count": v["count"], "pct": v["pct"]} for k, v in data["categories"].items()
-            },
-        },
-        "categories": data["categories"],
-    }
-    return payload, filename
 
 
 def license_conflicts_json(

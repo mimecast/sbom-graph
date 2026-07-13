@@ -113,6 +113,24 @@ class TestXSSPrevention:
 
         assert validate_format("<script>") == "html"
 
+    def test_tooltip_properties_are_html_escaped(self):
+        """Stored XSS (CWE-79): ingested-SBOM node properties rendered into the
+        PyVis ``title=`` tooltip must be HTML-escaped (key AND value)."""
+        from sbom_graph_api.visualizations.kpartite import (
+            format_properties_for_tooltip,
+        )
+
+        out = format_properties_for_tooltip(
+            {
+                "<b>k</b>": "<img src=x onerror=alert(1)>",
+                "repo_url": "</script><script>steal()</script>",
+            }
+        )
+        assert "<script>" not in out
+        assert "<img " not in out
+        assert "&lt;img src=x onerror=alert(1)&gt;" in out
+        assert "&lt;b&gt;k&lt;/b&gt;" in out  # key escaped too
+
 
 # ---------------------------------------------------------------------------
 # SQL / Cypher injection prevention

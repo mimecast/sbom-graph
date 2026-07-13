@@ -202,22 +202,28 @@ class TestCheckPackagePolicy:
 class TestPolicyViolationsReport:
     """Tests for GET /reports/policy-violations."""
 
-    def test_json_format(self, client) -> None:
-        """JSON format returns stats and violation data."""
+    def _make_policy_mock(self, violations=None, count=0, total_dependants=0) -> MagicMock:
+        """Return a mock service with all policy-violations methods stubbed."""
         mock_service = MagicMock()
-        mock_service.get_policy_violations.return_value = [
-            {
-                "annotation_id": "uuid-1",
-                "justification": "Known CVE",
-                "created_by": "admin",
-                "created_at": "2024-06-01",
-                "expires_at": None,
-                "purl": "pkg:maven/bad/lib@1.0",
-                "project_name": "bad-lib",
-                "version_name": "1.0",
-                "dependant_count": 5,
-            },
-        ]
+        mock_service.get_policy_violations.return_value = violations or []
+        mock_service.count_policy_violations.return_value = count
+        mock_service.get_policy_violations_total_dependants.return_value = total_dependants
+        return mock_service
+
+    def test_json_format(self, client) -> None:
+        """JSON format returns streamed data with report_type in meta."""
+        violation = {
+            "annotation_id": "uuid-1",
+            "justification": "Known CVE",
+            "created_by": "admin",
+            "created_at": "2024-06-01",
+            "expires_at": None,
+            "purl": "pkg:maven/bad/lib@1.0",
+            "project_name": "bad-lib",
+            "version_name": "1.0",
+            "dependant_count": 5,
+        }
+        mock_service = self._make_policy_mock(violations=[violation], count=1, total_dependants=5)
 
         with patch(
             "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
@@ -227,13 +233,13 @@ class TestPolicyViolationsReport:
 
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["stats"]["total_violations"] == 1
-        assert data["stats"]["total_affected_dependants"] == 5
+        # new format: streamed JSON with report_type meta and data array
+        assert data["report_type"] == "policy-violations"
+        assert any(r.get("purl") == "pkg:maven/bad/lib@1.0" for r in data["data"])
 
     def test_html_format(self, client) -> None:
         """HTML format returns table page."""
-        mock_service = MagicMock()
-        mock_service.get_policy_violations.return_value = []
+        mock_service = self._make_policy_mock()
 
         with patch(
             "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
@@ -246,14 +252,40 @@ class TestPolicyViolationsReport:
 
     def test_internal_only(self, client) -> None:
         """internal_only filter is passed to service."""
-        mock_service = MagicMock()
-        mock_service.get_policy_violations.return_value = []
+        mock_service = self._make_policy_mock()
 
         with patch(
             "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
             return_value=mock_service,
         ):
-            resp = client.get("/reports/policy-violations?internal_only=true&format=json")
+            resp = client.get("/reports/policy-violations?internal_only=true&format=html")
 
         assert resp.status_code == 200
-        mock_service.get_policy_violations.assert_called_once_with(internal_only=True)
+        call_kwargs = mock_service.get_policy_violations.call_args.kwargs
+        assert call_kwargs["internal_only"] is True
+
+    def test_html_includes_total_affected_dependants(self, client) -> None:
+        """HTML stats block includes Total Affected Dependants (restored Phase 1.6)."""
+        violation = {
+            "annotation_id": "uuid-2",
+            "justification": "Unsafe",
+            "created_by": "security",
+            "created_at": "2024-01-01",
+            "expires_at": None,
+            "purl": "pkg:npm/evil@0.1",
+            "project_name": "evil",
+            "version_name": "0.1",
+            "dependant_count": 12,
+        }
+        mock_service = self._make_policy_mock(
+            violations=[violation], count=1, total_dependants=12
+        )
+
+        with patch(
+            "sbom_graph_api.routes.reports.compliance.get_falkordb_service",
+            return_value=mock_service,
+        ):
+            resp = client.get("/reports/policy-violations")
+
+        assert resp.status_code == 200
+        assert b"Total Affected Dependants" in resp.data

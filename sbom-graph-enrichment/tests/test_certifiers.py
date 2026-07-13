@@ -144,6 +144,22 @@ class TestLicenseCertifier:
 
         assert findings == []
 
+    def test_enrich_empty_body_returns_empty(self) -> None:
+        request = httpx.Request(
+            "GET",
+            "https://api.clearlydefined.io/definitions/go/golang/foo/bar/v1",
+        )
+        mock_response = httpx.Response(200, content=b"", request=request)
+        mock_client = MagicMock(spec=httpx.Client)
+        mock_client.get.return_value = mock_response
+
+        certifier = LicenseCertifier()
+        findings = certifier.enrich(
+            "pkg:golang/github.com/foo/bar@v1", client=mock_client
+        )
+
+        assert findings == []
+
     def test_enrich_discovered_only(self) -> None:
         cd_response = {
             "licensed": {
@@ -179,11 +195,39 @@ class TestPurlToCoordinates:
         assert _purl_to_coordinates("pkg:pypi/-/requests@2.31.0") == \
             "pypi/pypi/-/requests/2.31.0"
 
+    def test_golang_simple(self) -> None:
+        assert _purl_to_coordinates("pkg:golang/github.com/gorilla/context@v1.0.0") == \
+            "go/golang/github.com%2Fgorilla/context/v1.0.0"
+
+    def test_golang_deep_path(self) -> None:
+        assert _purl_to_coordinates(
+            "pkg:golang/github.com/aws/aws-sdk-go-v2/service/secretsmanager@v1.35"
+        ) == "go/golang/github.com%2Faws%2Faws-sdk-go-v2%2Fservice/secretsmanager/v1.35"
+
+    def test_golang_single_segment(self) -> None:
+        assert _purl_to_coordinates("pkg:golang/foo@v1.0.0") == \
+            "go/golang/-/foo/v1.0.0"
+
     def test_unsupported_type(self) -> None:
         assert _purl_to_coordinates("pkg:deb/debian/curl@7.88.1") is None
 
     def test_invalid_purl(self) -> None:
         assert _purl_to_coordinates("not-a-purl") is None
+
+    def test_path_traversal_in_version_is_neutralised(self) -> None:
+        # SECURITY (CWE-22): a crafted PURL must not introduce path separators or
+        # ``..`` traversal into the fixed ClearlyDefined host path.
+        coord = _purl_to_coordinates("pkg:npm/foo@1.0/../../../admin")
+        assert coord is not None
+        assert "/../" not in coord
+        assert coord.startswith("npm/npmjs/-/foo/")
+        # the malicious version segment has its separators encoded (no raw "/")
+        assert coord == "npm/npmjs/-/foo/1.0%2F..%2F..%2F..%2Fadmin"
+
+    def test_already_encoded_scope_not_double_encoded(self) -> None:
+        # decode-then-encode must not turn %40 into %2540
+        assert _purl_to_coordinates("pkg:npm/%40angular/core@16.0.0") == \
+            "npm/npmjs/%40angular/core/16.0.0"
 
 
 class TestClassifyLicense:

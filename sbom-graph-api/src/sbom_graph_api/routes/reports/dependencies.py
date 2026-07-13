@@ -12,30 +12,26 @@ from flask import (
 )
 from flask.typing import ResponseReturnValue
 
-from sbom_graph_api.exports.excel import (
-    create_dependants_report_excel,
-    create_multi_version_dependency_report_excel,
-    create_multi_version_deps_excel,
-    create_non_semver_report_excel,
-    create_self_dependency_report_excel,
-    create_snapshot_report_excel,
-    create_version_dependencies_report_excel,
-    excel_response,
-)
 from sbom_graph_api.exports.json_format import (
     dependants_json,
     multi_version_deps_json,
     multi_version_sources_json,
     non_semver_json,
-    self_dependencies_json,
-    snapshots_json,
     version_dependencies_json,
+)
+from sbom_graph_api.exports.streaming import (
+    SheetSpec,
+    stream_json_response,
+    stream_multi_sheet_workbook_response,
 )
 from sbom_graph_api.routes.auth import auth_required
 from sbom_graph_api.routes.reports import bp
 from sbom_graph_api.routes.reports._common import (
     TABLE_TEMPLATE,
-    build_json_response,
+    _safe_int,
+    get_internal_title,
+    parse_pagination,
+    render_paged_report,
 )
 from sbom_graph_api.services.falkordb_service import get_falkordb_service
 from sbom_graph_api.utils.purl import resolve_purl, resolve_purl_project
@@ -46,6 +42,7 @@ from sbom_graph_api.utils.validation import (
     validate_max_depth,
     validate_project_group,
     validate_project_name,
+    validate_search_term,
     validate_version_name,
 )
 
@@ -68,72 +65,56 @@ def snapshot_dependencies() -> ResponseReturnValue:
         HTML table, Excel download, or JSON
     """
     output_format = validate_format(request.args.get("format"))
-    internal_only = validate_boolean(
-        request.args.get("internal_only"),
-    )
-
+    internal_only = validate_boolean(request.args.get("internal_only"))
+    req = parse_pagination()
     service = get_falkordb_service()
-    data = service.find_snapshot_dependencies(internal_only)
 
-    unique_apps = len({r["application"] for r in data})
-    unique_deps = len({r["dependency"] for r in data})
-
-    if output_format == "excel":
-        buf = create_snapshot_report_excel(data)
-        return excel_response(
-            buf,
-            "snapshot_dependencies.xlsx",
+    def fetch_page(offset: int, limit: int) -> list[dict]:
+        return service.find_snapshot_dependencies(
+            internal_only=internal_only, limit=limit, offset=offset
         )
 
-    if output_format == "json":
-        payload, fn = snapshots_json(
-            data,
-            internal_only,
-            unique_apps,
-            unique_deps,
-        )
-        return build_json_response(payload, fn)
+    def to_cells(r: dict) -> list:
+        return [r["application"], r["app_version"], r["dependency"], r["dep_version"]]
 
-    # HTML table
-    base_url = "/reports/snapshots"
-    html = render_template(
-        TABLE_TEMPLATE,
+    def _affected_apps() -> int:
+        return _safe_int(service.count_snapshot_applications(internal_only), 0)
+
+    def _unique_deps() -> int:
+        return _safe_int(service.count_snapshot_dependency_versions(internal_only), 0)
+
+    def stats_builder(total: int) -> dict:
+        return {
+            "Total SNAPSHOT Dependencies": total,
+            "Affected Applications": _affected_apps(),
+            "Unique SNAPSHOT Dependencies": _unique_deps(),
+        }
+
+    def json_stats_builder(total: int) -> dict:
+        return {
+            "total_snapshot_dependencies": total,
+            "affected_applications": _affected_apps(),
+            "unique_snapshot_dependencies": _unique_deps(),
+        }
+
+    return render_paged_report(
+        req=req,
+        output_format=output_format,
+        fetch_page=fetch_page,
+        count=lambda: service.count_snapshot_dependencies(internal_only),
+        headers=["Application", "App Version", "Dependency", "Dependency Version"],
+        to_cells=to_cells,
         title="SNAPSHOT Dependencies Report",
-        internal_only=internal_only,
-        headers=[
-            "Application",
-            "App Version",
-            "Dependency",
-            "Dependency Version",
-        ],
-        data=[
-            [
-                r["application"],
-                r["app_version"],
-                r["dependency"],
-                r["dep_version"],
-            ]
-            for r in data
-        ],
-        stats={
-            "Total SNAPSHOT Dependencies": len(data),
-            "Affected Applications": unique_apps,
-            "Unique SNAPSHOT Dependencies": unique_deps,
-        },
-        excel_url=build_url_with_params(
-            base_url,
-            format="excel",
-            internal_only=internal_only,
-        ),
-        json_url=build_url_with_params(
-            base_url,
-            format="json",
-            internal_only=internal_only,
-        ),
+        base_url="/reports/snapshots",
+        params={"internal_only": internal_only},
+        filename_stem="snapshot_dependencies",
+        report_type="snapshots",
         schema_url="/schemas/snapshots",
+        stats_builder=stats_builder,
+        json_stats_builder=json_stats_builder,
+        json_meta={"filter": "internal_only" if internal_only else "all"},
+        internal_only=internal_only,
     )
-
-    return Response(html, mimetype="text/html")
 
 
 # ------------------------------------------------------------------
@@ -155,69 +136,51 @@ def self_dependencies() -> ResponseReturnValue:
         HTML table, Excel download, or JSON
     """
     output_format = validate_format(request.args.get("format"))
-    internal_only = validate_boolean(
-        request.args.get("internal_only"),
-    )
-
+    internal_only = validate_boolean(request.args.get("internal_only"))
+    req = parse_pagination()
     service = get_falkordb_service()
-    data = service.find_self_dependencies(internal_only)
 
-    unique_projects = len(
-        {r["project_name"] for r in data},
-    )
-
-    if output_format == "excel":
-        buf = create_self_dependency_report_excel(data)
-        return excel_response(
-            buf,
-            "self_dependencies.xlsx",
+    def fetch_page(offset: int, limit: int) -> list[dict]:
+        return service.find_self_dependencies(
+            internal_only=internal_only, limit=limit, offset=offset
         )
 
-    if output_format == "json":
-        payload, fn = self_dependencies_json(
-            data,
-            internal_only,
-            unique_projects,
-        )
-        return build_json_response(payload, fn)
+    def to_cells(r: dict) -> list:
+        return [r["project_name"], r["version"], r["relationship_type"]]
 
-    # HTML table
-    base_url = "/reports/self-dependencies"
-    html = render_template(
-        TABLE_TEMPLATE,
+    def _affected_projects() -> int:
+        return _safe_int(service.count_self_dependency_projects(internal_only), 0)
+
+    def stats_builder(total: int) -> dict:
+        return {
+            "Total Self Dependencies": total,
+            "Affected Projects": _affected_projects(),
+        }
+
+    def json_stats_builder(total: int) -> dict:
+        return {
+            "total_self_dependencies": total,
+            "affected_projects": _affected_projects(),
+        }
+
+    return render_paged_report(
+        req=req,
+        output_format=output_format,
+        fetch_page=fetch_page,
+        count=lambda: service.count_self_dependencies(internal_only),
+        headers=["Project Name", "Version", "Relationship Type"],
+        to_cells=to_cells,
         title="Self Dependencies Report",
-        internal_only=internal_only,
-        headers=[
-            "Project Name",
-            "Version",
-            "Relationship Type",
-        ],
-        data=[
-            [
-                r["project_name"],
-                r["version"],
-                r["relationship_type"],
-            ]
-            for r in data
-        ],
-        stats={
-            "Total Self Dependencies": len(data),
-            "Affected Projects": unique_projects,
-        },
-        excel_url=build_url_with_params(
-            base_url,
-            format="excel",
-            internal_only=internal_only,
-        ),
-        json_url=build_url_with_params(
-            base_url,
-            format="json",
-            internal_only=internal_only,
-        ),
+        base_url="/reports/self-dependencies",
+        params={"internal_only": internal_only},
+        filename_stem="self_dependencies",
+        report_type="self-dependencies",
         schema_url="/schemas/self-dependencies",
+        stats_builder=stats_builder,
+        json_stats_builder=json_stats_builder,
+        json_meta={"filter": "internal_only" if internal_only else "all"},
+        internal_only=internal_only,
     )
-
-    return Response(html, mimetype="text/html")
 
 
 # ------------------------------------------------------------------
@@ -255,28 +218,22 @@ def multi_version_deps(
         return jsonify({"error": "Invalid project name"}), 400
 
     output_format = validate_format(request.args.get("format"))
-    internal_only = validate_boolean(
-        request.args.get("internal_only"),
-    )
+    internal_only = validate_boolean(request.args.get("internal_only"))
+    name = validate_search_term(request.args.get("name"))
+    req = parse_pagination(request.args)
 
     service = get_falkordb_service()
-    data = service.get_library_version_usage(
-        project_name,
-        internal_only,
-    )
+    data = service.get_library_version_usage(project_name, internal_only, name=name)
 
     library_info = data.get("library", {})
     versions = data.get("versions", [])
     total_dependants = data.get("total_dependants", 0)
 
-    if not versions:
+    # An active name filter that matches nothing is an empty result, not a
+    # missing library — fall through so the (paged) view keeps its search box.
+    if not versions and not name:
         if output_format == "json":
-            return jsonify(
-                {
-                    "error": "Library not found",
-                    "project_name": project_name,
-                },
-            ), 404
+            return jsonify({"error": "Library not found", "project_name": project_name}), 404
 
         html = render_template(
             TABLE_TEMPLATE,
@@ -289,41 +246,93 @@ def multi_version_deps(
             json_url=None,
             schema_url=None,
         )
-        return Response(
-            html,
-            mimetype="text/html",
-            status=404,
-        )
+        return Response(html, mimetype="text/html", status=404)
 
     base_url = f"/reports/multi-version-deps/{project_name}"
 
     if output_format == "excel":
-        buf = create_multi_version_deps_excel(data)
-        safe = project_name.replace("/", "_").replace(
-            ":",
-            "_",
-        )
-        return excel_response(
-            buf,
-            f"version_usage_{safe}.xlsx",
-        )
+        safe = project_name.replace("/", "_").replace(":", "_")
+        usage_headers = [
+            "Library Version",
+            "Dependant Count",
+            "Dependant Project",
+            "Dependant Version",
+            "Project Group",
+            "Is Internal",
+        ]
+
+        def _usage_rows() -> list[list[Any]]:
+            rows: list[list[Any]] = []
+            for ver_info in versions:
+                version = ver_info.get("version", "")
+                dependant_count = ver_info.get("dependant_count", 0)
+                dependants = ver_info.get("dependants", [])
+                if dependants:
+                    for dep in dependants:
+                        rows.append(
+                            [
+                                version,
+                                dependant_count,
+                                dep.get("project_name", ""),
+                                dep.get("version", ""),
+                                dep.get("project_group", ""),
+                                "Yes" if dep.get("is_internal") else "No",
+                            ]
+                        )
+                else:
+                    rows.append([version, 0, "(no direct dependants)", "-", "-", "-"])
+            return rows
+
+        summary_rows = [
+            ["Library", library_info.get("project_name", "N/A")],
+            ["Total Versions", library_info.get("total_versions", 0)],
+            ["Total Dependants", total_dependants or 0],
+        ]
+        version_summary_rows = [
+            [
+                ver_info.get("version", ""),
+                ver_info.get("dependant_count", 0),
+                "Yes" if ver_info.get("is_internal") else "No",
+            ]
+            for ver_info in versions
+        ]
+        sheets = [
+            SheetSpec(title="Version Usage", headers=usage_headers, rows=_usage_rows()),
+            SheetSpec(title="Summary", headers=["Metric", "Value"], rows=summary_rows),
+            SheetSpec(
+                title="Version Summary",
+                headers=["Version", "Dependant Count", "Is Internal"],
+                rows=version_summary_rows,
+            ),
+        ]
+        return stream_multi_sheet_workbook_response(sheets, f"version_usage_{safe}.xlsx")
 
     if output_format == "json":
-        payload, fn = multi_version_deps_json(
-            library_info,
-            total_dependants,
-            versions,
-            project_name,
-        )
-        return build_json_response(payload, fn)
+        payload, fn = multi_version_deps_json(library_info, total_dependants, versions, project_name)
+        meta = {k: v for k, v in payload.items() if k != "versions"}
+        return stream_json_response(meta, iter(versions), fn, data_key="versions")
 
-    # HTML table — flatten data for display
-    table_data = _flatten_multi_version_deps(versions)
+    # HTML: in-memory pagination over flattened rows
+    flat_rows = _flatten_multi_version_deps(versions)
+    total_rows = len(flat_rows)
 
-    html = render_template(
-        TABLE_TEMPLATE,
-        title=f"Version Usage: {project_name}",
-        internal_only=internal_only,
+    def fetch_page(offset: int, limit: int) -> list[dict[str, Any]]:
+        return [
+            {
+                "library_version": r[0],
+                "dependant_count": r[1],
+                "dependant_project": r[2],
+                "dependant_version": r[3],
+                "project_group": r[4],
+            }
+            for r in flat_rows[offset : offset + limit]
+        ]
+
+    return render_paged_report(
+        req=req,
+        output_format="html",
+        fetch_page=fetch_page,
+        count=lambda: total_rows,
         headers=[
             "Library Version",
             "Dependant Count",
@@ -331,29 +340,27 @@ def multi_version_deps(
             "Dependant Version",
             "Project Group",
         ],
-        data=table_data,
-        stats={
+        to_cells=lambda r: [
+            r["library_version"],
+            r["dependant_count"],
+            r["dependant_project"],
+            r["dependant_version"],
+            r["project_group"],
+        ],
+        title=f"Version Usage: {project_name}",
+        base_url=base_url,
+        params={"internal_only": internal_only, "name": name},
+        filename_stem=f"version_usage_{project_name.replace('/', '_').replace(':', '_')}",
+        report_type="multi-version-deps",
+        schema_url="/schemas/multi-version-deps",
+        stats_builder=lambda _total: {
             "Library": project_name,
-            "Total Versions": library_info.get(
-                "total_versions",
-                0,
-            ),
+            "Total Versions": library_info.get("total_versions", 0),
             "Total Dependants": total_dependants,
         },
-        excel_url=build_url_with_params(
-            base_url,
-            format="excel",
-            internal_only=internal_only,
-        ),
-        json_url=build_url_with_params(
-            base_url,
-            format="json",
-            internal_only=internal_only,
-        ),
-        schema_url="/schemas/multi-version-deps",
+        internal_only=internal_only,
+        extra_context={"show_name_search": True, "name_search": name},
     )
-
-    return Response(html, mimetype="text/html")
 
 
 def _flatten_multi_version_deps(
@@ -445,6 +452,7 @@ def multi_version_dependency_sources(
     project_group = validate_project_group(
         request.args.get("project_group"),
     )
+    req = parse_pagination(request.args)
 
     service = get_falkordb_service()
     data = service.find_multi_version_dependency_sources(
@@ -496,74 +504,100 @@ def multi_version_dependency_sources(
                 all_apps.add(app["project_name"])
 
     if output_format == "excel":
-        buf = create_multi_version_dependency_report_excel(
-            data,
-        )
-        safe_n = project_name.replace("/", "_").replace(
-            ":",
-            "_",
-        )
-        safe_v = version_name.replace("/", "_").replace(
-            ":",
-            "_",
-        )
+        safe_n = project_name.replace("/", "_").replace(":", "_")
+        safe_v = version_name.replace("/", "_").replace(":", "_")
         fn = f"multi_version_deps_{safe_n}_{safe_v}.xlsx"
-        return excel_response(buf, fn)
+        main_headers = [
+            "Dependency Project",
+            "Dependency Version",
+            "Contributing Application",
+            "Application Version",
+        ]
+        unique_apps: set[tuple[str, str]] = set()
+        for dep in multi_deps:
+            for vi in dep["versions"]:
+                for app in vi["contributing_applications"]:
+                    unique_apps.add((app["project_name"], app["version"]))
+        summary_rows = [
+            ["Target Project", target.get("project_name", "N/A")],
+            ["Target Version", target.get("version", "N/A")],
+            ["Scan IDs Contributing", target.get("scan_ids_count", 0)],
+            ["Dependencies with Multiple Versions", len(multi_deps)],
+            ["Total Conflicting Versions", total_versions],
+            ["Unique Contributing Applications", len(unique_apps)],
+        ]
+        dep_summary_rows = [
+            [
+                dep["dependency_project"],
+                dep["version_count"],
+                ", ".join(v["version"] for v in dep["versions"]),
+            ]
+            for dep in multi_deps
+        ]
+        sheets = [
+            SheetSpec(
+                title="Multi-Version Dependencies",
+                headers=main_headers,
+                rows=_flatten_multi_version_sources(multi_deps),
+            ),
+            SheetSpec(title="Summary", headers=["Metric", "Value"], rows=summary_rows),
+            SheetSpec(
+                title="Dependency Summary",
+                headers=["Dependency Project", "Version Count", "Versions"],
+                rows=dep_summary_rows,
+            ),
+        ]
+        return stream_multi_sheet_workbook_response(sheets, fn)
 
     if output_format == "json":
         payload, fn = multi_version_sources_json(
-            target,
-            multi_deps,
-            total_versions,
-            len(all_apps),
-            project_name,
-            version_name,
+            target, multi_deps, total_versions, len(all_apps), project_name, version_name,
         )
-        return build_json_response(payload, fn)
+        meta = {k: v for k, v in payload.items() if k != "multi_version_dependencies"}
+        return stream_json_response(meta, iter(multi_deps), fn, data_key="multi_version_dependencies")
 
-    # HTML table — flatten data for display
-    table_data = _flatten_multi_version_sources(multi_deps)
-
+    # HTML: in-memory pagination over flattened rows
+    flat_rows = _flatten_multi_version_sources(multi_deps)
+    total_rows = len(flat_rows)
     base_url = f"/reports/multi-version-sources/{project_name}/{version_name}"
 
-    html = render_template(
-        TABLE_TEMPLATE,
-        title=(f"Multi-Version Dependencies: {project_name}@{version_name}"),
-        internal_only=internal_only,
+    def fetch_page(offset: int, limit: int) -> list[dict[str, Any]]:
+        return [
+            {
+                "dep_project": r[0],
+                "dep_version": r[1],
+                "app_name": r[2],
+                "app_version": r[3],
+            }
+            for r in flat_rows[offset : offset + limit]
+        ]
+
+    return render_paged_report(
+        req=req,
+        output_format="html",
+        fetch_page=fetch_page,
+        count=lambda: total_rows,
         headers=[
             "Dependency Project",
             "Dependency Version",
             "Contributing Application",
             "Application Version",
         ],
-        data=table_data,
-        stats={
-            "Dependencies with Multiple Versions": len(
-                multi_deps,
-            ),
+        to_cells=lambda r: [r["dep_project"], r["dep_version"], r["app_name"], r["app_version"]],
+        title=f"Multi-Version Dependencies: {project_name}@{version_name}",
+        base_url=base_url,
+        params={"internal_only": internal_only, "max_depth": max_depth},
+        filename_stem=f"multi_version_deps_{project_name.replace('/', '_').replace(':', '_')}_{version_name.replace('/', '_').replace(':', '_')}",
+        report_type="multi-version-sources",
+        schema_url="/schemas/multi-version-sources",
+        stats_builder=lambda _total: {
+            "Dependencies with Multiple Versions": len(multi_deps),
             "Total Conflicting Versions": total_versions,
             "Contributing Applications": len(all_apps),
-            "Scan IDs Analyzed": target.get(
-                "scan_ids_count",
-                0,
-            ),
+            "Scan IDs Analyzed": target.get("scan_ids_count", 0),
         },
-        excel_url=build_url_with_params(
-            base_url,
-            format="excel",
-            max_depth=max_depth,
-            internal_only=internal_only,
-        ),
-        json_url=build_url_with_params(
-            base_url,
-            format="json",
-            max_depth=max_depth,
-            internal_only=internal_only,
-        ),
-        schema_url="/schemas/multi-version-sources",
+        internal_only=internal_only,
     )
-
-    return Response(html, mimetype="text/html")
 
 
 def _flatten_multi_version_sources(
@@ -617,82 +651,98 @@ def non_semver_versions() -> ResponseReturnValue:
         HTML table, Excel download, or JSON
     """
     output_format = validate_format(request.args.get("format"))
-    internal_only = validate_boolean(
-        request.args.get("internal_only"),
-    )
+    internal_only = validate_boolean(request.args.get("internal_only"))
+    req = parse_pagination(request.args)
 
     service = get_falkordb_service()
     data = service.find_non_semver_versions(internal_only)
 
-    unique_projects = len(
-        {r["project_name"] for r in data},
-    )
-
+    unique_projects = len({r["project_name"] for r in data})
     reason_counts: dict[str, int] = {}
     for record in data:
         reason = record["reason"]
         reason_counts[reason] = reason_counts.get(reason, 0) + 1
 
     if output_format == "excel":
-        buf = create_non_semver_report_excel(data)
         filename = "non_semver_internal.xlsx" if internal_only else "non_semver_versions.xlsx"
-        return excel_response(buf, filename)
-
-    if output_format == "json":
-        payload, fn = non_semver_json(
-            data,
-            internal_only,
-            unique_projects,
-            reason_counts,
-        )
-        return build_json_response(payload, fn)
-
-    # HTML table
-    top_reasons = sorted(
-        reason_counts.items(),
-        key=lambda x: -x[1],
-    )[:3]
-    top_reasons_str = ", ".join(f"{r[0]} ({r[1]})" for r in top_reasons)
-
-    base_url = "/reports/non-semver-versions"
-    html = render_template(
-        TABLE_TEMPLATE,
-        title="Non-SemVer Versions Report",
-        internal_only=internal_only,
-        headers=[
-            "Project Name",
-            "Version",
-            "Reason",
-            "Labels",
-        ],
-        data=[
+        main_headers = [
+            "Project Name", "Version", "SemVer Compliant", "Released", "Reason", "Labels",
+        ]
+        main_rows = [
             [
                 r["project_name"],
                 r["version"],
+                "Yes" if r.get("semver_compliant") else "No",
+                "Yes" if r.get("released") else "No",
                 r["reason"],
                 ", ".join(r.get("labels", [])),
             ]
             for r in data
-        ],
-        stats={
-            "Total Non-SemVer Versions": len(data),
-            "Affected Projects": unique_projects,
-            "Top Reasons": (top_reasons_str if top_reasons_str else "N/A"),
-        },
-        excel_url=build_url_with_params(
-            base_url,
-            format="excel",
-            internal_only=internal_only,
-        ),
-        json_url=build_url_with_params(
-            base_url,
-            format="json",
-            internal_only=internal_only,
-        ),
-        schema_url="/schemas/non-semver-versions",
-    )
+        ]
+        summary_rows: list[list[Any]] = [
+            ["Total Non-SemVer Versions", len(data)],
+            ["Affected Projects", unique_projects],
+            ["Breakdown by Reason", ""],
+        ]
+        for reason, count in sorted(reason_counts.items(), key=lambda x: -x[1]):
+            summary_rows.append([reason, count])
+        by_reason_rows = [
+            [r["reason"], r["project_name"], r["version"]]
+            for r in sorted(data, key=lambda x: (x["reason"], x["project_name"], x["version"]))
+        ]
+        sheets = [
+            SheetSpec(title="Non-SemVer Versions", headers=main_headers, rows=main_rows),
+            SheetSpec(title="Summary", headers=["Metric", "Value"], rows=summary_rows),
+            SheetSpec(
+                title="By Reason",
+                headers=["Reason", "Project Name", "Version"],
+                rows=by_reason_rows,
+            ),
+        ]
+        return stream_multi_sheet_workbook_response(sheets, filename)
 
-    return Response(html, mimetype="text/html")
+    if output_format == "json":
+        payload, fn = non_semver_json(data, internal_only, unique_projects, reason_counts)
+        meta = {k: v for k, v in payload.items() if k != "data"}
+        return stream_json_response(meta, iter(data), fn)
+
+    # HTML: in-memory pagination — data already in memory
+    total = len(data)
+    top_reasons = sorted(reason_counts.items(), key=lambda x: -x[1])[:3]
+    top_reasons_str = ", ".join(f"{r[0]} ({r[1]})" for r in top_reasons)
+
+    def fetch_page(offset: int, limit: int) -> list[dict[str, Any]]:
+        return data[offset : offset + limit]
+
+    return render_paged_report(
+        req=req,
+        output_format="html",
+        fetch_page=fetch_page,
+        count=lambda: total,
+        headers=[
+            "Project Name", "Version", "SemVer Compliant", "Released", "Reason", "Labels",
+        ],
+        to_cells=lambda r: [
+            r["project_name"],
+            r["version"],
+            "Yes" if r.get("semver_compliant") else "No",
+            "Yes" if r.get("released") else "No",
+            r["reason"],
+            ", ".join(r.get("labels", [])),
+        ],
+        title="Non-SemVer Versions Report",
+        base_url="/reports/non-semver-versions",
+        params={"internal_only": internal_only},
+        filename_stem="non_semver_internal" if internal_only else "non_semver_versions",
+        report_type="non-semver-versions",
+        schema_url="/schemas/non-semver-versions",
+        stats_builder=lambda _total: {
+            "Total Non-SemVer Versions": total,
+            "Affected Projects": unique_projects,
+            "Top Reasons": top_reasons_str if top_reasons_str else "N/A",
+        },
+        internal_only=internal_only,
+    )
 
 
 # ------------------------------------------------------------------
@@ -751,6 +801,8 @@ def version_dependencies_report(
     project_group = validate_project_group(
         request.args.get("project_group"),
     )
+    name = validate_search_term(request.args.get("name"))
+    req = parse_pagination(request.args)
 
     service = get_falkordb_service()
 
@@ -778,7 +830,10 @@ def version_dependencies_report(
         )
         if error_resp is not None:
             return error_resp
-        assert latest_version is not None
+        # _handle_latest_resolution returns an error response when latest_version
+        # is None, so reaching here with None means that contract was violated.
+        if latest_version is None:
+            raise RuntimeError("Latest version could not be resolved")
         resolved_version = latest_version
 
     all_versions = service.get_all_versions_of_project(
@@ -817,6 +872,8 @@ def version_dependencies_report(
         is_semver_compliant,
         latest_version,
         non_compliant_versions,
+        req=req,
+        name=name,
     )
 
 
@@ -972,8 +1029,22 @@ def _render_version_deps(  # noqa: PLR0913
     is_semver_compliant: bool,
     latest_version: str | None,
     non_compliant_versions: list[str],
+    req: Any = None,
+    name: str | None = None,
 ) -> ResponseReturnValue:
     """Render version-dependencies in the requested format."""
+
+    if req is None:
+        req = parse_pagination(request.args)
+
+    # Optional case-insensitive filter on the dependency's project name. Applied
+    # before the derived stats so counts/exports stay consistent with the view.
+    if name:
+        name_lower = name.lower()
+        dependencies = [
+            d for d in dependencies if name_lower in (d.get("dependency_project") or "").lower()
+        ]
+
     title = f"Version Dependencies: {project_name}@{resolved_version}"
     if version_name.lower() == "latest":
         title = f"Version Dependencies: {project_name}@latest ({resolved_version})"
@@ -998,104 +1069,103 @@ def _render_version_deps(  # noqa: PLR0913
     base_url = f"/reports/version-dependencies/{project_name}/{version_name}"
 
     if output_format == "excel":
-        buf = create_version_dependencies_report_excel(
-            project_name,
-            resolved_version,
-            dependencies,
-            is_semver_compliant,
-            latest_version,
-            internal_only,
-            max_depth,
-        )
-        safe_n = project_name.replace("/", "_").replace(
-            ":",
-            "_",
-        )
-        safe_v = resolved_version.replace("/", "_").replace(
-            ":",
-            "_",
-        )
+        safe_n = project_name.replace("/", "_").replace(":", "_")
+        safe_v = resolved_version.replace("/", "_").replace(":", "_")
         fn = f"{safe_n}_{safe_v}_dependencies.xlsx"
-        return excel_response(buf, fn)
-
-    if output_format == "json":
-        payload, fn = version_dependencies_json(
-            dependencies,
-            project_name,
-            resolved_version,
-            internal_only,
-            max_depth,
-            is_semver_compliant,
-            latest_version,
-            len(non_compliant_versions),
-            unique_dependencies,
-            direct_deps,
-            max_depth_reached,
-        )
-        return build_json_response(payload, fn)
-
-    # HTML output
-    table_data = []
-    if dependencies:
-        for d in dependencies:
-            table_data.append(
+        main_headers = ["Depth", "Dependency Project", "Dependency Version", "Is Internal"]
+        if dependencies:
+            main_rows = [
                 [
                     d["depth"],
                     d["dependency_project"],
                     d["dependency_version"],
-                    ("Yes" if d.get("is_internal", False) else "No"),
-                ],
-            )
-    else:
-        table_data.append(
-            ["-", "(no dependencies)", "-", "-"],
-        )
+                    "Yes" if d.get("is_internal") else "No",
+                ]
+                for d in dependencies
+            ]
+        else:
+            main_rows = [["-", "(no dependencies)", "-", "-"]]
+        summary_rows: list[list[Any]] = [
+            ["Project Name", project_name],
+            ["Version", resolved_version],
+            ["Filter Mode", "Internal Only" if internal_only else "All"],
+            ["Max Depth Setting", max_depth],
+            ["Total Dependencies", len(dependencies)],
+            ["Unique Dependencies", unique_dependencies],
+            ["Direct Dependencies", direct_deps],
+            ["Max Depth Reached", max_depth_reached],
+            ["SemVer Compliant", "Yes" if is_semver_compliant else "No"],
+        ]
+        if is_semver_compliant and latest_version:
+            summary_rows.append(["Latest SemVer Version", latest_version])
+        sheets = [
+            SheetSpec(title="Version Dependencies", headers=main_headers, rows=main_rows),
+            SheetSpec(title="Summary", headers=["Metric", "Value"], rows=summary_rows),
+        ]
+        return stream_multi_sheet_workbook_response(sheets, fn)
 
-    stats: dict[str, Any] = {
+    if output_format == "json":
+        payload, fn = version_dependencies_json(
+            dependencies, project_name, resolved_version, internal_only, max_depth,
+            is_semver_compliant, latest_version, len(non_compliant_versions),
+            unique_dependencies, direct_deps, max_depth_reached,
+        )
+        meta = {k: v for k, v in payload.items() if k != "data"}
+        return stream_json_response(meta, iter(payload.get("data", [])), fn)
+
+    # HTML: in-memory pagination — data already fetched; slice in Python
+    total_deps = len(dependencies)
+
+    def fetch_page(offset: int, limit: int) -> list[dict[str, Any]]:
+        page = dependencies[offset : offset + limit]
+        if not page and not dependencies:
+            return [
+                {
+                    "depth": "-",
+                    "dependency_project": "(no dependencies)",
+                    "dependency_version": "-",
+                    "is_internal": False,
+                }
+            ]
+        return page
+
+    stats_val: dict[str, Any] = {
         "Project": project_name,
         "Version": resolved_version,
         "Max Depth Setting": max_depth,
-        "Total Dependencies": len(dependencies),
+        "Total Dependencies": total_deps,
         "Unique Dependencies": unique_dependencies,
         "Direct Dependencies": direct_deps,
         "Max Depth Reached": max_depth_reached,
     }
-
     if is_semver_compliant and latest_version:
-        stats["Latest Version"] = latest_version
-        stats["SemVer Compliant"] = "Yes"
+        stats_val["Latest Version"] = latest_version
+        stats_val["SemVer Compliant"] = "Yes"
     elif not is_semver_compliant:
-        nc_count = len(non_compliant_versions)
-        stats["SemVer Compliant"] = f"No ({nc_count} non-compliant)"
+        stats_val["SemVer Compliant"] = f"No ({len(non_compliant_versions)} non-compliant)"
 
-    html = render_template(
-        TABLE_TEMPLATE,
-        title=title,
-        internal_only=internal_only,
-        headers=[
-            "Depth",
-            "Dependency Project",
-            "Dependency Version",
-            "Is Internal",
+    return render_paged_report(
+        req=req,
+        output_format="html",
+        fetch_page=fetch_page,
+        count=lambda: total_deps,
+        headers=["Depth", "Dependency Project", "Dependency Version", "Is Internal"],
+        to_cells=lambda d: [
+            d["depth"],
+            d["dependency_project"],
+            d["dependency_version"],
+            "Yes" if d.get("is_internal", False) else "No",
         ],
-        data=table_data,
-        stats=stats,
-        excel_url=build_url_with_params(
-            base_url,
-            format="excel",
-            internal_only=internal_only,
-            max_depth=max_depth,
-        ),
-        json_url=build_url_with_params(
-            base_url,
-            format="json",
-            internal_only=internal_only,
-            max_depth=max_depth,
-        ),
+        title=title,
+        base_url=base_url,
+        params={"internal_only": internal_only, "max_depth": max_depth, "name": name},
+        filename_stem=f"{project_name}_{resolved_version}_dependencies",
+        report_type="version-dependencies",
         schema_url="/schemas/version-dependencies",
+        stats_builder=lambda _total: stats_val,
+        internal_only=internal_only,
+        extra_context={"show_name_search": True, "name_search": name},
     )
-
-    return Response(html, mimetype="text/html")
 
 
 # ------------------------------------------------------------------
@@ -1151,6 +1221,7 @@ def dependants_report(
         request.args.get("longest_only"),
         default=True,
     )
+    name = validate_search_term(request.args.get("name"))
 
     service = get_falkordb_service()
 
@@ -1195,34 +1266,72 @@ def dependants_report(
         internal_only,
         longest_only,
         project_group=project_group,
+        name=name,
     )
 
     if output_format == "excel":
-        buf = create_dependants_report_excel(
-            report_data,
-            longest_only,
-        )
-        safe_n = project_name.replace("/", "_").replace(
-            ":",
-            "_",
-        )
-        safe_v = version_name.replace("/", "_").replace(
-            ":",
-            "_",
-        )
+        safe_n = project_name.replace("/", "_").replace(":", "_")
+        safe_v = version_name.replace("/", "_").replace(":", "_")
         suffix = "_longest" if longest_only else "_all_paths"
         fn = f"dependants_{safe_n}_{safe_v}{suffix}.xlsx"
-        return excel_response(buf, fn)
+        _deps = report_data.get("dependants", [])
+        _target = report_data.get("target", {})
+        _stats = report_data.get("stats", {})
+
+        main_headers = [
+            "Dependant Project",
+            "Version",
+            "Partition (Longest Path)",
+            "Max Path Edges",
+            "Path Count",
+            "Labels",
+        ]
+        main_rows = [
+            [
+                d.get("project_name", ""),
+                d.get("version", ""),
+                d.get("partition", 0),
+                d.get("max_path_edges", 0),
+                d.get("path_count", 0),
+                ", ".join(d.get("labels", [])),
+            ]
+            for d in _deps
+        ]
+        path_rows: list[list[Any]] = []
+        for d in _deps:
+            for path_num, path in enumerate(d.get("paths", []), start=1):
+                path_rows.append(
+                    [
+                        d.get("project_name", ""),
+                        d.get("version", ""),
+                        path_num,
+                        len(path),
+                        " -> ".join(path),
+                    ]
+                )
+        summary_rows = [
+            ["Target Project", _target.get("project_name", "N/A")],
+            ["Target Version", _target.get("version", "N/A")],
+            ["Total Dependants", _stats.get("total_dependants", 0)],
+            ["Max Partition (Longest Path)", _stats.get("max_partition", 0)],
+            ["Unique Projects", _stats.get("unique_projects", 0)],
+            ["Path Mode", "Longest only" if longest_only else "All paths"],
+        ]
+        sheets = [
+            SheetSpec(title="Dependants", headers=main_headers, rows=main_rows),
+            SheetSpec(
+                title="Dependency Paths",
+                headers=["Dependant", "Version", "Path #", "Path Length", "Path"],
+                rows=path_rows,
+            ),
+            SheetSpec(title="Summary", headers=["Metric", "Value"], rows=summary_rows),
+        ]
+        return stream_multi_sheet_workbook_response(sheets, fn)
 
     if output_format == "json":
-        payload, fn = dependants_json(
-            report_data,
-            internal_only,
-            longest_only,
-            project_name,
-            version_name,
-        )
-        return build_json_response(payload, fn)
+        payload, fn = dependants_json(report_data, internal_only, longest_only, project_name, version_name)
+        meta = {k: v for k, v in payload.items() if k != "dependants"}
+        return stream_json_response(meta, iter(report_data.get("dependants", [])), fn, data_key="dependants")
 
     # HTML — custom dependants template
     base_url = f"/reports/dependants/{project_name}/{version_name}"
@@ -1241,6 +1350,7 @@ def dependants_report(
             max_depth=max_depth,
             internal_only=internal_only,
             longest_only=longest_only,
+            name=name,
         ),
         json_url=build_url_with_params(
             base_url,
@@ -1248,6 +1358,7 @@ def dependants_report(
             max_depth=max_depth,
             internal_only=internal_only,
             longest_only=longest_only,
+            name=name,
         ),
         total_dependants=stats.get(
             "total_dependants",
@@ -1256,6 +1367,8 @@ def dependants_report(
         max_partition=stats.get("max_partition", 0),
         unique_projects=stats.get("unique_projects", 0),
         dependants=dependants,
+        show_name_search=True,
+        name_search=name,
     )
 
     return Response(html, mimetype="text/html")
@@ -1354,4 +1467,277 @@ def dependants_report_by_purl(
         "reports.dependants_report",
         coords,
         version_key="version_name",
+    )
+
+
+# ------------------------------------------------------------------
+# Bipartite dependants report (latest / latest-1 classification, Phase 5)
+# ------------------------------------------------------------------
+
+_BIPARTITE_RECENCY = frozenset({"latest", "latest_or_prev", "not_latest_or_prev"})
+
+
+def _bipartite_report_impl(
+    project_name: str,
+    project_group: str | None = None,
+) -> ResponseReturnValue:
+    """Tabular bipartite report: dependants vs. target-version recency."""
+    output_format = validate_format(request.args.get("format"))
+    internal_only = validate_boolean(request.args.get("internal_only"))
+    name = validate_search_term(request.args.get("name"))
+    name_lower = name.lower() if name else None
+    recency = request.args.get("recency")
+    if recency not in _BIPARTITE_RECENCY:
+        recency = None
+    req = parse_pagination(request.args)
+    service = get_falkordb_service()
+
+    latest, prev = service.get_target_version_recency(project_name, internal_only)
+    recent_set = {v for v in (latest, prev) if v}
+
+    enriched: list[dict[str, Any]] = []
+    for r in service.get_direct_dependants(project_name, internal_only=internal_only):
+        dependant_project = r.get("dependant_project")
+        if name_lower and name_lower not in (dependant_project or "").lower():
+            continue
+        target_version = r.get("target_version")
+        is_latest = target_version is not None and target_version == latest
+        is_latest_or_prev = target_version in recent_set if recent_set else False
+        if recency == "latest" and not is_latest:
+            continue
+        if recency == "latest_or_prev" and not is_latest_or_prev:
+            continue
+        if recency == "not_latest_or_prev" and is_latest_or_prev:
+            continue
+        enriched.append(
+            {
+                "target_project": r.get("target_project"),
+                "target_version": target_version,
+                "is_latest": is_latest,
+                "is_latest_or_prev": is_latest_or_prev,
+                "dependant_project": r.get("dependant_project"),
+                "dependant_version": r.get("dependant_version"),
+            }
+        )
+
+    total = len(enriched)
+
+    def fetch_page(offset: int, limit: int) -> list[dict[str, Any]]:
+        return enriched[offset : offset + limit]
+
+    def to_cells(r: dict[str, Any]) -> list[Any]:
+        return [
+            r["target_project"],
+            r["target_version"],
+            "Yes" if r["is_latest"] else "No",
+            "Yes" if r["is_latest_or_prev"] else "No",
+            r["dependant_project"],
+            r["dependant_version"],
+        ]
+
+    base_url = f"/reports/bipartite/{project_name}"
+    return render_paged_report(
+        req=req,
+        output_format=output_format,
+        fetch_page=fetch_page,
+        count=lambda: total,
+        headers=[
+            "Target Project", "Target Version", "Is Latest",
+            "Is Latest-or-(Latest-1)", "Dependant Project", "Dependant Version",
+        ],
+        to_cells=to_cells,
+        to_export_cells=to_cells,
+        title=f"Bipartite Dependants: {project_name}",
+        base_url=base_url,
+        params={"internal_only": internal_only, "recency": recency, "name": name},
+        filename_stem=f"bipartite_{project_name}",
+        report_type="bipartite",
+        schema_url="/schemas/bipartite",
+        stats_builder=lambda t: {
+            "Total Dependants": t,
+            "Latest Version": latest or "N/A",
+            "Previous Version": prev or "N/A",
+        },
+        json_stats_builder=lambda t: {
+            "total_dependants": t,
+            "latest_version": latest,
+            "previous_version": prev,
+        },
+        json_meta={
+            "project_name": project_name,
+            "filter": "internal_only" if internal_only else "all",
+        },
+        internal_only=internal_only,
+        extra_context={"show_name_search": True, "name_search": name},
+    )
+
+
+@bp.route("/bipartite/<project_name>")
+@auth_required
+def bipartite_report(project_name: str) -> ResponseReturnValue:
+    """Bipartite dependants report with latest / latest-1 classification.
+
+    Query Parameters:
+        format: 'excel' or 'json' to download (default: html)
+        internal_only: Set to 'true' to show only internal-labeled nodes
+        project_group: Optional group for disambiguation
+        recency: Filter rows — 'latest', 'latest_or_prev', or 'not_latest_or_prev'
+        page / page_size: Pagination (page_size 1..1000, default 100)
+    """
+    validated_project = validate_project_name(project_name)
+    if not validated_project:
+        return "Invalid project name format", 400
+    group = validate_project_group(request.args.get("project_group"))
+    return _bipartite_report_impl(validated_project, group)
+
+
+@bp.route("/bipartite/purl/<path:purl>")
+@auth_required
+def bipartite_report_by_purl(purl: str) -> ResponseReturnValue:
+    """Bipartite dependants report resolved via package URL."""
+    coords = resolve_purl_project(purl)
+    if isinstance(coords, tuple):
+        return coords
+    return _purl_redirect("reports.bipartite_report", coords)
+
+
+# ------------------------------------------------------------------
+# Unreleased-in-production (Phase 7 gap #4)
+# ------------------------------------------------------------------
+
+
+@bp.route("/unreleased-in-prod")
+@auth_required
+def unreleased_in_prod() -> Response | tuple[Response, int]:
+    """Applications depending on unreleased dependency versions.
+
+    Joins the suspect/unreleased version classification (SNAPSHOT, pre-release,
+    branch-name, non-SemVer) to the applications that consume those versions.
+
+    Query Parameters:
+        format: 'excel' or 'json' to download (default: html)
+        internal_only: 'true' to restrict to internal-labeled nodes
+        page / page_size: Pagination (page_size 1..1000, default 100)
+        all: 'true' to lift the total cap (exports stream the full set)
+
+    Returns:
+        Paged HTML table, streamed Excel download, or streamed JSON
+    """
+    output_format = validate_format(request.args.get("format"))
+    internal_only = validate_boolean(request.args.get("internal_only"))
+    req = parse_pagination()
+    service = get_falkordb_service()
+
+    def fetch_page(offset: int, limit: int) -> list[dict]:
+        return service.get_unreleased_in_production(
+            internal_only=internal_only, limit=limit, offset=offset
+        )
+
+    def to_cells(r: dict) -> list:
+        return [
+            r["application"],
+            r["application_version"],
+            r["dependency"],
+            r["dependency_version"],
+            r["reason"],
+        ]
+
+    def stats_builder(total: int) -> dict:
+        return {"Unreleased Dependencies In Use": total}
+
+    def json_stats_builder(total: int) -> dict:
+        return {"unreleased_in_use": total}
+
+    return render_paged_report(
+        req=req,
+        output_format=output_format,
+        fetch_page=fetch_page,
+        count=lambda: service.count_unreleased_in_production(internal_only=internal_only),
+        headers=[
+            "Application", "Application Version", "Dependency",
+            "Dependency Version", "Reason",
+        ],
+        to_cells=to_cells,
+        title=get_internal_title("Unreleased Dependencies In Production", internal_only),
+        base_url="/reports/unreleased-in-prod",
+        params={"internal_only": "true"} if internal_only else {},
+        filename_stem="unreleased_in_prod",
+        report_type="unreleased-in-prod",
+        schema_url="/schemas/unreleased-in-prod",
+        stats_builder=stats_builder,
+        json_stats_builder=json_stats_builder,
+        internal_only=internal_only,
+    )
+
+
+# ------------------------------------------------------------------
+# Dependency-freshness fleet report (Phase 7 gap #1)
+# ------------------------------------------------------------------
+
+
+@bp.route("/dependency-freshness")
+@auth_required
+def dependency_freshness() -> Response | tuple[Response, int]:
+    """Fleet-wide dependency freshness ranked by fan-in.
+
+    One row per dependency library: how many consumers are on the latest /
+    latest-1 version versus stale, so upgrade campaigns can target the
+    highest-impact stale libraries first.
+
+    Query Parameters:
+        format: 'excel' or 'json' to download (default: html)
+        internal_only: 'true' to restrict to internal-labeled nodes
+        page / page_size: Pagination (page_size 1..1000, default 100)
+        all: 'true' to lift the total cap (exports stream the full set)
+
+    Returns:
+        Paged HTML table, streamed Excel download, or streamed JSON
+    """
+    output_format = validate_format(request.args.get("format"))
+    internal_only = validate_boolean(request.args.get("internal_only"))
+    req = parse_pagination()
+    service = get_falkordb_service()
+
+    def fetch_page(offset: int, limit: int) -> list[dict]:
+        return service.get_dependency_freshness(
+            internal_only=internal_only, limit=limit, offset=offset
+        )
+
+    def to_cells(r: dict) -> list:
+        return [
+            r["target_project"],
+            r["latest"],
+            r["prev"],
+            r["consumers"],
+            r["on_latest"],
+            r["on_latest_or_prev"],
+            r["stale"],
+            f"{r['pct_stale']}%",
+        ]
+
+    def stats_builder(total: int) -> dict:
+        return {"Dependency Libraries": total}
+
+    def json_stats_builder(total: int) -> dict:
+        return {"libraries": total}
+
+    return render_paged_report(
+        req=req,
+        output_format=output_format,
+        fetch_page=fetch_page,
+        count=lambda: service.count_dependency_freshness(internal_only=internal_only),
+        headers=[
+            "Target Project", "Latest", "Latest-1", "Consumers",
+            "On Latest", "On Latest-or-(Latest-1)", "Stale", "% Stale",
+        ],
+        to_cells=to_cells,
+        title=get_internal_title("Dependency Freshness (Fleet)", internal_only),
+        base_url="/reports/dependency-freshness",
+        params={"internal_only": "true"} if internal_only else {},
+        filename_stem="dependency_freshness",
+        report_type="dependency-freshness",
+        schema_url="/schemas/dependency-freshness",
+        stats_builder=stats_builder,
+        json_stats_builder=json_stats_builder,
+        internal_only=internal_only,
     )

@@ -99,7 +99,8 @@ class TokenStorageService:
     def _get_session(self) -> Session:
         """Get a new database session."""
         self._get_engine()
-        assert self._session_factory is not None  # Set by _get_engine
+        if self._session_factory is None:  # _get_engine() initialises it
+            raise RuntimeError("Database session factory is not initialised")
         return self._session_factory()
 
     def _hash_token(self, token: str) -> str:
@@ -167,40 +168,38 @@ class TokenStorageService:
             TokenStorageError: If storage fails or token name already exists for user
         """
         try:
-            session = self._get_session()
+            with self._get_session() as session:
 
-            # Check if token name already exists for this user (active tokens only)
-            existing = (
-                session.query(StoredToken)
-                .filter(
-                    StoredToken.username == username,
-                    StoredToken.token_name == token_name,
-                    StoredToken.is_revoked.is_(False),
+                # Check if token name already exists for this user (active tokens only)
+                existing = (
+                    session.query(StoredToken)
+                    .filter(
+                        StoredToken.username == username,
+                        StoredToken.token_name == token_name,
+                        StoredToken.is_revoked.is_(False),
+                    )
+                    .first()
                 )
-                .first()
-            )
-            if existing:
-                session.close()
-                raise TokenStorageError(
-                    f"A token named '{token_name}' already exists. Please choose a different name."
+                if existing:
+                    raise TokenStorageError(
+                        f"A token named '{token_name}' already exists. Please choose a different name."
+                    )
+
+                stored_token = StoredToken(
+                    username=username,
+                    token_name=token_name,
+                    token_hash=self._hash_token(token),
+                    encrypted_token=self._encrypt_token(token),
+                    expires_at=expires_at,
+                    description=description,
                 )
 
-            stored_token = StoredToken(
-                username=username,
-                token_name=token_name,
-                token_hash=self._hash_token(token),
-                encrypted_token=self._encrypt_token(token),
-                expires_at=expires_at,
-                description=description,
-            )
+                session.add(stored_token)
+                session.commit()
+                token_id: int = stored_token.id
 
-            session.add(stored_token)
-            session.commit()
-            token_id: int = stored_token.id
-            session.close()
-
-            logger.info("Stored token '%s' for user %s", token_name, username)
-            return token_id
+                logger.info("Stored token '%s' for user %s", token_name, username)
+                return token_id
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to store token: %s", e)
@@ -217,45 +216,43 @@ class TokenStorageService:
             Token details dict or None if not found
         """
         try:
-            session = self._get_session()
+            with self._get_session() as session:
 
-            stored = (
-                session.query(StoredToken)
-                .filter(
-                    StoredToken.id == token_id,
-                    StoredToken.username == username,
-                    StoredToken.is_revoked.is_(False),
+                stored = (
+                    session.query(StoredToken)
+                    .filter(
+                        StoredToken.id == token_id,
+                        StoredToken.username == username,
+                        StoredToken.is_revoked.is_(False),
+                    )
+                    .first()
                 )
-                .first()
-            )
 
-            if not stored:
-                session.close()
-                return None
+                if not stored:
+                    return None
 
-            # Update last used timestamp
-            stored.last_used_at = datetime.now(UTC)
-            session.commit()
+                # Update last used timestamp
+                stored.last_used_at = datetime.now(UTC)
+                session.commit()
 
-            created = stored.created_at
-            expires = stored.expires_at
-            last_used = stored.last_used_at
+                created = stored.created_at
+                expires = stored.expires_at
+                last_used = stored.last_used_at
 
-            result = {
-                "id": stored.id,
-                "username": stored.username,
-                "token_name": stored.token_name,
-                "token": self._decrypt_token(
-                    str(stored.encrypted_token),
-                ),
-                "created_at": (created.isoformat() if created is not None else None),
-                "expires_at": (expires.isoformat() if expires is not None else None),
-                "last_used_at": (last_used.isoformat() if last_used is not None else None),
-                "description": stored.description,
-            }
+                result = {
+                    "id": stored.id,
+                    "username": stored.username,
+                    "token_name": stored.token_name,
+                    "token": self._decrypt_token(
+                        str(stored.encrypted_token),
+                    ),
+                    "created_at": (created.isoformat() if created is not None else None),
+                    "expires_at": (expires.isoformat() if expires is not None else None),
+                    "last_used_at": (last_used.isoformat() if last_used is not None else None),
+                    "description": stored.description,
+                }
 
-            session.close()
-            return result
+                return result
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to retrieve token: %s", e)
@@ -272,52 +269,51 @@ class TokenStorageService:
             List of token metadata dicts
         """
         try:
-            session = self._get_session()
+            with self._get_session() as session:
 
-            # First, let's see all tokens in the database for debugging
-            all_tokens = session.query(StoredToken).all()
-            all_usernames = {t.username for t in all_tokens}
-            logger.info(
-                "Database has %d total tokens, usernames: %s", len(all_tokens), all_usernames
-            )
-            logger.info(
-                "Looking for tokens with username='%s' (type: %s)", username, type(username)
-            )
-
-            query = session.query(StoredToken).filter(StoredToken.username == username)
-
-            if not include_revoked:
-                query = query.filter(StoredToken.is_revoked.is_(False))
-
-            tokens = query.order_by(StoredToken.created_at.desc()).all()
-
-            logger.info("Found %d tokens for user '%s'", len(tokens), username)
-
-            # Get current time for expiration check (use naive datetime for SQLite compatibility)
-            now = datetime.now(UTC).replace(tzinfo=None)
-
-            result = []
-            for t in tokens:
-                t_created = t.created_at
-                t_expires = t.expires_at
-                t_last_used = t.last_used_at
-                result.append(
-                    {
-                        "id": t.id,
-                        "token_name": t.token_name,
-                        "created_at": (t_created.isoformat() if t_created is not None else None),
-                        "expires_at": (t_expires.isoformat() if t_expires is not None else None),
-                        "last_used_at": (
-                            t_last_used.isoformat() if t_last_used is not None else None
-                        ),
-                        "description": t.description,
-                        "is_expired": (t_expires is not None and t_expires < now),
-                        "is_revoked": bool(t.is_revoked),
-                    }
+                # First, let's see all tokens in the database for debugging
+                all_tokens = session.query(StoredToken).all()
+                all_usernames = {t.username for t in all_tokens}
+                logger.info(
+                    "Database has %d total tokens, usernames: %s", len(all_tokens), all_usernames
+                )
+                logger.info(
+                    "Looking for tokens with username='%s' (type: %s)", username, type(username)
                 )
 
-            session.close()
-            return result
+                query = session.query(StoredToken).filter(StoredToken.username == username)
+
+                if not include_revoked:
+                    query = query.filter(StoredToken.is_revoked.is_(False))
+
+                tokens = query.order_by(StoredToken.created_at.desc()).all()
+
+                logger.info("Found %d tokens for user '%s'", len(tokens), username)
+
+                # Get current time for expiration check (use naive datetime for SQLite compatibility)
+                now = datetime.now(UTC).replace(tzinfo=None)
+
+                result = []
+                for t in tokens:
+                    t_created = t.created_at
+                    t_expires = t.expires_at
+                    t_last_used = t.last_used_at
+                    result.append(
+                        {
+                            "id": t.id,
+                            "token_name": t.token_name,
+                            "created_at": (t_created.isoformat() if t_created is not None else None),
+                            "expires_at": (t_expires.isoformat() if t_expires is not None else None),
+                            "last_used_at": (
+                                t_last_used.isoformat() if t_last_used is not None else None
+                            ),
+                            "description": t.description,
+                            "is_expired": (t_expires is not None and t_expires < now),
+                            "is_revoked": bool(t.is_revoked),
+                        }
+                    )
+
+                return result
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to list tokens for user '%s': %s", username, e)
@@ -334,27 +330,25 @@ class TokenStorageService:
             True if revoked, False if not found
         """
         try:
-            session = self._get_session()
+            with self._get_session() as session:
 
-            stored = (
-                session.query(StoredToken)
-                .filter(
-                    StoredToken.id == token_id,
-                    StoredToken.username == username,
+                stored = (
+                    session.query(StoredToken)
+                    .filter(
+                        StoredToken.id == token_id,
+                        StoredToken.username == username,
+                    )
+                    .first()
                 )
-                .first()
-            )
 
-            if not stored:
-                session.close()
-                return False
+                if not stored:
+                    return False
 
-            stored.is_revoked = True
-            session.commit()
-            session.close()
+                stored.is_revoked = True
+                session.commit()
 
-            logger.info("Revoked token %d for user %s", token_id, username)
-            return True
+                logger.info("Revoked token %d for user %s", token_id, username)
+                return True
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to revoke token: %s", e)
@@ -371,27 +365,25 @@ class TokenStorageService:
             True if deleted, False if not found
         """
         try:
-            session = self._get_session()
+            with self._get_session() as session:
 
-            stored = (
-                session.query(StoredToken)
-                .filter(
-                    StoredToken.id == token_id,
-                    StoredToken.username == username,
+                stored = (
+                    session.query(StoredToken)
+                    .filter(
+                        StoredToken.id == token_id,
+                        StoredToken.username == username,
+                    )
+                    .first()
                 )
-                .first()
-            )
 
-            if not stored:
-                session.close()
-                return False
+                if not stored:
+                    return False
 
-            session.delete(stored)
-            session.commit()
-            session.close()
+                session.delete(stored)
+                session.commit()
 
-            logger.info("Deleted token %d for user %s", token_id, username)
-            return True
+                logger.info("Deleted token %d for user %s", token_id, username)
+                return True
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to delete token: %s", e)
@@ -407,27 +399,23 @@ class TokenStorageService:
             True if valid, False otherwise
         """
         try:
-            session = self._get_session()
-            token_hash = self._hash_token(token)
+            with self._get_session() as session:
+                token_hash = self._hash_token(token)
 
-            stored = session.query(StoredToken).filter(StoredToken.token_hash == token_hash).first()
+                stored = session.query(StoredToken).filter(StoredToken.token_hash == token_hash).first()
 
-            if not stored:
-                session.close()
+                if not stored:
+                    return True
+
+                if bool(stored.is_revoked):
+                    return False
+
+                now = datetime.now(UTC).replace(tzinfo=None)
+                expires = stored.expires_at
+                if expires is not None and expires < now:
+                    return False
+
                 return True
-
-            if bool(stored.is_revoked):
-                session.close()
-                return False
-
-            now = datetime.now(UTC).replace(tzinfo=None)
-            expires = stored.expires_at
-            if expires is not None and expires < now:
-                session.close()
-                return False
-
-            session.close()
-            return True
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to validate token: %s", e)
@@ -440,28 +428,27 @@ class TokenStorageService:
             Number of tokens removed
         """
         try:
-            session = self._get_session()
+            with self._get_session() as session:
 
-            # Use naive datetime for SQLite compatibility
-            now = datetime.now(UTC).replace(tzinfo=None)
+                # Use naive datetime for SQLite compatibility
+                now = datetime.now(UTC).replace(tzinfo=None)
 
-            # Delete expired or revoked tokens
-            deleted = (
-                session.query(StoredToken)
-                .filter(
-                    StoredToken.is_revoked.is_(True)
-                    | ((StoredToken.expires_at.isnot(None)) & (StoredToken.expires_at < now))
+                # Delete expired or revoked tokens
+                deleted = (
+                    session.query(StoredToken)
+                    .filter(
+                        StoredToken.is_revoked.is_(True)
+                        | ((StoredToken.expires_at.isnot(None)) & (StoredToken.expires_at < now))
+                    )
+                    .delete(synchronize_session=False)
                 )
-                .delete(synchronize_session=False)
-            )
 
-            session.commit()
-            session.close()
+                session.commit()
 
-            if deleted > 0:
-                logger.info("Cleaned up %d expired/revoked tokens", deleted)
+                if deleted > 0:
+                    logger.info("Cleaned up %d expired/revoked tokens", deleted)
 
-            return deleted
+                return deleted
 
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error("Failed to cleanup tokens: %s", e)

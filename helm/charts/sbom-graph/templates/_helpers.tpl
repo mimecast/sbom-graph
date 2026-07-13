@@ -97,6 +97,13 @@ app.kubernetes.io/component: falkordb
 {{- printf "%s-sbom-graph-api" (include "sbom-graph.fullname" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{/*
+Traefik ServersTransport reference for HTTPS backend (namespace-name@kubernetescrd).
+*/}}
+{{- define "sbom-graph.ingress.serversTransportRef" -}}
+{{- printf "%s-%s@kubernetescrd" .Release.Namespace (include "sbom-graph.sbomGraphApi.fullname" .) -}}
+{{- end }}
+
 {{- define "sbom-graph.sbomGraphApi.labels" -}}
 {{ include "sbom-graph.labels" . }}
 app.kubernetes.io/component: sbom-graph-api
@@ -181,6 +188,20 @@ Name of the Secret holding the webhook HMAC shared secret.
 */}}
 {{- define "sbom-graph.webhookSecret.secretName" -}}
 {{- printf "%s-webhook" (include "sbom-graph.fullname" .) }}
+{{- end }}
+
+{{/*
+Name of the Secret holding Sonatype Lifecycle API credentials.
+*/}}
+{{- define "sbom-graph.sonatype.secretName" -}}
+{{- default (printf "%s-sonatype" (include "sbom-graph.fullname" .)) .Values.releaseListener.sonatype.existingSecret }}
+{{- end }}
+
+{{/*
+In-cluster DNS name for the release listener Service (cross-namespace webhooks).
+*/}}
+{{- define "sbom-graph.releaseListener.clusterHostname" -}}
+{{- printf "%s.%s.svc.cluster.local" (include "sbom-graph.releaseListener.fullname" .) .Release.Namespace }}
 {{- end }}
 
 {{/*

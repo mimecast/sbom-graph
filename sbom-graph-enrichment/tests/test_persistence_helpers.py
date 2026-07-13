@@ -5,9 +5,12 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 
+import sbom_graph_enrichment.persistence_helpers as ph
 from sbom_graph_enrichment.persistence_helpers import (
     _on_worker_process_init,
+    _on_worker_process_shutdown,
     _reset_persistence,
     create_persistence,
     get_http_client,
@@ -111,6 +114,21 @@ class TestWorkerProcessInitSignal:
         assert result is sentinel
         mock_create.assert_called_once()
 
+    def test_worker_process_shutdown_closes_and_resets(self) -> None:
+        """The shutdown handler must close the per-process httpx client and
+        FalkorDB connection (no leak on worker recycle) and clear the globals."""
+        mock_client = MagicMock(name="http-client")
+        mock_pers = MagicMock(name="persistence")
+        ph._process_http_client = mock_client
+        ph._process_persistence = mock_pers
+
+        _on_worker_process_shutdown()
+
+        mock_client.close.assert_called_once()
+        mock_pers.close.assert_called_once()
+        assert ph._process_http_client is None
+        assert ph._process_persistence is None
+
 
 class TestCreatePersistence:
     """Tests for the non-cached create_persistence factory."""
@@ -145,6 +163,7 @@ class TestCreatePersistence:
     def test_ssl_ca_certs_from_env(
         self, mock_cls: MagicMock, monkeypatch
     ) -> None:  # type: ignore[no-untyped-def]
+        monkeypatch.setenv("FALKORDB_PASSWORD", "s3cret")
         monkeypatch.setenv("FALKORDB_CACERTS", "/custom/ca.pem")
 
         create_persistence()
@@ -152,3 +171,30 @@ class TestCreatePersistence:
         mock_cls.assert_called_once()
         call_kwargs = mock_cls.call_args.kwargs
         assert call_kwargs["ssl_ca_certs"] == "/custom/ca.pem"
+
+    @patch("sbom_graph_enrichment.persistence_helpers.Persistence")
+    def test_empty_password_fails_closed(
+        self, mock_cls: MagicMock, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        """SECURITY (CWE-306): an empty FALKORDB_PASSWORD means the Helm-provisioned
+        secret was removed; refuse to connect to an unauthenticated DB."""
+        monkeypatch.delenv("FALKORDB_PASSWORD", raising=False)
+        monkeypatch.delenv("FALKORDB_ALLOW_NO_AUTH", raising=False)
+
+        with pytest.raises(RuntimeError, match="refusing to connect"):
+            create_persistence()
+        mock_cls.assert_not_called()
+
+    @patch("sbom_graph_enrichment.persistence_helpers.Persistence")
+    def test_empty_password_allowed_with_opt_in(
+        self, mock_cls: MagicMock, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        """Local development against an auth-less FalkorDB requires an explicit
+        FALKORDB_ALLOW_NO_AUTH=true opt-in."""
+        monkeypatch.delenv("FALKORDB_PASSWORD", raising=False)
+        monkeypatch.setenv("FALKORDB_ALLOW_NO_AUTH", "true")
+
+        create_persistence()
+
+        mock_cls.assert_called_once()
+        assert mock_cls.call_args.kwargs["password"] == ""

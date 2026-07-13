@@ -2,14 +2,29 @@
 
 from unittest.mock import MagicMock, patch
 
+_DEFAULT_INV_SUMMARY = {
+    "total": 0,
+    "by_format": {},
+    "by_source": {},
+}
+
 
 class TestSbomInventoryTemplate:
     """Tests for SBOM inventory HTML template rendering."""
 
+    def _make_mock_service(self, page=None, count=0, tools=None, summary=None):
+        mock_service = MagicMock()
+        mock_service.get_sbom_inventory_paged.return_value = page or []
+        mock_service.count_sbom_inventory.return_value = count
+        mock_service.get_sbom_inventory_tools.return_value = tools or []
+        mock_service.get_sbom_inventory_summary.return_value = (
+            summary if summary is not None else dict(_DEFAULT_INV_SUMMARY)
+        )
+        return mock_service
+
     def test_inventory_renders_with_mock_data(self, client):
         """SBOM inventory template renders with mock data."""
-        mock_service = MagicMock()
-        mock_service.get_sbom_inventory.return_value = [
+        rows = [
             {
                 "record_id": "rec-001",
                 "format": "CycloneDX",
@@ -33,6 +48,16 @@ class TestSbomInventoryTemplate:
                 "version_count": 3,
             },
         ]
+        mock_service = self._make_mock_service(
+            page=rows,
+            count=2,
+            tools=["trivy", "syft"],
+            summary={
+                "total": 2,
+                "by_format": {"CycloneDX": 1, "SPDX": 1},
+                "by_source": {"api_upload": 1, "webhook": 1},
+            },
+        )
 
         with patch(
             "sbom_graph_api.routes.reports.sbom_provenance.get_falkordb_service",
@@ -52,9 +77,8 @@ class TestSbomInventoryTemplate:
         assert b"Download as JSON" in response.data
 
     def test_inventory_passes_search_filter_to_service(self, client):
-        """Search param is passed to get_sbom_inventory."""
-        mock_service = MagicMock()
-        mock_service.get_sbom_inventory.return_value = []
+        """Search param is forwarded to the paged service method."""
+        mock_service = self._make_mock_service()
 
         with patch(
             "sbom_graph_api.routes.reports.sbom_provenance.get_falkordb_service",
@@ -62,14 +86,13 @@ class TestSbomInventoryTemplate:
         ):
             client.get("/reports/sbom-inventory?search=trivy")
 
-        mock_service.get_sbom_inventory.assert_called_once()
-        call_kwargs = mock_service.get_sbom_inventory.call_args.kwargs
+        mock_service.get_sbom_inventory_paged.assert_called_once()
+        call_kwargs = mock_service.get_sbom_inventory_paged.call_args.kwargs
         assert call_kwargs.get("search") == "trivy"
 
     def test_inventory_passes_date_filters_to_service(self, client):
-        """date_from and date_to are passed to get_sbom_inventory."""
-        mock_service = MagicMock()
-        mock_service.get_sbom_inventory.return_value = []
+        """date_from and date_to are forwarded to the paged service method."""
+        mock_service = self._make_mock_service()
 
         with patch(
             "sbom_graph_api.routes.reports.sbom_provenance.get_falkordb_service",
@@ -80,10 +103,71 @@ class TestSbomInventoryTemplate:
                 "?date_from=2024-01-01&date_to=2024-12-31"
             )
 
-        mock_service.get_sbom_inventory.assert_called_once()
-        call_kwargs = mock_service.get_sbom_inventory.call_args.kwargs
+        mock_service.get_sbom_inventory_paged.assert_called_once()
+        call_kwargs = mock_service.get_sbom_inventory_paged.call_args.kwargs
         assert call_kwargs.get("date_from") == "2024-01-01"
         assert call_kwargs.get("date_to") == "2024-12-31"
+
+    def test_html_includes_by_format_stats(self, client):
+        """HTML stats block includes By Format breakdown (restored Phase 1.6)."""
+        mock_service = self._make_mock_service(
+            count=3,
+            summary={
+                "total": 3,
+                "by_format": {"CycloneDX": 2, "SPDX": 1},
+                "by_source": {"api_upload": 3},
+            },
+        )
+
+        with patch(
+            "sbom_graph_api.routes.reports.sbom_provenance.get_falkordb_service",
+            return_value=mock_service,
+        ):
+            resp = client.get("/reports/sbom-inventory")
+
+        assert resp.status_code == 200
+        assert b"By Format (CycloneDX)" in resp.data
+        assert b"By Format (SPDX)" in resp.data
+
+    def test_html_includes_by_source_stats(self, client):
+        """HTML stats block includes By Source breakdown (restored Phase 1.6)."""
+        mock_service = self._make_mock_service(
+            count=2,
+            summary={
+                "total": 2,
+                "by_format": {"CycloneDX": 2},
+                "by_source": {"api_upload": 1, "webhook": 1},
+            },
+        )
+
+        with patch(
+            "sbom_graph_api.routes.reports.sbom_provenance.get_falkordb_service",
+            return_value=mock_service,
+        ):
+            resp = client.get("/reports/sbom-inventory")
+
+        assert resp.status_code == 200
+        assert b"By Source (api_upload)" in resp.data
+        assert b"By Source (webhook)" in resp.data
+
+    def test_json_includes_top_level_count(self, client):
+        """JSON response has top-level count key (restored Phase 1.6)."""
+        mock_service = self._make_mock_service(
+            count=5,
+            summary={"total": 5, "by_format": {"CycloneDX": 5}, "by_source": {"api": 5}},
+        )
+
+        with patch(
+            "sbom_graph_api.routes.reports.sbom_provenance.get_falkordb_service",
+            return_value=mock_service,
+        ):
+            resp = client.get("/reports/sbom-inventory?format=json")
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert "count" in data
+        assert data["count"] == 5
+        assert data["report_type"] == "sbom-inventory"
 
 
 class TestSbomCoverageTemplate:

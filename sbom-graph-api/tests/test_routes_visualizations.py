@@ -112,6 +112,8 @@ class TestBipartiteEndpoint:
 
     def test_bipartite_passes_parameters(self, client):
         """Test bipartite passes query parameters correctly."""
+        from unittest.mock import ANY
+
         with patch(
             "sbom_graph_api.routes.visualizations.create_bipartite_visualization"
         ) as mock_viz:
@@ -119,11 +121,13 @@ class TestBipartiteEndpoint:
 
             client.get("/visualizations/bipartite/my-project?height=600px&width=90%")
 
+            # Phase 1: the route now resolves the service and passes it in (service=ANY).
             mock_viz.assert_called_once_with(
                 project_name="my-project",
                 internal_only=False,
                 height="600px",
                 width="90%",
+                service=ANY,
                 project_group=None,
             )
 

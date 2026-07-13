@@ -1,15 +1,21 @@
 """SBOM provenance reports: inventory, coverage."""
 
-from datetime import UTC, datetime
 from urllib.parse import urlencode
 
 from flask import Response, render_template, request
 
-from sbom_graph_api.exports.excel import create_generic_excel
+from sbom_graph_api.exports.streaming import (
+    stream_json_response,
+    stream_workbook_response,
+)
 from sbom_graph_api.routes.auth import auth_required
 from sbom_graph_api.routes.reports import bp
-from sbom_graph_api.routes.reports._common import build_json_response
-from sbom_graph_api.services.falkordb_service import get_falkordb_service
+from sbom_graph_api.routes.reports._common import (
+    parse_pagination,
+    render_paged_report,
+    ts,
+)
+from sbom_graph_api.services.falkordb_service import get_falkordb_service, iterate_pages
 from sbom_graph_api.utils.validation import (
     validate_boolean,
     validate_date_param,
@@ -30,7 +36,7 @@ def _build_sbom_inventory_url(base: str, **params) -> str:
 
 @bp.route("/sbom-inventory")
 @auth_required
-def sbom_inventory_report() -> Response:
+def sbom_inventory_report() -> Response | tuple[Response, int]:
     """List all ingested SBOM records with metadata.
 
     Query Parameters:
@@ -55,14 +61,6 @@ def sbom_inventory_report() -> Response:
     date_to = validate_date_param(request.args.get("date_to"))
 
     service = get_falkordb_service()
-    rows = service.get_sbom_inventory(
-        search=search,
-        tool=tool,
-        sbom_format=sbom_format,
-        date_from=date_from,
-        date_to=date_to,
-    )
-
     base = "/reports/sbom-inventory"
     url_params = {
         "search": search,
@@ -72,84 +70,119 @@ def sbom_inventory_report() -> Response:
         "date_to": date_to,
     }
 
-    if output_format == "excel":
-        excel_data = [
-            {
-                "Record ID": r["record_id"],
-                "Format": r["format"],
-                "Tool": r["tool_name"] or "-",
-                "Version": r["tool_version"] or "-",
-                "Serial Number": r["serial_number"] or "-",
-                "Ingested At": r["ingested_at"],
-                "Source": r["source"],
-                "Document Hash": r["document_hash"] or "-",
-            }
-            for r in rows
-        ]
-        return create_generic_excel(
-            excel_data,
-            columns=[
-                "Record ID",
-                "Format",
-                "Tool",
-                "Version",
-                "Serial Number",
-                "Ingested At",
-                "Source",
-                "Document Hash",
-            ],
-            sheet_name="SBOM Inventory",
-            filename="sbom_inventory.xlsx",
+    def fetch_page(offset: int, limit: int) -> list[dict]:
+        return service.get_sbom_inventory_paged(
+            search=search,
+            tool=tool,
+            sbom_format=sbom_format,
+            date_from=date_from,
+            date_to=date_to,
+            offset=offset,
+            limit=limit,
         )
 
-    if output_format == "json":
-        data = {
-            "report_type": "sbom-inventory",
-            "generated_at": datetime.now(UTC).isoformat(),
-            "inventory": rows,
-            "count": len(rows),
-        }
-        return build_json_response(data, "sbom_inventory.json")
+    def count() -> int:
+        return service.count_sbom_inventory(
+            search=search,
+            tool=tool,
+            sbom_format=sbom_format,
+            date_from=date_from,
+            date_to=date_to,
+        )
 
-    # Stats: Total, By Format, By Source
-    format_counts: dict[str, int] = {}
-    source_counts: dict[str, int] = {}
-    for r in rows:
-        fmt = r.get("format") or "Unknown"
-        format_counts[fmt] = format_counts.get(fmt, 0) + 1
-        src = r.get("source") or "Unknown"
-        source_counts[src] = source_counts.get(src, 0) + 1
-
-    stats = {"Total SBOMs": len(rows)}
-    for fmt, cnt in sorted(format_counts.items()):
-        stats[f"By Format ({fmt})"] = cnt
-    for src, cnt in sorted(source_counts.items()):
-        stats[f"By Source ({src})"] = cnt
-
-    tools = sorted({r["tool_name"] for r in rows if r.get("tool_name")})
-
-    excel_url = _build_sbom_inventory_url(
-        base, format="excel", **url_params
-    )
-    json_url = _build_sbom_inventory_url(base, format="json", **url_params)
-
-    html = render_template(
-        "sbom_inventory.html",
-        title="SBOM Inventory",
-        rows=rows,
-        stats=stats,
-        tools=tools,
+    # Full-set aggregate for stats (one lightweight query, all formats need it).
+    inv_summary = service.get_sbom_inventory_summary(
         search=search,
         tool=tool,
         sbom_format=sbom_format,
         date_from=date_from,
         date_to=date_to,
-        excel_url=excel_url,
-        json_url=json_url,
-        schema_url="/schemas/sbom-inventory",
     )
 
-    return Response(html, mimetype="text/html")
+    _export_headers = [
+        "Record ID", "Format", "Tool", "Version",
+        "Serial Number", "Ingested At", "Source", "Document Hash",
+    ]
+
+    def _to_export_row(r: dict) -> list:
+        return [
+            r.get("record_id", ""),
+            r.get("format", ""),
+            r.get("tool_name") or "-",
+            r.get("tool_version") or "-",
+            r.get("serial_number") or "-",
+            r.get("ingested_at", ""),
+            r.get("source", ""),
+            r.get("document_hash") or "-",
+        ]
+
+    if output_format == "excel":
+        rows = (
+            _to_export_row(r)
+            for page in iterate_pages(fetch_page)
+            for r in page
+        )
+        return stream_workbook_response(
+            _export_headers, rows, "sbom_inventory.xlsx", "SBOM Inventory"
+        )
+
+    if output_format == "json":
+        meta = {
+            "report_type": "sbom-inventory",
+            "generated_at": ts(),
+            "count": inv_summary["total"],
+        }
+        json_rows = (r for page in iterate_pages(fetch_page) for r in page)
+        return stream_json_response(meta, json_rows, "sbom_inventory.json", data_key="inventory")
+
+    # HTML — paginated
+    req = parse_pagination()
+    tools = service.get_sbom_inventory_tools(
+        search=search,
+        tool=tool,
+        sbom_format=sbom_format,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    excel_url = _build_sbom_inventory_url(base, format="excel", **url_params)
+    json_url = _build_sbom_inventory_url(base, format="json", **url_params)
+
+    def _inventory_stats_builder(total: int) -> dict:
+        stats: dict = {"Total SBOMs": total}
+        for fmt, cnt in sorted(inv_summary.get("by_format", {}).items()):
+            stats[f"By Format ({fmt})"] = cnt
+        for src, cnt in sorted(inv_summary.get("by_source", {}).items()):
+            stats[f"By Source ({src})"] = cnt
+        return stats
+
+    return render_paged_report(
+        req=req,
+        output_format="html",
+        fetch_page=fetch_page,
+        count=count,
+        headers=[],
+        to_cells=lambda r: [],
+        title="SBOM Inventory",
+        base_url=base,
+        params={k: v for k, v in url_params.items() if v},
+        filename_stem="sbom_inventory",
+        report_type="sbom-inventory",
+        schema_url="/schemas/sbom-inventory",
+        stats_builder=_inventory_stats_builder,
+        template="sbom_inventory.html",
+        page_context_fn=lambda page: {"rows": page},
+        extra_context={
+            "search": search,
+            "tool": tool,
+            "sbom_format": sbom_format,
+            "date_from": date_from,
+            "date_to": date_to,
+            "tools": tools,
+            "excel_url": excel_url,
+            "json_url": json_url,
+            "schema_url": "/schemas/sbom-inventory",
+        },
+    )
 
 
 @bp.route("/coverage")
@@ -188,37 +221,32 @@ def sbom_coverage_report() -> Response:
     json_url = _build_sbom_inventory_url(base, **json_params)
 
     if output_format == "excel":
-        excel_data = [
-            {
-                "Project": p["project_name"],
-                "Version": p["version_name"],
-                "SBOM Status": p["status"],
-                "Last Ingested": p["last_ingested"],
-                "Tool": p["tool_name"],
-            }
-            for p in data["projects"]
-        ]
-        filename = (
-            "sbom_coverage_internal.xlsx"
-            if internal_only
-            else "sbom_coverage.xlsx"
-        )
-        return create_generic_excel(
-            excel_data,
-            columns=["Project", "Version", "SBOM Status", "Last Ingested", "Tool"],
-            sheet_name="SBOM Coverage",
-            filename=filename,
-        )
+        headers = ["Project", "Version", "SBOM Status", "Last Ingested", "Tool"]
+        filename = "sbom_coverage_internal.xlsx" if internal_only else "sbom_coverage.xlsx"
+
+        def _rows():
+            for p in data.get("projects", []):
+                yield [
+                    p.get("project_name", ""),
+                    p.get("version_name", ""),
+                    p.get("status", ""),
+                    p.get("last_ingested", ""),
+                    p.get("tool_name", ""),
+                ]
+
+        return stream_workbook_response(headers, _rows(), filename, "SBOM Coverage")
 
     if output_format == "json":
-        payload = {
+        meta = {
             "report_type": "sbom-coverage",
-            "generated_at": datetime.now(UTC).isoformat(),
-            "coverage": data,
+            "generated_at": ts(),
             "recent_days": recent_days,
             "internal_only": internal_only,
+            "stats": data.get("stats", {}),
         }
-        return build_json_response(payload, "sbom_coverage.json")
+        return stream_json_response(
+            meta, iter(data.get("projects", [])), "sbom_coverage.json", data_key="projects"
+        )
 
     title = "Internal SBOM Coverage" if internal_only else "SBOM Coverage"
 

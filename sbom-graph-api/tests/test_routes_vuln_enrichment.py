@@ -222,9 +222,8 @@ class TestVulnerabilityFreshness:
     """Tests for GET /reports/vulnerability-freshness."""
 
     def test_json_format(self, client) -> None:
-        """JSON format returns stats and data."""
-        mock_service = MagicMock()
-        mock_service.get_vulnerability_freshness.return_value = [
+        """JSON format returns streamed data with report_type in meta."""
+        rows = [
             {
                 "project_group": "com.example",
                 "project_name": "my-lib",
@@ -240,6 +239,9 @@ class TestVulnerabilityFreshness:
                 "last_enriched_at": None,
             },
         ]
+        mock_service = MagicMock()
+        mock_service.get_vulnerability_freshness.return_value = rows
+        mock_service.count_vulnerability_freshness.return_value = 2
 
         with patch(
             "sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service",
@@ -249,8 +251,8 @@ class TestVulnerabilityFreshness:
 
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["stats"]["total_packages"] == 2
-        assert data["stats"]["never_enriched"] == 1
+        assert data["report_type"] == "vulnerability-freshness"
+        assert any(r["purl"] == "pkg:maven/com.example/my-lib@1.0" for r in data["data"])
 
     def test_html_format(self, client) -> None:
         """HTML format returns table page."""
@@ -270,12 +272,14 @@ class TestVulnerabilityFreshness:
         """internal_only filter is passed to service."""
         mock_service = MagicMock()
         mock_service.get_vulnerability_freshness.return_value = []
+        mock_service.count_vulnerability_freshness.return_value = 0
 
         with patch(
             "sbom_graph_api.routes.reports.vulnerabilities.get_falkordb_service",
             return_value=mock_service,
         ):
-            resp = client.get("/reports/vulnerability-freshness?internal_only=true&format=json")
+            resp = client.get("/reports/vulnerability-freshness?internal_only=true&format=html")
 
         assert resp.status_code == 200
-        mock_service.get_vulnerability_freshness.assert_called_once_with(internal_only=True)
+        call_kwargs = mock_service.get_vulnerability_freshness.call_args.kwargs
+        assert call_kwargs["internal_only"] is True

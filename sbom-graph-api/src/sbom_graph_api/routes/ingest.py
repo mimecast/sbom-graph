@@ -18,6 +18,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from celery.result import AsyncResult
 from flask import Blueprint, Response, jsonify, request
 from sbom_graph_model import Persistence
 from sbom_graph_model.cyclonedx import CycloneDXProcessor, CycloneDXValidationError
@@ -25,6 +26,7 @@ from sbom_graph_model.spdx import SPDXProcessor, SPDXValidationError
 
 from sbom_graph_api.routes.auth import auth_required
 from sbom_graph_api.schemas.inbound import SBOM_UPLOAD_SCHEMA, VEX_UPLOAD_SCHEMA
+from sbom_graph_api.services.celery_client import get_celery_client
 from sbom_graph_api.services.ingestion_persistence import create_ingestion_persistence
 from sbom_graph_api.utils.validation import validate_json_body
 
@@ -340,10 +342,6 @@ def get_ingest_job(job_id: str) -> tuple[Response, int]:
         return jsonify({"error": "Invalid job id"}), 400
 
     try:
-        from celery.result import AsyncResult
-
-        from sbom_graph_api.services.celery_client import get_celery_client
-
         celery_app = get_celery_client()
         result = AsyncResult(job_id, app=celery_app)
         state = result.state

@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from flask import Flask
 
-from sbom_graph_api.utils.purl import resolve_purl, resolve_purl_project
+from sbom_graph_api.utils.purl import (
+    purl_ecosystem,
+    resolve_purl,
+    resolve_purl_project,
+)
 
 
 @pytest.fixture
@@ -200,3 +204,36 @@ class TestResolvePurlProject:
         result = resolve_purl_project("pkg:npm/lodash")
 
         assert result["project_group"] is None
+
+
+class TestPurlEcosystem:
+    """Tests for the purl_ecosystem helper."""
+
+    @pytest.mark.parametrize(
+        ("purl", "expected"),
+        [
+            ("pkg:maven/com.example/foo@1.0.0", "Java"),
+            ("pkg:npm/lodash@4.17.21", "JavaScript"),
+            ("pkg:pypi/requests@2.31.0", "Python"),
+            ("pkg:golang/github.com/gin-gonic/gin@v1.9.1", "Go"),
+            ("pkg:nuget/Newtonsoft.Json@13.0.3", ".NET"),
+            ("pkg:gem/rails@7.0.0", "Ruby"),
+            ("pkg:cargo/serde@1.0.0", "Rust"),
+            ("pkg:composer/symfony/console@6.0", "PHP"),
+        ],
+    )
+    def test_known_ecosystems(self, purl, expected):
+        assert purl_ecosystem(purl) == expected
+
+    def test_type_is_case_insensitive(self):
+        assert purl_ecosystem("pkg:MAVEN/com.example/foo@1.0.0") == "Java"
+
+    def test_unknown_type_falls_back_to_raw_type(self):
+        assert purl_ecosystem("pkg:swid/acme@1.0") == "swid"
+
+    def test_purl_without_version(self):
+        assert purl_ecosystem("pkg:npm/lodash") == "JavaScript"
+
+    @pytest.mark.parametrize("value", [None, "", "   ", "not-a-purl", "maven/foo"])
+    def test_missing_or_non_purl_returns_empty(self, value):
+        assert purl_ecosystem(value) == ""

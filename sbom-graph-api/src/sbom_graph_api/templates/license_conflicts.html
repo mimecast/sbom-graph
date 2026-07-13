@@ -33,7 +33,7 @@
     <p>Generated at: {{ generated_at }}</p>
 
     {% if conflicts %}
-    <p><span class="conflict-badge">{{ conflicts | length }}</span> project(s) with conflicting licenses.</p>
+    <p><span class="conflict-badge">{{ pagination.total if pagination else (conflicts | length) }}</span> project(s) with conflicting licenses.</p>
     {% endif %}
 
     <table>
@@ -60,6 +60,8 @@
             {% endfor %}
         </tbody>
     </table>
+
+    {% include '_pagination.html' %}
 
     <script>
         document.getElementById('internalOnlyToggle').addEventListener('change', function() {

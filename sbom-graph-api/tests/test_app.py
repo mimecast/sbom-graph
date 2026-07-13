@@ -13,6 +13,39 @@ class TestCreateApp:
         assert app is not None
         assert app.config["TESTING"] is True
 
+    def test_proxyfix_applied(self, app):
+        """M7 (CWE-307): X-Forwarded-* is trusted so rate limiters see the real IP."""
+        from werkzeug.middleware.proxy_fix import ProxyFix
+
+        assert isinstance(app.wsgi_app, ProxyFix)
+
+    def test_csp_header_present(self, client):
+        """M2 (CWE-1021): every response carries a Content-Security-Policy."""
+        resp = client.get("/health")
+        csp = resp.headers.get("Content-Security-Policy", "")
+        assert "default-src 'self'" in csp
+        assert "frame-ancestors 'none'" in csp
+
+    def test_rejects_ldap_without_tls_in_production(self, mock_app_config):
+        """SECURITY (CWE-319): LDAP enabled without TLS must fail startup
+        (non-debug) rather than send bind credentials in cleartext."""
+        from dataclasses import replace
+
+        import pytest
+
+        from sbom_graph_api.app import create_app
+        from sbom_graph_api.config import reset_config
+
+        insecure_ldap = replace(mock_app_config.ldap, enabled=True, use_ssl=False)
+        cfg = replace(mock_app_config, debug=False, ldap=insecure_ldap)
+        reset_config()
+        try:
+            with patch("sbom_graph_api.config.AppConfig.from_env", return_value=cfg):
+                with pytest.raises(RuntimeError, match="LDAP"):
+                    create_app()
+        finally:
+            reset_config()
+
     def test_app_has_secret_key(self, app):
         """Test that app has a secret key configured."""
         assert app.config["SECRET_KEY"] == "test-secret-key"
@@ -21,8 +54,9 @@ class TestCreateApp:
         """Test that all blueprints are registered."""
         blueprint_names = [bp.name for bp in app.blueprints.values()]
         assert "visualizations" in blueprint_names
-        assert "exports" in blueprint_names
         assert "reports" in blueprint_names
+        # The deprecated /exports blueprint was removed (dead code); ensure it's gone.
+        assert "exports" not in blueprint_names
 
 
 class TestHealthEndpoint:

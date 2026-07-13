@@ -2,12 +2,16 @@
 Test cases for the release listener Flask application.
 """
 
+import hashlib
+import hmac
 import json
+import uuid
 import pytest
 import requests as requests_lib
 from unittest.mock import patch, MagicMock, ANY
 from pathlib import Path
 
+from flask.testing import FlaskClient
 from werkzeug.exceptions import NotFound
 from redis.exceptions import RedisError
 
@@ -23,6 +27,42 @@ from sonatype_lifecycle_release_listener.app import (
 
 
 RESOURCES_DIR = Path(__file__).parent / "resources"
+
+
+def test_logging_conf_uses_streams_not_files():
+    """M12 (CWE-532): logging.conf must stream to stdout/stderr only. FileHandlers
+    wrote to the CWD, which fails under readOnlyRootFilesystem and silently degraded
+    logging to a DEBUG fallback."""
+    conf = (Path(__file__).parent / ".." / "logging.conf").resolve()
+    content = conf.read_text()
+    assert "FileHandler" not in content
+    assert "StreamHandler" in content
+
+
+def _nexus_webhook_signature(secret: str, body: bytes) -> str:
+    """Compute Sonatype Lifecycle X-Nexus-Webhook-Signature value."""
+    return hmac.new(secret.encode(), body, hashlib.sha1).hexdigest()
+
+
+class _SigningClient(FlaskClient):
+    """Test client that auto-signs POSTs to /webhook.
+
+    The webhook now fails closed (rejects unauthenticated requests), so the test
+    suite must present a valid HMAC. This signs the request body with the app's
+    configured WEBHOOK_SECRET unless the test already set a signature header
+    (so the explicit invalid/valid-signature tests still control their own header).
+    """
+
+    def post(self, *args, **kwargs):
+        path = args[0] if args else kwargs.get("path", "")
+        headers = dict(kwargs.get("headers") or {})
+        secret = self.application.config.get("WEBHOOK_SECRET", "")
+        if secret and "/webhook" in str(path) and "X-Nexus-Webhook-Signature" not in headers:
+            data = kwargs.get("data", b"")
+            body = data.encode() if isinstance(data, str) else (data or b"")
+            headers["X-Nexus-Webhook-Signature"] = _nexus_webhook_signature(secret, body)
+            kwargs["headers"] = headers
+        return super().post(*args, **kwargs)
 
 
 @pytest.fixture
@@ -60,8 +100,13 @@ def app():
         "FALKORDB_GRAPH_NAME": "test-graph",
         "FALKORDB_PASSWORD": "",
         "FALKORDB_CACERTS": "certs/ca_bundle.pem",
+        # Webhook now fails closed; tests run with a configured secret and the
+        # signing test client (below) signs /webhook POSTs automatically.
+        "WEBHOOK_SECRET": "test-webhook-secret",
     }
-    return create_app(test_config)
+    app = create_app(test_config)
+    app.test_client_class = _SigningClient
+    return app
 
 
 @pytest.fixture
@@ -92,6 +137,18 @@ class TestWebhookEndpoint:
         """Test that empty payload returns 400 error."""
         response = client.post("/webhook", data="", content_type="application/json")
         assert response.status_code == 400
+
+    def test_missing_secret_fails_closed(self):
+        """SECURITY (CWE-306): with no WEBHOOK_SECRET the endpoint rejects (503),
+        never processing a webhook unauthenticated — protects against the secret
+        being removed from the deployment."""
+        app_no_secret = create_app({"TESTING": True, "WEBHOOK_SECRET": ""})
+        resp = app_no_secret.test_client().post(
+            "/webhook",
+            data=json.dumps({"id": "x"}),
+            content_type="application/json",
+        )
+        assert resp.status_code == 503
 
     def test_invalid_json_returns_400(self, client):
         """Test that invalid JSON returns 400 error."""
@@ -228,6 +285,45 @@ class TestWebhookEndpoint:
         assert data["status"] == "error"
         assert "message" in data
         assert "reference" in data
+
+    def test_hmac_invalid_signature_returns_403(self, app, example_message):
+        """Test that invalid HMAC signature returns 403 when WEBHOOK_SECRET set."""
+        app.config["WEBHOOK_SECRET"] = "my-secret"
+        test_client = app.test_client()
+        body = json.dumps(example_message).encode()
+
+        response = test_client.post(
+            "/webhook",
+            data=body,
+            content_type="application/json",
+            headers={"X-Nexus-Webhook-Signature": "invalid"},
+        )
+
+        assert response.status_code == 403
+        data = json.loads(response.data)
+        assert "Invalid signature" in data["error"]
+
+    def test_hmac_valid_signature_is_accepted(self, app, example_message):
+        """Test that a valid Sonatype HMAC signature passes verification."""
+        secret = "my-secret"
+        app.config["WEBHOOK_SECRET"] = secret
+        test_client = app.test_client()
+        example_message["applicationEvaluation"]["stage"] = "build"
+        body = json.dumps(example_message).encode()
+
+        response = test_client.post(
+            "/webhook",
+            data=body,
+            content_type="application/json",
+            headers={
+                "X-Nexus-Webhook-Signature": _nexus_webhook_signature(secret, body),
+                "X-Nexus-Webhook-Signature-Algorithm": "HmacSHA1",
+            },
+        )
+
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data["status"] == "ignored"
 
 
 class TestProcessReleaseScan:
@@ -521,6 +617,111 @@ class TestFalkorDBIntegration:
         result = falkordb_connection.query("MATCH (d:Defect) RETURN count(d) as count")
         defect_count = result.result_set[0][0] if result.result_set else 0
         assert defect_count > 0, "Expected Defect nodes to exist in FalkorDB"
+
+
+class TestSbomRecordIdempotency:
+    """SAST L2: a re-delivered webhook must converge to the same SBOMRecord
+    instead of accumulating duplicates. record_id is derived deterministically
+    from the SBOM content + public app id (uuid5), so re-ingesting identical
+    content is an idempotent MERGE rather than a fresh node per replay."""
+
+    CONFIG = {"FALKORDB_HOST": "localhost"}
+
+    SBOM = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "serialNumber": "urn:uuid:1111",
+        "components": [
+            {"name": "lib", "version": "1.0", "purl": "pkg:pypi/lib@1.0"}
+        ],
+    }
+
+    def _make_helper(self, sbom):
+        with patch(
+            "sonatype_lifecycle_release_listener.app._listener_ingestion_persistence"
+        ), patch(
+            "sonatype_lifecycle_release_listener.app.SonaTypeClient"
+        ) as mock_client_cls, patch(
+            "sonatype_lifecycle_release_listener.app.CycloneDXProcessor"
+        ) as mock_proc_cls:
+            mock_client_cls.return_value.get_cyclonedx_sbom.return_value = sbom
+            mock_proc_cls.return_value.process_cyclone_dx_json.return_value = (
+                {},
+                {},
+                [],
+            )
+            return CycloneDXHelper(self.CONFIG)
+
+    @staticmethod
+    def _expected_id(public_app_id, sbom):
+        doc_hash = hashlib.sha256(
+            json.dumps(sbom, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        return str(
+            uuid.uuid5(uuid.NAMESPACE_URL, f"sbom:{public_app_id}:{doc_hash}")
+        )
+
+    def test_same_content_yields_same_record_id(self):
+        helper = self._make_helper(self.SBOM)
+        rid1 = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pub")
+        rid2 = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pub")
+        assert rid1 == rid2 == self._expected_id("pub", self.SBOM)
+        # Both ingests MERGE the same SBOMRecord identity (no duplicate node).
+        ids = [
+            c.kwargs["record_id"]
+            for c in helper.persistence.create_sbom_record.call_args_list
+        ]
+        assert ids == [rid1, rid1]
+
+    def test_different_app_yields_different_record_id(self):
+        helper = self._make_helper(self.SBOM)
+        rid_a = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pubA")
+        rid_b = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pubB")
+        assert rid_a != rid_b
+
+    def test_changed_content_yields_different_record_id(self):
+        helper = self._make_helper(self.SBOM)
+        rid1 = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pub")
+        helper.sonatype_client.get_cyclonedx_sbom.return_value = {
+            **self.SBOM,
+            "components": [{"name": "lib", "version": "2.0"}],
+        }
+        rid2 = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pub")
+        assert rid1 != rid2
+
+
+class TestResourceCleanup:
+    """Leak fix: a per-webhook helper must release its FalkorDB connection and
+    Sonatype HTTP session on every path (success and error)."""
+
+    _APP = "sonatype_lifecycle_release_listener.app"
+
+    def test_helper_close_releases_resources(self):
+        with patch(f"{self._APP}._listener_ingestion_persistence"), patch(
+            f"{self._APP}.SonaTypeClient"
+        ), patch(f"{self._APP}.CycloneDXProcessor"):
+            helper = CycloneDXHelper({"FALKORDB_HOST": "localhost"})
+        helper.close()
+        helper.persistence.close.assert_called_once()
+        helper.sonatype_client.close.assert_called_once()
+
+    def test_process_release_scan_closes_helpers_on_success(self):
+        with patch(f"{self._APP}.CycloneDXHelper") as mock_cyc, patch(
+            f"{self._APP}.VexHelper"
+        ) as mock_vex:
+            mock_vex.return_value.process_vex_for_application.return_value = None
+            result = process_release_scan("app", "pub", {})
+        assert result["success"] is True
+        mock_cyc.return_value.close.assert_called_once()
+        mock_vex.return_value.close.assert_called_once()
+
+    def test_process_release_scan_closes_helper_on_error(self):
+        with patch(f"{self._APP}.CycloneDXHelper") as mock_cyc:
+            mock_cyc.return_value.process_cyclonedx_sbom.side_effect = NotFound("x")
+            result = process_release_scan("app", "pub", {})
+        assert result["success"] is False
+        # cyclone helper still closed via finally on the error path
+        mock_cyc.return_value.close.assert_called_once()
 
 
 class TestSonaTypeClient:
@@ -1032,42 +1233,23 @@ class TestEdgeCases:
         data = json.loads(response.data)
         assert "Invalid publicId format" in data["error"]
 
-    def test_hmac_invalid_signature_returns_403(self, app, example_message):
-        """Test that invalid HMAC signature returns 403 when WEBHOOK_SECRET set."""
-        app.config["WEBHOOK_SECRET"] = "my-secret"
-        test_client = app.test_client()
-
-        response = test_client.post(
-            "/webhook",
-            data=json.dumps(example_message),
-            content_type="application/json",
-            headers={"X-Webhook-Signature": "sha256=invalid"},
-        )
-
-        assert response.status_code == 403
-        data = json.loads(response.data)
-        assert "Invalid signature" in data["error"]
-
 
 class TestVerifyHmac:
     """Tests for _verify_hmac helper."""
 
-    def test_returns_false_when_header_not_sha256_prefix(self):
-        """Signature header without sha256= prefix returns False."""
-        assert _verify_hmac("secret", b"body", "invalid") is False
+    def test_returns_false_when_signature_header_empty(self):
+        """Missing or blank signature header returns False."""
+        assert _verify_hmac("secret", b"body", "") is False
+        assert _verify_hmac("secret", b"body", "   ") is False
 
     def test_returns_false_when_signature_mismatch(self):
         """Wrong signature returns False."""
-        assert _verify_hmac("secret", b"body", "sha256=wrong") is False
+        assert _verify_hmac("secret", b"body", "deadbeef") is False
 
     def test_returns_true_when_signature_valid(self):
-        """Valid HMAC returns True."""
-        import hmac as hmac_mod
-        import hashlib
-        sig = hmac_mod.new(
-            "secret".encode(), b"body", hashlib.sha256
-        ).hexdigest()
-        assert _verify_hmac("secret", b"body", f"sha256={sig}") is True
+        """Valid HMAC-SHA1 returns True."""
+        sig = _nexus_webhook_signature("secret", b"body")
+        assert _verify_hmac("secret", b"body", sig) is True
 
 
 class TestExtractCycloneDXToolInfo:

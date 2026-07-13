@@ -249,6 +249,7 @@ class TestFalkorDBService:
                 None,
                 None,
                 None,
+                "org",
             ],
             [
                 "project-b",
@@ -260,6 +261,7 @@ class TestFalkorDBService:
                 None,
                 None,
                 None,
+                "org",
             ],
         ]
         mock_graph.ro_query.return_value = mock_result
@@ -273,6 +275,8 @@ class TestFalkorDBService:
             "project_name": "project-a",
             "version": "1.0.0",
             "package_url": "pkg:maven/org/project-a@1.0.0",
+            "project_group": "org",
+            "language": "Java",
             "spdx_id": "MIT",
             "risk_category": "permissive",
             "source_repo_url": None,
@@ -284,6 +288,8 @@ class TestFalkorDBService:
             "project_name": "project-b",
             "version": "2.0.0",
             "package_url": "pkg:maven/org/project-b@2.0.0",
+            "project_group": "org",
+            "language": "Java",
             "spdx_id": "",
             "risk_category": "",
             "source_repo_url": None,
@@ -309,6 +315,7 @@ class TestFalkorDBService:
                 None,
                 None,
                 None,
+                "org.acme",
             ],
         ]
         mock_graph.ro_query.return_value = mock_result

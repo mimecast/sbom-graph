@@ -26,12 +26,24 @@ from __future__ import annotations
 import logging
 import re
 from typing import Any
+from urllib.parse import quote, unquote
 
 import httpx
 
 from sbom_graph_model import LicenseRiskCategory
 
 from .base import Certifier, Finding, FindingKind
+
+
+def _cd_segment(segment: str) -> str:
+    """Normalise a PURL-derived ClearlyDefined path segment.
+
+    Decode-then-encode (``quote(unquote(...), safe="")``) so that ``/`` and
+    ``..`` cannot introduce path separators / traversal into the fixed
+    ClearlyDefined host (CWE-22), while avoiding double-encoding of PURL fields
+    that are already percent-encoded (e.g. npm ``%40`` scopes).
+    """
+    return quote(unquote(segment), safe="")
 
 
 
@@ -41,6 +53,10 @@ CLEARLY_DEFINED_API = "https://api.clearlydefined.io/definitions"
 
 _PURL_RE = re.compile(
     r"^pkg:(?P<type>[^/]+)/(?:(?P<ns>[^/]+)/)?(?P<name>[^@]+)@(?P<version>.+)$"
+)
+
+_GOLANG_PURL_RE = re.compile(
+    r"^pkg:golang/(?P<path>.+)@(?P<version>.+)$"
 )
 
 _RISK_CATEGORIES: dict[str, str] = {
@@ -101,9 +117,37 @@ class LicenseCertifier(Certifier):
             logger.debug("ClearlyDefined has no data for %s", purl)
             return []
         resp.raise_for_status()
+        if not resp.content:
+            logger.debug("ClearlyDefined has no data for %s", purl)
+            return []
         body = resp.json()
 
         return _parse_response(purl, body)
+
+
+def _golang_purl_to_coordinates(purl: str) -> str | None:
+    """Convert a golang purl to ClearlyDefined coordinates.
+
+    ClearlyDefined uses coordinate type ``go`` and splits the import path at
+    the last ``/``: everything before is the namespace (with ``/`` encoded
+    as ``%2F``), the final segment is the package name.
+
+    Example: ``pkg:golang/github.com/gorilla/context@v1.0.0``
+    becomes ``go/golang/github.com%2Fgorilla/context/v1.0.0``.
+    """
+    m = _GOLANG_PURL_RE.match(purl)
+    if not m:
+        return None
+
+    path = m.group("path")
+    version = m.group("version")
+    if "/" in path:
+        namespace, name = path.rsplit("/", 1)
+    else:
+        namespace = "-"
+        name = path
+
+    return f"go/golang/{_cd_segment(namespace)}/{_cd_segment(name)}/{_cd_segment(version)}"
 
 
 def _purl_to_coordinates(purl: str) -> str | None:
@@ -112,6 +156,9 @@ def _purl_to_coordinates(purl: str) -> str | None:
     Example: ``pkg:maven/org.apache/commons-lang3@3.12.0``
     becomes ``maven/mavencentral/org.apache/commons-lang3/3.12.0``.
     """
+    if purl.startswith("pkg:golang/"):
+        return _golang_purl_to_coordinates(purl)
+
     m = _PURL_RE.match(purl)
     if not m:
         return None
@@ -127,14 +174,13 @@ def _purl_to_coordinates(purl: str) -> str | None:
         "pypi": "pypi",
         "nuget": "nuget",
         "gem": "rubygems",
-        "golang": "golang",
         "cargo": "cratesio",
     }
     provider = provider_map.get(ptype)
     if provider is None:
         return None
 
-    return f"{ptype}/{provider}/{ns}/{name}/{version}"
+    return f"{ptype}/{provider}/{_cd_segment(ns)}/{_cd_segment(name)}/{_cd_segment(version)}"
 
 
 def _parse_response(purl: str, body: dict[str, Any]) -> list[Finding]:

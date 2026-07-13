@@ -17,6 +17,10 @@ from ..vcs import parse_repo_url
 
 logger = logging.getLogger(__name__)
 
+# Upper bound on components/dependencies/vulnerabilities in a single SBOM, to cap
+# ingest work from an attacker-supplied document (CWE-400, volumetric DoS).
+MAX_SBOM_ENTRIES = 100_000
+
 
 class CycloneDXValidationError(ValueError):
     """Raised when CycloneDX JSON data fails structural validation."""
@@ -96,6 +100,13 @@ class CycloneDXProcessor:
             if wrong_type:
                 raise CycloneDXValidationError(
                     f"'{section}' must be a {expected_type.__name__}"
+                )
+            # Bound cardinality (CWE-400): a crafted SBOM with millions of entries
+            # would otherwise fire one MERGE per entry and exhaust the ingest worker.
+            if present and len(json_data[section]) > MAX_SBOM_ENTRIES:
+                raise CycloneDXValidationError(
+                    f"'{section}' has {len(json_data[section])} entries; "
+                    f"maximum allowed is {MAX_SBOM_ENTRIES}"
                 )
 
         if "components" in json_data:
@@ -290,34 +301,42 @@ class CycloneDXProcessor:
         return parse_repo_url(url)
 
     @staticmethod
-    def parse_defect_from_cyclone_dx(cyclone_dx_json: dict) -> Defect:
+    def parse_defect_from_cyclone_dx(cyclone_dx_json: dict) -> Defect | None:
         """Parse CycloneDX vulnerability data into a Defect.
+
+        Defensive against malformed/attacker-supplied vulnerability entries:
+        missing keys, an empty/absent ``ratings`` list, or multiple ratings no
+        longer raise (which previously aborted ingestion of the whole SBOM —
+        a DoS vector). Entries without a usable ``id`` are skipped.
 
         Args:
             cyclone_dx_json: The vulnerability section of the CycloneDX file.
 
         Returns:
-            A Defect object.
-
-        Raises:
-            ValueError: If the vulnerability has multiple ratings.
+            A Defect object, or ``None`` if the entry has no ``id``.
         """
+        defect_id = cyclone_dx_json.get('id')
+        if not defect_id:
+            logger.warning("Skipping CycloneDX vulnerability with no id")
+            return None
+
         defect = Defect()
-        defect.id = cyclone_dx_json['id']
-        defect.source = (
-            cyclone_dx_json['source']['name'],
-            cyclone_dx_json['source'].get('url', ''),
-        )
+        defect.id = defect_id
+        source = cyclone_dx_json.get('source') or {}
+        defect.source = (source.get('name', ''), source.get('url', ''))
 
-        if len(cyclone_dx_json['ratings']) > 1:
-            raise ValueError(
-                'Vulnerability has multiple ratings - not currently handled'
+        ratings = cyclone_dx_json.get('ratings') or []
+        if len(ratings) > 1:
+            logger.warning(
+                "CycloneDX vulnerability %s has %d ratings; using the first",
+                defect_id,
+                len(ratings),
             )
-
-        defect.severity = cyclone_dx_json['ratings'][0]['severity']
+        first_rating = ratings[0] if ratings and isinstance(ratings[0], dict) else {}
+        defect.severity = first_rating.get('severity')
         defect.cwes = cyclone_dx_json.get('cwes', [])
-        defect.cvss = cyclone_dx_json['ratings'][0]['score']
-        defect.cvss_string = cyclone_dx_json['ratings'][0].get('vector')
+        defect.cvss = first_rating.get('score')
+        defect.cvss_string = first_rating.get('vector')
 
         return defect
 
@@ -402,8 +421,9 @@ class CycloneDXProcessor:
         # Parse vulnerabilities
         if 'vulnerabilities' in json_data:
             defects.update({
-                vuln['id']: self.parse_defect_from_cyclone_dx(vuln)
+                d.id: d
                 for vuln in json_data['vulnerabilities']
+                if (d := self.parse_defect_from_cyclone_dx(vuln)) is not None
             })
 
         # Parse application metadata

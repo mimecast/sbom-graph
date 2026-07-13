@@ -1,4 +1,4 @@
-{{- if .Values.initData.enabled }}
+{{- if and .Values.sbomGraphApi.enabled .Values.initData.enabled }}
 apiVersion: batch/v1
 kind: Job
 metadata:

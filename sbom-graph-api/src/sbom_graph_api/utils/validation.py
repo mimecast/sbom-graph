@@ -28,6 +28,12 @@ ALLOWED_LAYOUTS = frozenset({"spring", "radial", "shell", "bfs", "circular"})
 # Maximum reasonable values
 MAX_DEPTH = 100
 MAX_LIMIT = 100000
+# Pagination bounds (Phase 1)
+MAX_PAGE_SIZE = 1000
+DEFAULT_PAGE_SIZE = 100
+# Upper bound on the SKIP window for interactive/deep paging. Caps the cost of
+# a single deep page; full exports stream page-by-page regardless.
+MAX_RESULT_WINDOW = 1_000_000
 MAX_DIMENSION_VALUE = 10000
 MAX_URL_LENGTH = 2048
 MAX_USERNAME_LENGTH = 255
@@ -160,6 +166,16 @@ def validate_limit(value: int | None, default: int = 10000) -> int:
         return value
     except (ValueError, TypeError):
         return default
+
+
+def validate_page(value: int | None, default: int = 1) -> int:
+    """Validate the 1-based page number (>= 1). Invalid/out-of-range → default."""
+    return validate_int_param(value, default=default, min_val=1, max_val=MAX_RESULT_WINDOW)
+
+
+def validate_page_size(value: int | None, default: int = DEFAULT_PAGE_SIZE) -> int:
+    """Validate page size (1..MAX_PAGE_SIZE). Invalid/oversized → default."""
+    return validate_int_param(value, default=default, min_val=1, max_val=MAX_PAGE_SIZE)
 
 
 def validate_format(value: str | None, default: str = "html") -> str:
@@ -625,7 +641,7 @@ def validate_float_param(
 
 
 def validate_int_param(
-    value: str | None,
+    value: str | int | None,
     *,
     default: int,
     min_val: int = 1,
@@ -807,6 +823,7 @@ def build_url_params(  # pylint: disable=redefined-builtin
     latest_only: bool = False,
     vex_filter: str | None = None,
     defect_id_match: str | None = None,
+    name: str | None = None,
 ) -> str:
     """Build URL query parameters string, filtering out None/False values.
 
@@ -820,6 +837,7 @@ def build_url_params(  # pylint: disable=redefined-builtin
         vex_filter: VEX filter for vulnerabilities (all, hide_not_affected,
             under_investigation; only include if not 'all')
         defect_id_match: Optional defect id prefix/glob for vulnerabilities report
+        name: Optional case-insensitive project_name substring filter
 
     Returns:
         URL-encoded query string (without leading '?')
@@ -841,6 +859,8 @@ def build_url_params(  # pylint: disable=redefined-builtin
         params["vex_filter"] = vex_filter
     if defect_id_match:
         params["defect_id_match"] = defect_id_match
+    if name:
+        params["name"] = name
 
     return urlencode(params) if params else ""
 
@@ -855,6 +875,7 @@ def build_url_with_params(  # pylint: disable=redefined-builtin
     latest_only: bool = False,
     vex_filter: str | None = None,
     defect_id_match: str | None = None,
+    name: str | None = None,
 ) -> str:
     """Build a complete URL with query parameters.
 
@@ -881,6 +902,7 @@ def build_url_with_params(  # pylint: disable=redefined-builtin
         latest_only=latest_only,
         vex_filter=vex_filter,
         defect_id_match=defect_id_match,
+        name=name,
     )
     if query_string:
         return f"{base_url}?{query_string}"

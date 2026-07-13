@@ -22,12 +22,12 @@ from sbom_graph_cli.cli import main
 
 
 _TERMINAL_SUMMARY = {
-    "status": "ok",
-    "record_id": "abc-123",
-    "format": "cyclonedx",
-    "projects_count": 1,
-    "dependencies_count": 5,
-    "defects_count": 2,
+        "status": "ok",
+        "record_id": "abc-123",
+        "format": "cyclonedx",
+        "projects_count": 1,
+        "dependencies_count": 5,
+        "defects_count": 2,
 }
 
 

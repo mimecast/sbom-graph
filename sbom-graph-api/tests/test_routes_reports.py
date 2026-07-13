@@ -1,6 +1,5 @@
 """Tests for report routes."""
 
-from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 
@@ -29,21 +28,65 @@ class TestProjectsReportEndpoint:
             assert b"project-a" in response.data
             assert b"project-b" in response.data
 
-    def test_projects_returns_excel_when_requested(self, client):
-        """Test projects endpoint returns Excel when format=excel."""
-        mock_buffer = BytesIO(b"excel content")
-
-        with (
-            patch(
-                "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
-            ) as mock_get_service,
-            patch(
-                "sbom_graph_api.routes.reports.inventory.create_all_projects_excel"
-            ) as mock_export,
-        ):
+    def test_projects_shows_provenance_columns(self, client):
+        """Projects HTML exposes Group, PURL, and derived Language columns."""
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
+            mock_service.get_all_projects.return_value = [
+                {
+                    "project_name": "foo",
+                    "version": "1.0.0",
+                    "project_group": "com.example",
+                    "package_url": "pkg:maven/com.example/foo@1.0.0",
+                    "language": "Java",
+                },
+            ]
+            mock_service.get_policy_annotations_for_purls.return_value = {}
             mock_get_service.return_value = mock_service
-            mock_export.return_value = mock_buffer
+
+            response = client.get("/reports/projects")
+
+            html = response.data.decode("utf-8")
+            assert "Group" in html
+            assert "PURL" in html
+            assert "Language" in html
+            assert "com.example" in html
+            assert "pkg:maven/com.example/foo@1.0.0" in html
+            assert "Java" in html
+
+    def test_projects_name_filter(self, client):
+        """The name query param is threaded to the service and search box renders."""
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.get_all_projects.return_value = []
+            mock_service.count_all_projects.return_value = 0
+            mock_service.get_policy_annotations_for_purls.return_value = {}
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/reports/projects?name=foo")
+
+            assert response.status_code == 200
+            _, kwargs = mock_service.get_all_projects.call_args
+            assert kwargs.get("name") == "foo"
+            _, count_kwargs = mock_service.count_all_projects.call_args
+            assert count_kwargs.get("name") == "foo"
+            html = response.data.decode("utf-8")
+            assert "nameSearch" in html
+            assert 'value="foo"' in html
+
+    def test_projects_returns_excel_when_requested(self, client):
+        """Test projects endpoint returns a streamed Excel when format=excel."""
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.get_all_projects.return_value = []
+            mock_service.count_all_projects.return_value = 0
+            mock_get_service.return_value = mock_service
 
             response = client.get("/reports/projects?format=excel")
 
@@ -60,11 +103,17 @@ class TestProjectsReportEndpoint:
         ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_all_projects.return_value = []
+            mock_service.count_all_projects.return_value = 0
+            mock_service.get_policy_annotations_for_purls.return_value = {}
             mock_get_service.return_value = mock_service
 
             client.get("/reports/projects?limit=50")
 
-            mock_service.get_all_projects.assert_called_once_with(50, False)
+            # Phase 1: legacy ?limit maps to the page size; the getter is now
+            # offset-aware and a separate count query backs the pager.
+            _, kwargs = mock_service.get_all_projects.call_args
+            assert kwargs.get("limit", (mock_service.get_all_projects.call_args[0] or [None])[0]) == 50
+            assert mock_service.count_all_projects.called
 
     def test_projects_shows_statistics(self, client):
         """Test projects endpoint shows statistics."""
@@ -127,38 +176,46 @@ class TestProjectsReportEndpoint:
                 {"project_name": "acme_corp-lib", "version": "1.0.0", "package_url": None},
             ]
             mock_service.get_policy_annotations_for_purls.return_value = {}
+            mock_service.count_all_projects.return_value = 1
             mock_get_service.return_value = mock_service
 
             response = client.get("/reports/projects?internal_only=true")
 
             assert response.status_code == 200
-            # Verify internal_only was passed to service
-            mock_service.get_all_projects.assert_called_once_with(10000, True)
+            # Verify internal_only was passed to BOTH the paged getter and the count
+            _, pk = mock_service.get_all_projects.call_args
+            assert pk.get("internal_only") is True or True in (mock_service.get_all_projects.call_args[0] or [])
+            ca = mock_service.count_all_projects.call_args
+            assert (ca.kwargs.get("internal_only") is True) or (True in (ca.args or []))
             # Check title reflects the filter
             assert b"Internal Projects" in response.data
             assert b"Internal Only" in response.data
 
     def test_projects_internal_only_excel(self, client):
-        """Test projects endpoint with internal_only filter for Excel export."""
-        mock_buffer = BytesIO(b"excel content")
+        """Phase 1: Excel export is STREAMED page-by-page (not built in one buffer).
 
-        with (
-            patch(
-                "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
-            ) as mock_get_service,
-            patch(
-                "sbom_graph_api.routes.reports.inventory.create_all_projects_excel"
-            ) as mock_export,
-        ):
+        The export path no longer calls create_all_projects_excel; it pulls pages
+        from the offset-aware getter and streams via exports/streaming.
+        """
+        with patch(
+            "sbom_graph_api.routes.reports.inventory.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
+            mock_service.get_all_projects.return_value = []
+            mock_service.count_all_projects.return_value = 0
             mock_get_service.return_value = mock_service
-            mock_export.return_value = mock_buffer
 
             response = client.get("/reports/projects?format=excel&internal_only=true")
 
             assert response.status_code == 200
+            assert (
+                response.content_type
+                == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
             assert "internal_projects.xlsx" in response.headers["Content-Disposition"]
-            mock_export.assert_called_once_with(mock_service, 10000, True)
+            # internal_only threaded into the paged getter
+            for c in mock_service.get_all_projects.call_args_list:
+                assert (c.kwargs.get("internal_only") is True) or (True in (c.args or []))
 
 
 class TestSnapshotsReportEndpoint:
@@ -190,25 +247,19 @@ class TestSnapshotsReportEndpoint:
             assert b"app-a" in response.data
 
     def test_snapshots_returns_excel_when_requested(self, client):
-        """Test snapshots endpoint returns Excel when format=excel."""
-        mock_buffer = BytesIO(b"excel content")
-
-        with (
-            patch(
-                "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
-            ) as mock_get_service,
-            patch(
-                "sbom_graph_api.routes.reports.dependencies.create_snapshot_report_excel"
-            ) as mock_export,
-        ):
+        """Phase 1: snapshots Excel export is STREAMED page-by-page."""
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_snapshot_dependencies.return_value = []
+            mock_service.count_snapshot_dependencies.return_value = 0
             mock_get_service.return_value = mock_service
-            mock_export.return_value = mock_buffer
 
             response = client.get("/reports/snapshots?format=excel")
 
             assert response.status_code == 200
+            assert "spreadsheetml" in response.content_type
             assert "snapshot_dependencies.xlsx" in response.headers["Content-Disposition"]
 
     def test_snapshots_shows_statistics(self, client):
@@ -283,25 +334,19 @@ class TestSelfDependenciesReportEndpoint:
             assert b"self-ref-project" in response.data
 
     def test_self_dependencies_returns_excel_when_requested(self, client):
-        """Test self-dependencies endpoint returns Excel when format=excel."""
-        mock_buffer = BytesIO(b"excel content")
-
-        with (
-            patch(
-                "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
-            ) as mock_get_service,
-            patch(
-                "sbom_graph_api.routes.reports.dependencies.create_self_dependency_report_excel"
-            ) as mock_export,
-        ):
+        """Phase 1: self-dependencies Excel export is STREAMED page-by-page."""
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service",
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.find_self_dependencies.return_value = []
+            mock_service.count_self_dependencies.return_value = 0
             mock_get_service.return_value = mock_service
-            mock_export.return_value = mock_buffer
 
             response = client.get("/reports/self-dependencies?format=excel")
 
             assert response.status_code == 200
+            assert "spreadsheetml" in response.content_type
             assert "self_dependencies.xlsx" in response.headers["Content-Disposition"]
 
     def test_self_dependencies_shows_statistics(self, client):
@@ -397,16 +442,9 @@ class TestMultiVersionDepsReportEndpoint:
 
     def test_multi_version_deps_returns_excel_when_requested(self, client):
         """Test multi-version-deps endpoint returns Excel when format=excel."""
-        mock_buffer = BytesIO(b"excel content")
-
-        with (
-            patch(
-                "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
-            ) as mock_get_service,
-            patch(
-                "sbom_graph_api.routes.reports.dependencies.create_multi_version_deps_excel"
-            ) as mock_export,
-        ):
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
             mock_service = MagicMock()
             mock_service.get_library_version_usage.return_value = {
                 "library": {"project_name": "test-lib", "total_versions": 1},
@@ -422,7 +460,6 @@ class TestMultiVersionDepsReportEndpoint:
                 ],
             }
             mock_get_service.return_value = mock_service
-            mock_export.return_value = mock_buffer
 
             response = client.get("/reports/multi-version-deps/test-lib?format=excel")
 
@@ -476,7 +513,43 @@ class TestMultiVersionDepsReportEndpoint:
 
             client.get("/reports/multi-version-deps/test-lib?internal_only=true")
 
-            mock_service.get_library_version_usage.assert_called_once_with("test-lib", True)
+            mock_service.get_library_version_usage.assert_called_once_with(
+                "test-lib", True, name=None
+            )
+
+    def test_multi_version_deps_name_filter(self, client):
+        """The name param is threaded to the service and the search box renders."""
+        with patch(
+            "sbom_graph_api.routes.reports.dependencies.get_falkordb_service"
+        ) as mock_get_service:
+            mock_service = MagicMock()
+            mock_service.get_library_version_usage.return_value = {
+                "library": {"project_name": "test-lib", "total_versions": 1},
+                "total_dependants": 1,
+                "versions": [
+                    {
+                        "version": "1.0",
+                        "project_group": "g",
+                        "is_internal": False,
+                        "dependant_count": 1,
+                        "dependants": [
+                            {
+                                "project_name": "app-a",
+                                "version": "1.0",
+                                "project_group": "g",
+                                "is_internal": False,
+                            }
+                        ],
+                    }
+                ],
+            }
+            mock_get_service.return_value = mock_service
+
+            response = client.get("/reports/multi-version-deps/test-lib?name=app-a")
+
+            assert response.status_code == 200
+            assert mock_service.get_library_version_usage.call_args.kwargs.get("name") == "app-a"
+            assert "nameSearch" in response.data.decode("utf-8")
 
     # Negative tests
 

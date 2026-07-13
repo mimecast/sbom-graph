@@ -824,35 +824,28 @@ config:
 
 ## Kubernetes Deployment
 
-A Helm chart is provided in `helm/sbom-graph-api/`.
+Deployment is via the monorepo **umbrella chart** at `helm/charts/sbom-graph` (the former
+standalone `sbom-graph-api/helm/` chart was removed). To deploy the API on its own — e.g. against
+an existing/external FalkorDB — disable the other components:
+
+```bash
+helm upgrade --install sbom-graph ../helm/charts/sbom-graph \
+  --set sbomGraphApi.enabled=true \
+  --set releaseListener.enabled=false \
+  --set enrichment.enabled=false \
+  --set falkordb.enabled=false \
+  --set falkordb.connectHost=<external-falkordb-host> \
+  --set falkordb.password=<external-falkordb-password>
+```
+
+See `helm/charts/sbom-graph/values.yaml` for the full, authoritative value schema (the keys below
+describe the old standalone chart and are retained only as configuration reference).
 
 ### TLS and certificates (EKS and Kubernetes)
 
 - **TLS served by this app** (`TLS_ENABLED=true`, `TLS_CERT_FILE` / `TLS_KEY_FILE`): PEM files mounted read-only (Kubernetes `Secret`, CSI, or synced External Secrets). Functionally the same **files-on-disk** pattern as `*_FILE` for symmetric keys—avoid putting PEM bodies in Helm values.
 - **Ingress or AWS load balancer termination**: Very common on EKS—terminate TLS at **ACM-backed ALB/NLB** or **Ingress** (often **cert-manager** for issuance/renewal); pods behind the balancer often use HTTP inside the mesh.
 - **In-cluster renewal**: **cert-manager** (Let’s Encrypt or private CA) is the usual pattern when the workload must terminate HTTPS itself.
-
-### Install
-
-```bash
-helm install sbom-graph-api ./helm/sbom-graph-api \
-  --set config.falkordb.host=falkordb-service \
-  --set config.falkordb.existingSecret=falkordb-credentials
-```
-
-### Install with Authentication
-
-```bash
-helm install sbom-graph-api ./helm/sbom-graph-api \
-  --set config.falkordb.host=falkordb-service \
-  --set config.auth.enabled=true \
-  --set config.auth.ldap.enabled=true \
-  --set config.auth.ldap.server=ldap.example.com \
-  --set config.auth.ldap.baseDn="dc=example,dc=com" \
-  --set config.auth.jwt.existingSecret=jwt-secrets \
-  --set config.tokenStorage.existingSecret=token-db-secrets \
-  --set persistence.enabled=true
-```
 
 ### Configuration via values.yaml
 

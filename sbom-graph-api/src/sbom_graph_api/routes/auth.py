@@ -38,7 +38,7 @@ from sbom_graph_api.services.ldap_service import (
     LDAPUser,
     get_ldap_service,
 )
-from sbom_graph_api.services.token_storage import get_token_storage
+from sbom_graph_api.services.token_storage import StoredToken, get_token_storage
 from sbom_graph_api.services.user_storage import LocalUser, get_user_storage
 from sbom_graph_api.utils.validation import (
     MAX_EXPIRES_DAYS,
@@ -671,15 +671,13 @@ def delete_token(token_id: int) -> ResponseReturnValue:
 
 
 @bp.route("/tokens/debug", methods=["GET"])
-@auth_required
+@admin_required
 def debug_tokens() -> ResponseReturnValue:
     """Debug endpoint to check token storage state.
 
     Returns:
         JSON with debug information about tokens
     """
-    from sbom_graph_api.services.token_storage import StoredToken
-
     identity = get_current_user()
     if not identity:
         return jsonify({"error": "Authentication required"}), 401

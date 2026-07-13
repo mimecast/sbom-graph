@@ -480,6 +480,8 @@ class TestGetAllApplications:
             None,
             None,
             None,
+            "com.example",
+            "pkg:maven/com.example/app-a@1.0.0",
         ]
         with patch.object(
             db_service,
@@ -490,6 +492,9 @@ class TestGetAllApplications:
             assert len(result) == 1
             assert result[0]["project_name"] == "app-a"
             assert result[0]["is_internal"] is True
+            assert result[0]["project_group"] == "com.example"
+            assert result[0]["package_url"] == "pkg:maven/com.example/app-a@1.0.0"
+            assert result[0]["language"] == "Java"
 
     def test_latest_only_with_semver(
         self,
@@ -510,6 +515,8 @@ class TestGetAllApplications:
                 None,
                 None,
                 None,
+                None,
+                None,
             ],
             [
                 "app-a",
@@ -521,6 +528,8 @@ class TestGetAllApplications:
                 ["Application"],
                 [],
                 [],
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -561,6 +570,8 @@ class TestGetAllApplications:
                 None,
                 None,
                 None,
+                None,
+                None,
             ],
             [
                 "app-b",
@@ -572,6 +583,8 @@ class TestGetAllApplications:
                 ["Application"],
                 [],
                 [],
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -592,6 +605,179 @@ class TestGetAllApplications:
                 )
                 assert len(result) == 1
                 assert result[0]["version"] == "beta"
+
+
+class TestNameFilter:
+    """Tests for the case-insensitive project_name filter (Phase 6)."""
+
+    def test_projects_name_filter_in_query(self, db_service: FalkorDBService) -> None:
+        with patch.object(db_service, "execute_query", return_value=[]) as ex:
+            db_service.get_all_projects(name="foo")
+        query, params = ex.call_args[0]
+        assert "CONTAINS toLower($name)" in query
+        assert params["name"] == "foo"
+
+    def test_projects_no_name_no_clause(self, db_service: FalkorDBService) -> None:
+        with patch.object(db_service, "execute_query", return_value=[]) as ex:
+            db_service.get_all_projects()
+        query, params = ex.call_args[0]
+        assert "$name" not in query
+        assert "name" not in params
+
+    def test_count_projects_name_filter(self, db_service: FalkorDBService) -> None:
+        with patch.object(db_service, "execute_query", return_value=[[0]]) as ex:
+            db_service.count_all_projects(name="bar")
+        query, params = ex.call_args[0]
+        assert "CONTAINS toLower($name)" in query
+        assert params["name"] == "bar"
+
+    def test_applications_name_filter(self, db_service: FalkorDBService) -> None:
+        with patch.object(db_service, "execute_query", return_value=[]) as ex:
+            db_service.get_all_applications(name="baz")
+        query, params = ex.call_args[0]
+        assert "CONTAINS toLower($name)" in query
+        assert params["name"] == "baz"
+
+    def test_count_applications_latest_only_name_filter(
+        self, db_service: FalkorDBService
+    ) -> None:
+        with patch.object(db_service, "execute_query", return_value=[[0]]) as ex:
+            db_service.count_all_applications(latest_only=True, name="q")
+        query, params = ex.call_args[0]
+        assert "CONTAINS toLower($name)" in query
+        assert "DISTINCT app.project_name" in query
+        assert params["name"] == "q"
+
+    def test_trust_scores_name_filter_ands_into_existing_where(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """The name predicate is AND-ed onto the trust-score WHERE, not a bare WHERE."""
+        with patch.object(db_service, "execute_query", return_value=[]) as ex:
+            db_service.get_all_trust_scores_for_report(name="foo")
+        query, params = ex.call_args[0]
+        assert "AND toLower(v.project_name) CONTAINS toLower($name)" in query
+        assert params["name"] == "foo"
+
+    def test_trust_scores_no_name_no_clause(self, db_service: FalkorDBService) -> None:
+        with patch.object(db_service, "execute_query", return_value=[]) as ex:
+            db_service.get_all_trust_scores_for_report()
+        query, params = ex.call_args[0]
+        assert "$name" not in query
+        assert "name" not in params
+
+    def test_count_trust_scores_name_filter(self, db_service: FalkorDBService) -> None:
+        with patch.object(db_service, "execute_query", return_value=[[0]]) as ex:
+            db_service.count_all_trust_scores_for_report(name="bar")
+        query, params = ex.call_args[0]
+        assert "AND toLower(v.project_name) CONTAINS toLower($name)" in query
+        assert params["name"] == "bar"
+
+    def test_trust_scores_summary_name_filter(self, db_service: FalkorDBService) -> None:
+        with patch.object(db_service, "execute_query", return_value=[]) as ex:
+            db_service.get_trust_scores_summary(name="baz")
+        query, params = ex.call_args[0]
+        assert "AND toLower(v.project_name) CONTAINS toLower($name)" in query
+        assert params["name"] == "baz"
+
+
+class TestGetTargetVersionRecency:
+    """Tests for get_target_version_recency."""
+
+    def test_semver_ordering(self, db_service: FalkorDBService) -> None:
+        with patch.object(
+            db_service,
+            "get_all_versions_of_project",
+            return_value=["1.0.0", "2.0.0", "1.5.0"],
+        ):
+            assert db_service.get_target_version_recency("p") == ("2.0.0", "1.5.0")
+
+    def test_single_version(self, db_service: FalkorDBService) -> None:
+        with patch.object(
+            db_service, "get_all_versions_of_project", return_value=["1.0.0"]
+        ):
+            assert db_service.get_target_version_recency("p") == ("1.0.0", None)
+
+    def test_empty(self, db_service: FalkorDBService) -> None:
+        with patch.object(db_service, "get_all_versions_of_project", return_value=[]):
+            assert db_service.get_target_version_recency("p") == (None, None)
+
+    def test_non_semver_fallback(self, db_service: FalkorDBService) -> None:
+        with patch.object(
+            db_service,
+            "get_all_versions_of_project",
+            return_value=["build-a", "build-c", "build-b"],
+        ):
+            latest, prev = db_service.get_target_version_recency("p")
+            assert latest == "build-c"
+            assert prev == "build-b"
+
+
+class TestFindDuplicateVersionNodes:
+    """Tests for find_duplicate_version_nodes / count_duplicate_version_nodes."""
+
+    def test_duplicate_and_split(self, db_service: FalkorDBService) -> None:
+        """A group with a duplicate coordinate and multiple coordinates."""
+        combos = [
+            {
+                "project_group": "org.other",
+                "package_url": "pkg:maven/org.other/foo@1.0.0",
+                "node_count": 2,
+            },
+            {
+                "project_group": "com.example",
+                "package_url": "pkg:maven/com.example/foo@1.0.0",
+                "node_count": 1,
+            },
+        ]
+        row = ["foo", "1.0.0", combos, 3, 2, 2]
+        with patch.object(db_service, "execute_query", return_value=[row]):
+            result = db_service.find_duplicate_version_nodes()
+        assert len(result) == 1
+        r = result[0]
+        assert r["project_name"] == "foo"
+        assert r["version"] == "1.0.0"
+        assert r["distinct_coordinates"] == 2
+        assert r["total_nodes"] == 3
+        assert r["max_node_count"] == 2
+        assert r["is_genuine_duplicate"] is True
+        assert r["is_provenance_split"] is True
+        assert r["classification"] == "Duplicate + provenance split"
+        assert r["project_groups"] == ["com.example", "org.other"]
+
+    def test_provenance_split_only(self, db_service: FalkorDBService) -> None:
+        """Multiple coordinates, each with a single node."""
+        combos = [
+            {"project_group": "a", "package_url": "pkg:maven/a/foo@1.0.0", "node_count": 1},
+            {"project_group": "b", "package_url": "pkg:maven/b/foo@1.0.0", "node_count": 1},
+        ]
+        row = ["foo", "1.0.0", combos, 2, 2, 1]
+        with patch.object(db_service, "execute_query", return_value=[row]):
+            result = db_service.find_duplicate_version_nodes()
+        assert result[0]["is_genuine_duplicate"] is False
+        assert result[0]["is_provenance_split"] is True
+        assert result[0]["classification"] == "Provenance split"
+
+    def test_genuine_duplicate_only(self, db_service: FalkorDBService) -> None:
+        """A single coordinate backed by more than one node."""
+        combos = [
+            {"project_group": None, "package_url": None, "node_count": 3},
+        ]
+        row = ["foo", "1.0.0", combos, 3, 1, 3]
+        with patch.object(db_service, "execute_query", return_value=[row]):
+            result = db_service.find_duplicate_version_nodes()
+        assert result[0]["is_genuine_duplicate"] is True
+        assert result[0]["is_provenance_split"] is False
+        assert result[0]["classification"] == "Genuine duplicate"
+        # None coordinates collapse to empty strings.
+        assert result[0]["project_groups"] == [""]
+
+    def test_count_delegates_to_query(self, db_service: FalkorDBService) -> None:
+        with patch.object(db_service, "execute_query", return_value=[[4]]):
+            assert db_service.count_duplicate_version_nodes() == 4
+
+    def test_count_empty(self, db_service: FalkorDBService) -> None:
+        with patch.object(db_service, "execute_query", return_value=[]):
+            assert db_service.count_duplicate_version_nodes() == 0
 
 
 class TestFindNonSemverVersions:
@@ -615,6 +801,42 @@ class TestFindNonSemverVersions:
             assert len(result) == 1
             assert result[0]["project_name"] == "proj-b"
             assert result[0]["reason"] == "No numeric component"
+            assert result[0]["semver_compliant"] is False
+            assert result[0]["released"] is False
+
+    def test_clean_releases_excluded(self, db_service: FalkorDBService) -> None:
+        """SemVer-compliant released versions are not suspect."""
+        rows = [["proj-a", "1.0.0", ["Version"]], ["proj-a", "2.0.0", ["Version"]]]
+        with patch.object(db_service, "execute_query", return_value=rows):
+            assert db_service.find_non_semver_versions() == []
+
+    def test_snapshot_flagged_unreleased(self, db_service: FalkorDBService) -> None:
+        rows = [["proj-a", "1.0.0-SNAPSHOT", ["Version"]]]
+        with patch.object(db_service, "execute_query", return_value=rows):
+            result = db_service.find_non_semver_versions()
+        assert len(result) == 1
+        assert result[0]["semver_compliant"] is True
+        assert result[0]["released"] is False
+        assert result[0]["reason"] == "SNAPSHOT build (unreleased)"
+
+    def test_prerelease_flagged_unreleased(self, db_service: FalkorDBService) -> None:
+        rows = [["proj-a", "1.0.0-alpha", ["Version"]]]
+        with patch.object(db_service, "execute_query", return_value=rows):
+            result = db_service.find_non_semver_versions()
+        assert len(result) == 1
+        assert result[0]["released"] is False
+        assert result[0]["reason"] == "Pre-release (unreleased)"
+
+    def test_branch_name_versioning_detected(self, db_service: FalkorDBService) -> None:
+        """Multiple pre-releases sharing a base flag branch-name versioning."""
+        rows = [
+            ["proj-a", "1.0.0-featureA", ["Version"]],
+            ["proj-a", "1.0.0-featureB", ["Version"]],
+        ]
+        with patch.object(db_service, "execute_query", return_value=rows):
+            result = db_service.find_non_semver_versions()
+        assert len(result) == 2
+        assert all(r["reason"] == "Suspected branch-name versioning" for r in result)
 
 
 class TestFindCycles:
@@ -1236,6 +1458,69 @@ class TestGetLibraryVersionUsage:
         assert result["library"]["total_versions"] == 0
         assert result["total_dependants"] == 0
 
+    def test_name_filter_keeps_matching_dependants_and_recounts(
+        self,
+        db_service: FalkorDBService,
+    ) -> None:
+        """A name filter keeps only matching dependants and recomputes counts."""
+        dependants = [
+            {"project_name": "app-a", "version": "1.0", "project_group": "g", "labels": ["Version"]},
+            {"project_name": "app-b", "version": "2.0", "project_group": "g", "labels": ["Version"]},
+        ]
+        rows = [["1.0.0", "com.example", ["Version"], 2, dependants]]
+        self._wire_mock_db(db_service, rows)
+
+        result = db_service.get_library_version_usage("my-lib", name="app-a")
+
+        assert len(result["versions"]) == 1
+        assert [d["project_name"] for d in result["versions"][0]["dependants"]] == ["app-a"]
+        assert result["versions"][0]["dependant_count"] == 1
+        assert result["total_dependants"] == 1
+
+    def test_name_filter_drops_versions_with_no_match(
+        self,
+        db_service: FalkorDBService,
+    ) -> None:
+        """Versions whose dependants don't match the name are dropped entirely."""
+        dependants = [
+            {"project_name": "app-b", "version": "2.0", "project_group": "g", "labels": ["Version"]},
+        ]
+        rows = [["1.0.0", "com.example", ["Version"], 1, dependants]]
+        self._wire_mock_db(db_service, rows)
+
+        result = db_service.get_library_version_usage("my-lib", name="app-a")
+
+        assert result["versions"] == []
+        assert result["total_dependants"] == 0
+
+
+class TestDependantsNameFilter:
+    """In-memory name filter on get_dependants_with_partitions_and_paths."""
+
+    def test_name_filter_limits_listed_dependants_and_stats(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """Only matching dependants are listed; stats reflect the filtered set."""
+        nodes = [
+            {"id": "p:1.0", "project_name": "p", "version": "1.0", "labels": ["Version"]},
+            {"id": "app-a:1.0", "project_name": "app-a", "version": "1.0", "labels": ["Version"]},
+            {"id": "app-b:1.0", "project_name": "app-b", "version": "1.0", "labels": ["Version"]},
+        ]
+        edges = [
+            {"source": "app-a:1.0", "target": "p:1.0"},
+            {"source": "app-b:1.0", "target": "p:1.0"},
+        ]
+        with patch.object(
+            db_service, "get_transitive_dependants", return_value=(nodes, edges)
+        ):
+            result = db_service.get_dependants_with_partitions_and_paths(
+                "p", "1.0", name="app-a"
+            )
+
+        assert [d["project_name"] for d in result["dependants"]] == ["app-a"]
+        assert result["stats"]["total_dependants"] == 1
+        assert result["stats"]["unique_projects"] == 1
+
 
 class TestGetAllTrustScoresForReport:
     """Tests for get_all_trust_scores_for_report."""
@@ -1452,19 +1737,68 @@ class TestGetEnrichmentCoverage:
         assert len(result["packages"]) == 2
 
 
-class TestGetLicenseRiskDashboard:
-    """Tests for get_license_risk_dashboard."""
+class TestLicenseRiskDashboard:
+    """Tests for the split, streaming-friendly license-dashboard methods."""
 
-    def test_returns_categories(self, db_service: FalkorDBService) -> None:
-        """Returns total_packages and categories."""
-        rows = [
-            ["proj", "1.0", "purl", ["MIT"], ["MIT"], ["permissive"]],
-        ]
+    def test_stats_counts_and_pcts(self, db_service: FalkorDBService) -> None:
+        """get_license_risk_stats returns per-category counts + percentages."""
+        # Grouped (worst, count) rows straight from the aggregation query.
+        agg = [["permissive", 3], ["strong_copyleft", 1]]
+        with patch.object(db_service, "execute_query", return_value=agg):
+            result = db_service.get_license_risk_stats(internal_only=False)
+        assert result["total_packages"] == 4
+        assert result["categories"]["permissive"] == {"count": 3, "pct": 75.0}
+        assert result["categories"]["strong_copyleft"] == {"count": 1, "pct": 25.0}
+        # Absent categories are still seeded to zero.
+        assert result["categories"]["unknown"] == {"count": 0, "pct": 0.0}
+
+    def test_stats_empty(self, db_service: FalkorDBService) -> None:
+        """No packages yields zero counts, not a divide-by-zero."""
+        with patch.object(db_service, "execute_query", return_value=[]):
+            result = db_service.get_license_risk_stats()
+        assert result["total_packages"] == 0
+        assert all(c["pct"] == 0.0 for c in result["categories"].values())
+
+    def test_stats_unmapped_category_folds_to_unknown(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """A worst value outside the fixed set is counted as unknown."""
+        with patch.object(db_service, "execute_query", return_value=[["weird", 2]]):
+            result = db_service.get_license_risk_stats()
+        assert result["categories"]["unknown"]["count"] == 2
+
+    def test_rows_shape(self, db_service: FalkorDBService) -> None:
+        """get_license_risk_rows returns flat, category-tagged package rows."""
+        rows = [["proj", "1.0", "purl", ["MIT", "MIT"], ["MIT License"], "permissive"]]
         with patch.object(db_service, "execute_query", return_value=rows):
-            result = db_service.get_license_risk_dashboard(internal_only=False)
-        assert "total_packages" in result
-        assert "categories" in result
-        assert "permissive" in result["categories"]
+            result = db_service.get_license_risk_rows(limit=100, offset=0)
+        assert result == [
+            {
+                "category": "permissive",
+                "purl": "purl",
+                "project_name": "proj",
+                "version_name": "1.0",
+                "spdx_id": "MIT",
+                "license_name": "MIT License",
+            }
+        ]
+
+    def test_rows_category_filter_param(self, db_service: FalkorDBService) -> None:
+        """A category filter is threaded into the query params."""
+        with patch.object(db_service, "execute_query", return_value=[]) as ex:
+            db_service.get_license_risk_rows(limit=10, offset=0, category="strong_copyleft")
+            _, params = ex.call_args[0]
+            assert params.get("category") == "strong_copyleft"
+
+    def test_count_rows(self, db_service: FalkorDBService) -> None:
+        """count_license_risk_rows returns the distinct-combo total."""
+        with patch.object(db_service, "execute_query", return_value=[[7]]):
+            assert db_service.count_license_risk_rows() == 7
+
+    def test_count_rows_empty(self, db_service: FalkorDBService) -> None:
+        """Empty graph counts as zero."""
+        with patch.object(db_service, "execute_query", return_value=[]):
+            assert db_service.count_license_risk_rows() == 0
 
 
 class TestGetBlastRadius:
@@ -1619,3 +1953,233 @@ class TestGetSourceRepoImpact:
         assert "graph_edges" in result
         assert len(result["packages"]) == 1
         assert "stats" in result
+
+
+class TestVersionInternalLabelFix:
+    """Verify get_node_label is used instead of bare :INTERNAL label (Phase 1.5 Step 2)."""
+
+    def test_get_vulnerability_freshness_uses_version_internal_label(
+        self,
+        db_service: FalkorDBService,
+    ) -> None:
+        """When internal_only=True the query must use Version:INTERNAL, not bare :INTERNAL."""
+        captured: list[str] = []
+
+        def _capture(q: str, *a, **kw):
+            captured.append(q)
+            return []
+
+        with patch.object(db_service, "execute_query", side_effect=_capture):
+            db_service.get_vulnerability_freshness(internal_only=True)
+
+        assert captured, "execute_query was not called"
+        assert ":Version:INTERNAL" in captured[0], (
+            f"Expected ':Version:INTERNAL' in query, got:\n{captured[0]}"
+        )
+        assert "MATCH (v:INTERNAL)" not in captured[0], (
+            "Bare :INTERNAL label must not appear"
+        )
+
+    def test_count_vulnerability_freshness_uses_version_internal_label(
+        self,
+        db_service: FalkorDBService,
+    ) -> None:
+        """count_vulnerability_freshness internal_only=True must use Version:INTERNAL."""
+        captured: list[str] = []
+
+        def _capture(q: str, *a, **kw):
+            captured.append(q)
+            return [[0]]
+
+        with patch.object(db_service, "execute_query", side_effect=_capture):
+            db_service.count_vulnerability_freshness(internal_only=True)
+
+        assert captured, "execute_query was not called"
+        assert ":Version:INTERNAL" in captured[0], (
+            f"Expected ':Version:INTERNAL' in query, got:\n{captured[0]}"
+        )
+
+    def test_get_enrichment_coverage_uses_version_internal_label(
+        self,
+        db_service: FalkorDBService,
+    ) -> None:
+        """get_enrichment_coverage internal_only=True must use Version:INTERNAL."""
+        from datetime import UTC, datetime
+
+        captured: list[str] = []
+
+        now_str = datetime.now(UTC).isoformat()
+        rows = [["g", "proj", "1.0", "purl:test", now_str]]
+
+        def _capture(q: str, *a, **kw):
+            captured.append(q)
+            return rows
+
+        with patch.object(db_service, "execute_query", side_effect=_capture):
+            db_service.get_enrichment_coverage(internal_only=True)
+
+        assert captured, "execute_query was not called"
+        assert ":Version:INTERNAL" in captured[0], (
+            f"Expected ':Version:INTERNAL' in query, got:\n{captured[0]}"
+        )
+
+    def test_get_policy_annotations_uses_version_internal_label(
+        self,
+        db_service: FalkorDBService,
+    ) -> None:
+        """get_policy_annotations internal_only=True must use Version:INTERNAL."""
+        captured: list[str] = []
+
+        def _capture(q: str, *a, **kw):
+            captured.append(q)
+            return []
+
+        with patch.object(db_service, "execute_query", side_effect=_capture):
+            db_service.get_policy_annotations(internal_only=True)
+
+        assert captured, "execute_query was not called"
+        assert ":Version:INTERNAL" in captured[0], (
+            f"Expected ':Version:INTERNAL' in query, got:\n{captured[0]}"
+        )
+        assert "MATCH (v:INTERNAL)" not in captured[0], (
+            "Bare :INTERNAL label must not appear"
+        )
+
+
+class TestPhase7GapReports:
+    """Service tests for the Phase 7 reporting-gap methods."""
+
+    def test_purl_coverage(self, db_service: FalkorDBService) -> None:
+        """Coverage splits total into with_purl / without_purl."""
+        with patch.object(db_service, "execute_query", return_value=[[10, 7]]):
+            cov = db_service.get_purl_coverage()
+            assert cov == {"total": 10, "with_purl": 7, "without_purl": 3}
+
+    def test_purl_coverage_empty(self, db_service: FalkorDBService) -> None:
+        """No nodes yields all-zero counters, not an error."""
+        with patch.object(db_service, "execute_query", return_value=[]):
+            assert db_service.get_purl_coverage() == {
+                "total": 0,
+                "with_purl": 0,
+                "without_purl": 0,
+            }
+
+    def test_ecosystem_breakdown(self, db_service: FalkorDBService) -> None:
+        """Raw purl types fold to language labels; '' becomes Unknown; pct sums."""
+        rows = [["maven", 6, 3], ["npm", 2, 1], ["", 2, 2]]
+        with patch.object(db_service, "execute_query", return_value=rows):
+            result = db_service.get_ecosystem_breakdown()
+        # Sorted by components desc: maven(6), then npm(2)/(none)(2) by language.
+        assert result[0]["ecosystem"] == "maven"
+        assert result[0]["language"] == "Java"
+        assert result[0]["components"] == 6
+        assert result[0]["pct"] == 60.0
+        unknown = next(r for r in result if r["ecosystem"] == "(none)")
+        assert unknown["language"] == "Unknown"
+
+    def test_ecosystem_breakdown_pagination(self, db_service: FalkorDBService) -> None:
+        """limit/offset slice the sorted result."""
+        rows = [["maven", 6, 3], ["npm", 4, 2], ["pypi", 2, 1]]
+        with patch.object(db_service, "execute_query", return_value=rows):
+            page = db_service.get_ecosystem_breakdown(limit=1, offset=1)
+            assert len(page) == 1
+            assert page[0]["ecosystem"] == "npm"
+
+    def test_unreleased_in_production(self, db_service: FalkorDBService) -> None:
+        """Unreleased target versions are joined back to their dependants."""
+        version_rows = [["libx", "1.0.0-SNAPSHOT", ["Version"]]]
+        dependant_rows = [["appA", "1.0", "libx", "1.0.0-SNAPSHOT"]]
+        with patch.object(
+            db_service, "execute_query", side_effect=[version_rows, dependant_rows]
+        ):
+            result = db_service.get_unreleased_in_production()
+        assert len(result) == 1
+        assert result[0]["application"] == "appA"
+        assert result[0]["dependency"] == "libx"
+        assert result[0]["dependency_version"] == "1.0.0-SNAPSHOT"
+        assert "SNAPSHOT" in result[0]["reason"]
+
+    def test_unreleased_in_production_none(self, db_service: FalkorDBService) -> None:
+        """No suspect versions short-circuits without a dependant query."""
+        version_rows = [["libx", "1.0.0", ["Version"]]]  # clean release
+        with patch.object(db_service, "execute_query", return_value=version_rows):
+            assert db_service.get_unreleased_in_production() == []
+
+    def test_unreleased_filters_released_edges(self, db_service: FalkorDBService) -> None:
+        """Edges pointing at a released version of the same lib are dropped."""
+        version_rows = [
+            ["libx", "1.0.0-SNAPSHOT", ["Version"]],
+            ["libx", "1.0.0", ["Version"]],
+        ]
+        dependant_rows = [
+            ["appA", "1.0", "libx", "1.0.0-SNAPSHOT"],
+            ["appB", "2.0", "libx", "1.0.0"],  # released → excluded
+        ]
+        with patch.object(
+            db_service, "execute_query", side_effect=[version_rows, dependant_rows]
+        ):
+            result = db_service.get_unreleased_in_production()
+        assert [r["application"] for r in result] == ["appA"]
+
+    def test_dependency_freshness(self, db_service: FalkorDBService) -> None:
+        """Consumers classify to latest / latest-1 / stale, ranked by fan-in."""
+        versions_rows = [["libx", ["1.0.0", "2.0.0", "3.0.0"]]]
+        consumer_rows = [
+            ["libx", "3.0.0", 5],  # latest
+            ["libx", "2.0.0", 3],  # latest-1
+            ["libx", "1.0.0", 2],  # stale
+        ]
+        with patch.object(
+            db_service, "execute_query", side_effect=[versions_rows, consumer_rows]
+        ):
+            result = db_service.get_dependency_freshness()
+        assert len(result) == 1
+        row = result[0]
+        assert row["target_project"] == "libx"
+        assert row["latest"] == "3.0.0"
+        assert row["prev"] == "2.0.0"
+        assert row["consumers"] == 10
+        assert row["on_latest"] == 5
+        assert row["on_latest_or_prev"] == 8
+        assert row["stale"] == 2
+        assert row["pct_stale"] == 20.0
+
+    def test_dependency_freshness_ranked_by_fanin(
+        self, db_service: FalkorDBService
+    ) -> None:
+        """Libraries sort by consumer count descending."""
+        versions_rows = [["small", ["1.0.0"]], ["big", ["1.0.0"]]]
+        consumer_rows = [["small", "1.0.0", 1], ["big", "1.0.0", 9]]
+        with patch.object(
+            db_service, "execute_query", side_effect=[versions_rows, consumer_rows]
+        ):
+            result = db_service.get_dependency_freshness()
+        assert [r["target_project"] for r in result] == ["big", "small"]
+
+
+class TestDuplicateNodeStats:
+    """Service tests for the duplicate/provenance KPI counters (gap #2)."""
+
+    def test_stats_breakdown(self, db_service: FalkorDBService) -> None:
+        """affected_groups plus split/duplicate breakdown are returned."""
+        with patch.object(db_service, "execute_query", return_value=[[5, 3, 4]]):
+            stats = db_service.get_duplicate_node_stats()
+            assert stats == {
+                "affected_groups": 5,
+                "provenance_splits": 3,
+                "genuine_duplicates": 4,
+            }
+
+    def test_stats_empty(self, db_service: FalkorDBService) -> None:
+        """Empty graph yields all-zero counters, not an error."""
+        with patch.object(db_service, "execute_query", return_value=[]):
+            assert db_service.get_duplicate_node_stats() == {
+                "affected_groups": 0,
+                "provenance_splits": 0,
+                "genuine_duplicates": 0,
+            }
+
+    def test_stats_null_row(self, db_service: FalkorDBService) -> None:
+        """A null aggregate row (no matches) is treated as zero."""
+        with patch.object(db_service, "execute_query", return_value=[[None, None, None]]):
+            assert db_service.get_duplicate_node_stats()["affected_groups"] == 0

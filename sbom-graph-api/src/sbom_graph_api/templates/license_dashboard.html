@@ -85,6 +85,9 @@
                 {% endfor %}
             </tbody>
         </table>
+        {% if cats[cat_key].truncated %}
+        <p class="sample-note">Showing {{ cats[cat_key].shown }} of {{ cats[cat_key].count }} packages &mdash; <a href="{{ json_url }}">download JSON</a> or <a href="{{ excel_url }}">Excel</a> for the full list.</p>
+        {% endif %}
     </div>
     {% endif %}
     {% endfor %}

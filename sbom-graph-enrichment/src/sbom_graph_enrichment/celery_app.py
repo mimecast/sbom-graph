@@ -11,13 +11,14 @@ from leaking into logs, a :class:`_RedactSecretsFilter` is attached to
 the ``celery`` and ``kombu`` loggers as defence-in-depth.
 """
 
+import json
 import logging
 import os
 import re
 import ssl
 
 from celery import Celery
-from celery.signals import worker_process_init
+from celery.signals import worker_process_init, worker_process_shutdown
 from sbom_graph_model.k8s_service_host import resolve_k8s_service_link_host
 
 _redis_host_raw = os.environ.get("FALKORDB_HOST", "localhost") or "localhost"
@@ -80,10 +81,8 @@ _CENTRALITY_REFRESH_ENABLED = (
 
 _ENRICHMENT_SOURCES_RAW = os.environ.get("ENRICHMENT_SOURCES", "")
 try:
-    import json as _json
-
     _ENRICHMENT_SOURCES: list[str] | None = (
-        _json.loads(_ENRICHMENT_SOURCES_RAW) if _ENRICHMENT_SOURCES_RAW else None
+        json.loads(_ENRICHMENT_SOURCES_RAW) if _ENRICHMENT_SOURCES_RAW else None
     )
 except ValueError, TypeError:
     _ENRICHMENT_SOURCES = None
@@ -155,7 +154,12 @@ logging.getLogger("celery").addFilter(_RedactSecretsFilter())
 logging.getLogger("kombu").addFilter(_RedactSecretsFilter())
 
 # Connect the worker_process_init signal so each prefork child creates
-# its own Persistence (and underlying Redis connection) after the fork.
-from .persistence_helpers import _on_worker_process_init  # noqa: E402
+# its own Persistence (and underlying Redis connection) after the fork, and the
+# worker_process_shutdown signal so those connections are closed on recycle.
+from .persistence_helpers import (  # noqa: E402
+    _on_worker_process_init,
+    _on_worker_process_shutdown,
+)
 
 worker_process_init.connect(_on_worker_process_init)
+worker_process_shutdown.connect(_on_worker_process_shutdown)

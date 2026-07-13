@@ -2,9 +2,14 @@ global:
   # INTERNAL_PREFIXES for API, release listener, and enrichment (field:prefix comma list).
     internalPrefixes: "group:com.acme,name:acme-"
 falkordb:
+  # Deploy the bundled FalkorDB workload (Deployment/Service/PVC). Set false to
+  # run API/enrichment/listener against an EXTERNAL FalkorDB — then set
+  # falkordb.connectHost and provide falkordb.password / TLS certs. The password
+  # and TLS Secrets are still rendered (clients consume them) unless supplied.
+  enabled: true
   image:
     repository: falkordb/falkordb-server
-    tag: v4.16.5
+    tag: v4.18.11
     pullPolicy: IfNotPresent
   # When true, API / enrichment / init-data run an init container that waits for FalkorDB.
   # Set false only for local debugging if FalkorDB is intentionally unavailable.
@@ -18,6 +23,24 @@ falkordb:
     # static provisioners (e.g. minikube hostpath / "standard").
     size: 5Gi
     storageClass: ""
+  # falkordb-server (redis:8.x base) runs redis-server as UID/GID 999.  EBS RWO
+  # volumes on EKS mount as root:root unless fsGroup is set, which makes BGSAVE
+  # fail immediately with "Permission denied" on temp-<pid>.rdb under --dir /data.
+  podSecurityContext:
+    fsGroup: 999
+    fsGroupChangePolicy: OnRootMismatch
+  # chown known RDB files before redis-server starts; repairs existing PVCs that
+  # already contain root-owned dump.rdb / temp-*.rdb from prior pod generations.
+  # Also removes stray /data/bin (redis entrypoint treats it as unknown and skips
+  # all permission fixes).  Avoids chown -R on /data (EBS lost+found is not
+  # chown-able).  On a fresh PVC, fsGroup: 999 alone is enough — set enabled: false
+  # for greenfield installs.  Defaults to falkordb.image so no extra image pull.
+  fixDataPermissions:
+    enabled: true
+    image:
+      repository: ""
+      tag: ""
+      pullPolicy: ""
   # When empty, clients use the in-cluster DNS name (<fullname>.<namespace>.svc.cluster.local).
   # The chart-managed TLS cert SAN is this DNS name, so leave empty when TLS is enabled
   # so Python clients validate the cert correctly.
@@ -51,12 +74,15 @@ falkordb:
     # raise further (8Gi+) for larger graphs.
     limits:
       cpu: "2"
-      memory: 4Gi
+      memory: 8Gi
     # Request matches steady-state usage so kubelet reserves the memory and
-    # the pod is not first to be evicted under node pressure.
+    # the pod is not first to be evicted under node pressure. Set == the limit
+    # (and >= maxmemory) so FalkorDB's usage never exceeds its reservation —
+    # otherwise the kubelet evicts it under node pressure (it can't tolerate
+    # eviction; it holds the graph).
     requests:
       cpu: 500m
-      memory: 2Gi
+      memory: 8Gi
   # FalkorDB / Redis runtime tuning.  Consumed by the falkordb-deployment template.
   # Defaults are tuned for sustained SBOM ingest workloads.
   server:
@@ -87,7 +113,7 @@ falkordb:
     # "OOM command not allowed when used memory > 'maxmemory'" to clients
     # (clean, retriable) instead of being SIGKILL'd by the kernel.
     # Keep this ~75% of resources.limits.memory.
-    maxmemory: "3gb"
+    maxmemory: "6gb"
     # noeviction prevents graph data from being silently dropped; combined
     # with maxmemory above, writes start failing cleanly when full instead
     # of the entire process being killed.
@@ -131,9 +157,12 @@ falkordb:
       timeoutSeconds: 15
       failureThreshold: 5
 sbomGraphApi:
+  # Deploy the SBOM Graph API (Deployment/Service/Ingress/secrets/init-data).
+  # Set false to deploy only other components (e.g. the release listener alone).
+  enabled: true
   image:
     repository: localhost/sbom-graph-api
-    tag: 0.2.0-beta.2
+    tag: 1.0.0
     pullPolicy: Never
   replicas: 1
   # gthread concurrency: workers * threads is the max number of in-flight
@@ -197,35 +226,50 @@ sbomGraphApi:
       size: 1Gi
       storageClass: ""
   # Memory sizing notes:
-  #   The /reports/vulnerabilities endpoint currently materialises every Defect
-  #   row (with its collected affected_versions and vex_statements) into a single
-  #   Python list before rendering one HTML page.  Empirically this costs
-  #   ~10 KB/row of resident memory, plus a ~100 MB Flask/Gunicorn baseline and
-  #   a comparable Jinja render buffer for the response.  Sizing rule of thumb:
+  #   Heavy report endpoints materialise full result sets in Python before
+  #   rendering (HTML/Jinja/Excel).  Empirically ~10 KB/row plus a ~100 MB
+  #   Gunicorn baseline and a comparable render buffer.  Sizing rule of thumb:
   #     limit_MiB >= 250 + ceil(rows / 100)
-  #   so 14 k vulnerabilities needs >= ~1.7 GiB to render safely.  Raise this
-  #   further if you grow the graph or hit OOMKilled (exit 137) on report endpoints.
-  #   The proper long-term fix is server-side pagination of the report
-  #   (see docs/falkordb-backup-and-restore.md and the reports blueprint).
+  #   /reports/projects defaults to limit=10000; /reports/vulnerabilities can
+  #   exceed 14 k Defect rows.  With gunicornWorkers=2 and gunicornThreads=4,
+  #   two concurrent heavy requests can approach 2× single-request peak.
+  #   Prod OOMKilled at 2Gi on limit=10000/100000 project reports (2026-06).
+  #   4Gi provides headroom until server-side pagination ships (reports blueprint).
   resources:
     limits:
       cpu: 1500m
-      memory: 2Gi
+      memory: 4Gi
     requests:
       cpu: 250m
-      memory: 256Mi
+      memory: 1Gi
 releaseListener:
+  # Deploy the Sonatype release listener (Deployment/Service/webhook+sonatype
+  # Secrets). Set false to deploy only other components (e.g. the API alone).
+  enabled: true
   image:
     repository: localhost/sonatype-lifecycle-release-listener
-    tag: 0.2.0-beta.2
+    tag: 1.0.0
     pullPolicy: Never
   replicas: 1
-  # Leave empty to auto-generate. Retrieve after install -- see NOTES.
+  # HMAC shared secret for Lifecycle webhooks. Leave empty to auto-generate on first
+  # install, or pre-create with scripts/generate-webhook-secret.sh --k8s-secret sbom-graph.
   webhookSecret: ""
   gunicornWorkers: "2"
   service:
     port: 80
     targetPort: 8000
+  # Outbound Lifecycle API (listener fetches CycloneDX SBOM + VEX after webhook).
+  sonatype:
+    host: your.lifecycle.host
+    # Corporate CA bundle is already in the container image; path only, no Helm mount.
+    caCerts: /etc/ssl/certs/ca-certificates.crt
+    username: ""
+    password: ""
+    # Pre-created Secret in EKS (kubectl); chart does not manage it. Leave empty for
+    # local dev with --set releaseListener.sonatype.username/password instead.
+    existingSecret: sbom-graph-sonatype
+    usernameKey: sonatype-username
+    passwordKey: sonatype-password
   resources:
     limits:
       cpu: 500m
@@ -237,7 +281,7 @@ enrichment:
   enabled: true
   image:
     repository: localhost/sbom-graph-enrichment
-    tag: 0.2.0-beta.3
+    tag: 1.0.0
     pullPolicy: Never
   replicas: 1
   interval: "3600"
@@ -266,7 +310,7 @@ enrichment:
   resources:
     limits:
       cpu: 500m
-      memory: 512Mi
+      memory: 2Gi
     requests:
       cpu: 100m
       memory: 128Mi
@@ -289,16 +333,26 @@ enrichment:
   #   enrichment pool will not pick up the ``ingest`` queue automatically.
   ingest:
     enabled: true
+    # 4 single-slot pods: concurrency 1 means one SBOM parse per pod at a time
+    # (peak memory = one SBOM, not two), and throughput scales via replicas.
+    # NOTE: with task_acks_late=True an OOM'd task is redelivered, so a single
+    # SBOM whose parse exceeds one pod's 2Gi limit will crash-loop across all
+    # replicas in turn — that case needs a bigger limit or a streaming parser,
+    # not more pods.
     replicas: 1
     concurrency: 2
     queueName: "ingest"
     resources:
       limits:
         cpu: 1000m
-        memory: 1Gi
+        memory: 2Gi
+      # Request reserves close to real parse footprint: 4 replicas that can each
+      # burst 256Mi->2Gi over-commit the node and trigger node-pressure evictions
+      # (incl. of FalkorDB). Reserve 1Gi each so the scheduler places them on
+      # nodes with real capacity.
       requests:
         cpu: 200m
-        memory: 256Mi
+        memory: 1Gi
   networkPolicy:
     # Enable to restrict enrichment pod egress to FalkorDB, DNS, and
     # external HTTPS (port 443) only.  Requires a CNI that supports
@@ -307,3 +361,15 @@ enrichment:
 initData:
   enabled: true
 graphName: "acme-corp"
+
+ingress:
+  enabled: false
+  ingressClassName: traefik
+  pathType: Prefix
+  host: sbom-graph.yourdomain
+  path: /
+  # Release listener webhook (plain HTTP backend; listed before / in ingress).
+  webhookPath: /webhook
+  webhookPathType: Exact
+  annotations: {}
+  tls: []

@@ -7,6 +7,17 @@ from typing import Any
 
 from flask import Response, jsonify
 
+from sbom_graph_api.utils.validation import validate_int_param
+
+
+def get_utc_timestamp() -> str:
+    """Return the current UTC time in ISO-8601 format.
+
+    Canonical timestamp helper for the whole codebase; all report/export
+    ``generated_at``/``timestamp`` values route through here.
+    """
+    return datetime.now(UTC).isoformat()
+
 
 def api_response(
     data: Any,
@@ -26,7 +37,7 @@ def api_response(
 
     if meta is None:
         meta = {}
-    meta.setdefault("timestamp", datetime.now(UTC).isoformat())
+    meta.setdefault("timestamp", get_utc_timestamp())
     envelope["meta"] = meta
 
     return jsonify(envelope), status
@@ -43,8 +54,6 @@ def paginate_params(
 
     Returns (offset, limit) tuple with validated bounds.
     """
-    from sbom_graph_api.utils.validation import validate_int_param
-
     offset = validate_int_param(
         offset_raw, default=0, min_val=0, max_val=1000000
     )

@@ -280,6 +280,21 @@ class TestParseComponentFromCycloneDx:
 # ---------------------------------------------------------------------------
 
 
+class TestCycloneDXSizeLimit:
+    """M10 (CWE-400): SBOMs exceeding the entry cap are rejected."""
+
+    def test_too_many_components_rejected(self, monkeypatch):
+        from sbom_graph_model.cyclonedx import processor as cdx
+
+        monkeypatch.setattr(cdx, "MAX_SBOM_ENTRIES", 2)
+        data = {
+            "metadata": {"component": {"name": "x", "version": "1", "bom-ref": "r"}},
+            "components": [{}, {}, {}],
+        }
+        with pytest.raises(cdx.CycloneDXValidationError, match="maximum allowed"):
+            cdx.CycloneDXProcessor._validate_cyclonedx_structure(data)
+
+
 class TestParseDefectFromCycloneDx:
     """Tests for CycloneDXProcessor.parse_defect_from_cyclone_dx."""
 
@@ -322,7 +337,9 @@ class TestParseDefectFromCycloneDx:
         defect = CycloneDXProcessor.parse_defect_from_cyclone_dx(vuln)
         assert defect.source == ("Internal", "")
 
-    def test_multiple_ratings_raises(self):
+    def test_multiple_ratings_uses_first_without_raising(self):
+        # SECURITY (ingestion-DoS fix): multiple ratings must NOT raise — a
+        # raise here previously aborted ingestion of the whole SBOM. Use the first.
         vuln = {
             "id": "CVE-multi",
             "source": {"name": "NVD"},
@@ -331,8 +348,23 @@ class TestParseDefectFromCycloneDx:
                 {"severity": "medium", "score": 5.0},
             ],
         }
-        with pytest.raises(ValueError, match="multiple ratings"):
-            CycloneDXProcessor.parse_defect_from_cyclone_dx(vuln)
+        defect = CycloneDXProcessor.parse_defect_from_cyclone_dx(vuln)
+        assert defect is not None
+        assert defect.severity == "high"
+        assert defect.cvss == 7.5
+
+    def test_missing_ratings_does_not_raise(self):
+        # SECURITY (ingestion-DoS fix): absent/empty 'ratings' or 'source' must
+        # not raise KeyError/IndexError (attacker-crafted SBOM could abort ingest).
+        defect = CycloneDXProcessor.parse_defect_from_cyclone_dx({"id": "CVE-x"})
+        assert defect is not None
+        assert defect.id == "CVE-x"
+        assert defect.severity is None
+        assert defect.cvss is None
+        assert defect.source == ("", "")
+
+    def test_missing_id_is_skipped(self):
+        assert CycloneDXProcessor.parse_defect_from_cyclone_dx({"ratings": []}) is None
 
 
 # ---------------------------------------------------------------------------

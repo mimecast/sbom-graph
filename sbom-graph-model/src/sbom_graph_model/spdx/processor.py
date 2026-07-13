@@ -16,6 +16,10 @@ from ..vcs import is_known_git_host, parse_repo_url
 
 logger = logging.getLogger(__name__)
 
+# Upper bound on packages/relationships in a single SBOM, to cap ingest work from
+# an attacker-supplied document (CWE-400, volumetric DoS).
+MAX_SBOM_ENTRIES = 100_000
+
 
 class SPDXValidationError(ValueError):
     """Raised when SPDX JSON data fails structural validation."""
@@ -85,6 +89,13 @@ class SPDXProcessor:
             if wrong_type:
                 raise SPDXValidationError(
                     f"'{section}' must be a {expected_type.__name__}"
+                )
+            # Bound cardinality (CWE-400): cap packages/relationships from a crafted
+            # SBOM so ingestion cannot be driven into millions of MERGE round-trips.
+            if present and len(json_data[section]) > MAX_SBOM_ENTRIES:
+                raise SPDXValidationError(
+                    f"'{section}' has {len(json_data[section])} entries; "
+                    f"maximum allowed is {MAX_SBOM_ENTRIES}"
                 )
 
         if "packages" in json_data:

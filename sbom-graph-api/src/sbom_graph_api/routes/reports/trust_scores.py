@@ -1,14 +1,18 @@
 """Trust score reports: all trust scores, trust score gaps."""
 
-from datetime import UTC, datetime
-
 from flask import Response, abort, render_template, request
 from markupsafe import Markup
 
-from sbom_graph_api.exports.excel import create_generic_excel
+from sbom_graph_api.exports.streaming import stream_json_response, stream_workbook_response
 from sbom_graph_api.routes.auth import auth_required
 from sbom_graph_api.routes.reports import bp
-from sbom_graph_api.routes.reports._common import build_json_response, get_internal_title
+from sbom_graph_api.routes.reports._common import (
+    build_json_response,
+    get_internal_title,
+    parse_pagination,
+    render_paged_report,
+    ts,
+)
 from sbom_graph_api.services.falkordb_service import get_falkordb_service
 from sbom_graph_api.utils.validation import (
     build_url_with_params,
@@ -17,6 +21,7 @@ from sbom_graph_api.utils.validation import (
     validate_format,
     validate_int_param,
     validate_purl,
+    validate_search_term,
     validate_sort_param,
 )
 
@@ -99,7 +104,7 @@ def _recommendation(missing: list[str]) -> str:
 
 @bp.route("/trust-scores")
 @auth_required
-def trust_scores_report() -> Response:
+def trust_scores_report() -> Response | tuple[Response, int]:
     """List all packages with trust score columns.
 
     Query Parameters:
@@ -125,85 +130,32 @@ def trust_scores_report() -> Response:
         allowed=frozenset({"effective_score", "direct_score"}),
         default="effective_score",
     )
-
+    name = validate_search_term(request.args.get("name"))
+    req = parse_pagination(request.args)
     service = get_falkordb_service()
-    rows = service.get_all_trust_scores_for_report(
-        internal_only=internal_only,
-        min_score=min_score,
-        sort_by=sort_by,
-    )
+    filename_stem = "internal_trust_scores" if internal_only else "trust_scores"
+    base_url = "/reports/trust-scores"
 
-    if output_format == "excel":
-        excel_data = [
-            {
-                "PURL": r["purl"],
-                "Project Name": r.get("project_name", ""),
-                "Version": r.get("version", ""),
-                "Direct Score": r["direct_score"],
-                "Effective Score": r["effective_score"],
-                "Confidence": r["confidence"],
-                "Sources Used": ", ".join(r["sources_used"]) if r["sources_used"] else "-",
-            }
-            for r in rows
-        ]
-        filename = "internal_trust_scores.xlsx" if internal_only else "trust_scores.xlsx"
-        return create_generic_excel(
-            excel_data,
-            columns=[
-                "PURL",
-                "Project Name",
-                "Version",
-                "Direct Score",
-                "Effective Score",
-                "Confidence",
-                "Sources Used",
-            ],
-            sheet_name="Trust Scores",
-            filename=filename,
+    def fetch_page(offset: int, limit: int) -> list:
+        return service.get_all_trust_scores_for_report(
+            internal_only=internal_only,
+            min_score=min_score,
+            sort_by=sort_by,
+            limit=limit,
+            offset=offset,
+            name=name,
         )
 
-    if output_format == "json":
-        data = {
-            "report_type": "trust-scores",
-            "generated_at": datetime.now(UTC).isoformat(),
-            "trust_scores": rows,
-            "count": len(rows),
-            "internal_only": internal_only,
-            "min_score": min_score,
-            "sort_by": sort_by,
-        }
-        return build_json_response(data, "trust_scores.json")
+    def count() -> int:
+        return service.count_all_trust_scores_for_report(
+            internal_only=internal_only,
+            min_score=min_score,
+            sort_by=sort_by,
+            name=name,
+        )
 
-    title = get_internal_title("Trust Scores", internal_only)
-    base_url = "/reports/trust-scores"
-    headers = [
-        "Package",
-        "Version",
-        "Direct Score",
-        "Effective Score",
-        "Confidence",
-        "Factors",
-    ]
-
-    # Compute stats
-    ds_scores = [r["direct_score"] for r in rows if r.get("direct_score") is not None]
-    es_scores = [r["effective_score"] for r in rows if r.get("effective_score") is not None]
-    avg_direct = sum(ds_scores) / len(ds_scores) if ds_scores else 0
-    avg_effective = sum(es_scores) / len(es_scores) if es_scores else 0
-    low = sum(1 for s in es_scores if s < 4)
-    medium = sum(1 for s in es_scores if 4 <= s < 7)
-    high = sum(1 for s in es_scores if s >= 7)
-    stats = {
-        "Total Packages": len(rows),
-        "Avg Direct Score": f"{avg_direct:.2f}" if ds_scores else "-",
-        "Avg Effective Score": f"{avg_effective:.2f}" if es_scores else "-",
-        "Distribution (Low/Med/High)": f"{low}/{medium}/{high}",
-        "Min Score Filter": min_score,
-        "Sort By": sort_by,
-    }
-
-    data_rows = [
-        [
+    def to_cells(r: dict) -> list:
+        return [
             r.get("project_name") or r.get("purl", ""),
             r.get("version") or "-",
             _trust_score_cell(r.get("direct_score")),
@@ -211,31 +163,74 @@ def trust_scores_report() -> Response:
             _confidence_badge(r.get("confidence")),
             ", ".join(r["sources_used"]) if r.get("sources_used") else "-",
         ]
-        for r in rows
-    ]
 
-    excel_url_full = (
-        build_url_with_params(base_url, format="excel", internal_only=internal_only)
-        + f"&min_score={min_score}&sort_by={sort_by}"
-    )
-    json_url_full = (
-        build_url_with_params(base_url, format="json", internal_only=internal_only)
-        + f"&min_score={min_score}&sort_by={sort_by}"
-    )
+    def to_export_cells(r: dict) -> list:
+        return [
+            r.get("purl", ""),
+            r.get("project_name", ""),
+            r.get("version", ""),
+            r.get("direct_score"),
+            r.get("effective_score"),
+            r.get("confidence"),
+            ", ".join(r["sources_used"]) if r.get("sources_used") else "-",
+        ]
 
-    html = render_template(
-        "trust_scores.html",
-        title=title,
+    summary = service.get_trust_scores_summary(
         internal_only=internal_only,
-        headers=headers,
-        data=data_rows,
-        stats=stats,
-        excel_url=excel_url_full,
-        json_url=json_url_full,
-        schema_url="/schemas/trust-scores",
+        min_score=min_score,
+        sort_by=sort_by,
+        name=name,
     )
 
-    return Response(html, mimetype="text/html")
+    def stats_builder(total: int) -> dict:
+        avg_direct = summary.get("avg_direct")
+        avg_effective = summary.get("avg_effective")
+        low = summary.get("low", 0)
+        medium = summary.get("medium", 0)
+        high = summary.get("high", 0)
+        try:
+            avg_direct_str = f"{float(avg_direct):.2f}" if avg_direct is not None else "-"
+        except (TypeError, ValueError):
+            avg_direct_str = "-"
+        try:
+            avg_effective_str = f"{float(avg_effective):.2f}" if avg_effective is not None else "-"
+        except (TypeError, ValueError):
+            avg_effective_str = "-"
+        return {
+            "Total Packages": total,
+            "Avg Direct Score": avg_direct_str,
+            "Avg Effective Score": avg_effective_str,
+            "Distribution (Low/Med/High)": f"{low}/{medium}/{high}",
+            "Min Score Filter": min_score,
+            "Sort By": sort_by,
+        }
+
+    params = {
+        "internal_only": internal_only,
+        "min_score": min_score,
+        "sort_by": sort_by,
+        "name": name,
+    }
+
+    return render_paged_report(
+        req=req,
+        output_format=output_format,
+        fetch_page=fetch_page,
+        count=count,
+        headers=["Package", "Version", "Direct Score", "Effective Score", "Confidence", "Factors"],
+        to_cells=to_cells,
+        to_export_cells=to_export_cells,
+        title=get_internal_title("Trust Scores", internal_only),
+        base_url=base_url,
+        params=params,
+        filename_stem=filename_stem,
+        report_type="trust-scores",
+        schema_url="/schemas/trust-scores",
+        stats_builder=stats_builder,
+        template="trust_scores.html",
+        internal_only=internal_only,
+        extra_context={"show_name_search": True, "name_search": name},
+    )
 
 
 @bp.route("/trust-score-gaps")
@@ -263,46 +258,28 @@ def trust_score_gaps_report() -> Response:
     rows = service.get_trust_score_gaps(limit=limit)
 
     if output_format == "excel":
-        excel_data = []
-        for r in rows:
-            missing = _missing_factors(r.get("sources_used"))
-            excel_data.append(
-                {
-                    "PURL": r["purl"],
-                    "Package": r.get("project_name", ""),
-                    "Version": r.get("version", ""),
-                    "Confidence": r["confidence"],
-                    "Missing Factors": "; ".join(missing),
-                    "Recommendation": _recommendation(missing),
-                    "Direct Score": r["direct_score"],
-                    "Dependents Count": r["dependents_count"],
-                }
-            )
-        return create_generic_excel(
-            excel_data,
-            columns=[
-                "PURL",
-                "Package",
-                "Version",
-                "Confidence",
-                "Missing Factors",
-                "Recommendation",
-                "Direct Score",
-                "Dependents Count",
-            ],
-            sheet_name="Trust Score Gaps",
-            filename="trust_score_gaps.xlsx",
-        )
+        excel_headers = [
+            "PURL", "Package", "Version", "Confidence",
+            "Missing Factors", "Recommendation", "Direct Score", "Dependents Count",
+        ]
+
+        def _gap_rows():
+            for r in rows:
+                missing = _missing_factors(r.get("sources_used"))
+                yield [
+                    r["purl"], r.get("project_name", ""), r.get("version", ""),
+                    r["confidence"], "; ".join(missing), _recommendation(missing),
+                    r["direct_score"], r["dependents_count"],
+                ]
+
+        return stream_workbook_response(excel_headers, _gap_rows(), "trust_score_gaps.xlsx", "Trust Score Gaps")
 
     if output_format == "json":
-        data = {
-            "report_type": "trust-score-gaps",
-            "generated_at": datetime.now(UTC).isoformat(),
-            "gaps": rows,
-            "count": len(rows),
-            "limit": limit,
-        }
-        return build_json_response(data, "trust_score_gaps.json")
+        meta = {"report_type": "trust-score-gaps", "generated_at": ts(), "limit": limit}
+        return stream_json_response(
+            meta, iter(rows), "trust_score_gaps.json",
+            data_key="gaps", stats={"count": len(rows)},
+        )
 
     headers = [
         "Package",
@@ -370,15 +347,16 @@ def application_risk_dashboard() -> Response:
     )
 
     if output_format == "json":
-        data = {
+        meta = {
             "report_type": "application-risk-dashboard",
-            "generated_at": datetime.now(UTC).isoformat(),
-            "applications": rows,
-            "count": len(rows),
+            "generated_at": ts(),
             "internal_only": internal_only,
             "limit": limit,
         }
-        return build_json_response(data, "application_risk_dashboard.json")
+        return stream_json_response(
+            meta, iter(rows), "application_risk_dashboard.json",
+            data_key="applications", stats={"count": len(rows)},
+        )
 
     title = get_internal_title("Application Risk Dashboard", internal_only)
     base_url = "/reports/application-risk-dashboard"
@@ -495,15 +473,16 @@ def risk_outliers() -> Response:
     )
 
     if output_format == "json":
-        data = {
+        meta = {
             "report_type": "risk-outliers",
-            "generated_at": datetime.now(UTC).isoformat(),
-            "outliers": rows,
-            "count": len(rows),
+            "generated_at": ts(),
             "min_dependents": min_dependents,
             "limit": limit,
         }
-        return build_json_response(data, "risk_outliers.json")
+        return stream_json_response(
+            meta, iter(rows), "risk_outliers.json",
+            data_key="outliers", stats={"count": len(rows)},
+        )
 
     data = []
     for r in rows:
@@ -600,13 +579,13 @@ def risk_path_explorer(purl: str) -> Response:
     for p in paths:
         ds = p.get("direct_score")
         try:
-            s = float(ds) if ds is not None else None
+            ps = float(ds) if ds is not None else None
         except (TypeError, ValueError):
-            s = None
-        if s is not None:
-            if s < 4:
+            ps = None
+        if ps is not None:
+            if ps < 4:
                 p_css = "low"
-            elif s < 7:
+            elif ps < 7:
                 p_css = "medium"
             else:
                 p_css = "high"
@@ -679,15 +658,16 @@ def trust_score_heatmap() -> Response:
     )
 
     if output_format == "json":
-        data = {
+        meta = {
             "report_type": "trust-score-heatmap",
-            "generated_at": datetime.now(UTC).isoformat(),
-            "packages": rows,
-            "count": len(rows),
+            "generated_at": ts(),
             "internal_only": internal_only,
             "limit": limit,
         }
-        return build_json_response(data, "trust_score_heatmap.json")
+        return stream_json_response(
+            meta, iter(rows), "trust_score_heatmap.json",
+            data_key="packages", stats={"count": len(rows)},
+        )
 
     title = get_internal_title("Trust Score Heatmap", internal_only)
     base_url = "/reports/trust-score-heatmap"

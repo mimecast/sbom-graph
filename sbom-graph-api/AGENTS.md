@@ -665,8 +665,12 @@ docker build -t sbom-graph-api:latest -f Dockerfile \
 
 ### Kubernetes
 
+Deployed via the monorepo umbrella chart (the standalone `helm/sbom-graph-api/` chart was removed).
+To deploy the API alone, disable the other components:
+
 ```bash
-helm install sbom-graph-api ./helm/sbom-graph-api -f values-production.yaml
+helm upgrade --install sbom-graph ../helm/charts/sbom-graph -f values-production.yaml \
+  --set releaseListener.enabled=false --set enrichment.enabled=false --set falkordb.enabled=false
 ```
 
 ## Common Tasks

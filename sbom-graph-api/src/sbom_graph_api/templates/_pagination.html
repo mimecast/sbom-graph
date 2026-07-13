@@ -1,0 +1,23 @@
+{# Reusable pagination controls. Renders only when a `pagination` (PageView) is passed.
+   Include near a report table:  {% include '_pagination.html' %}  #}
+{% if pagination %}
+<nav class="pagination" aria-label="Report pages">
+    {% if pagination.prev_url %}
+    <a class="page-link" href="{{ pagination.prev_url }}">&laquo; Prev</a>
+    {% endif %}
+    <span class="page-status">Page {{ pagination.page }} of {{ pagination.pages }} ({{ pagination.total }} total)</span>
+    {% if pagination.next_url %}
+    <a class="page-link" href="{{ pagination.next_url }}">Next &raquo;</a>
+    {% endif %}
+    <select class="page-size-select" aria-label="Rows per page">
+        {% for size, url in pagination.size_urls.items() %}
+        <option value="{{ url }}" {{ 'selected' if size == pagination.page_size else '' }}>{{ size }}/page</option>
+        {% endfor %}
+    </select>
+</nav>
+<script>
+    document.querySelectorAll('.page-size-select').forEach(function (sel) {
+        sel.addEventListener('change', function () { window.location.href = this.value; });
+    });
+</script>
+{% endif %}

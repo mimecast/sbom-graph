@@ -1,3 +1,4 @@
+{{- if .Values.falkordb.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,6 +17,65 @@ spec:
       labels:
         {{- include "sbom-graph.falkordb.selectorLabels" . | nindent 8 }}
     spec:
+      {{- with .Values.falkordb.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- $fixPerms := .Values.falkordb.fixDataPermissions | default dict }}
+      {{- if $fixPerms.enabled }}
+      initContainers:
+        - name: fix-data-permissions
+          {{- $fixImg := $fixPerms.image | default dict }}
+          image: "{{ $fixImg.repository | default .Values.falkordb.image.repository }}:{{ $fixImg.tag | default .Values.falkordb.image.tag }}"
+          imagePullPolicy: {{ $fixImg.pullPolicy | default .Values.falkordb.image.pullPolicy | default "IfNotPresent" }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              # redis docker-entrypoint refuses to chown /data when it finds unknown
+              # entries (e.g. a stray "bin" dir).  That leaves root-owned dump.rdb and
+              # BGSAVE fails with "Permission denied" on temp-<pid>.rdb.
+              #
+              # Do NOT chown -R /data: EBS ext4 volumes include lost+found (root-owned)
+              # and recursive chown fails with "Operation not permitted", killing the
+              # init container.  Touch only the mount root and known RDB artefacts.
+              if [ -e /data/bin ]; then
+                echo "Removing unexpected /data/bin (blocks redis entrypoint permission fix)"
+                rm -rf /data/bin
+              fi
+              # Mount root: best-effort only.  EBS (and fsGroup: 999) often reject
+              # chmod/chown on the volume root; file-level chowns below are what matter.
+              chown 999:999 /data 2>/dev/null || echo "Note: chown /data mount root skipped (fsGroup may already own it)"
+              chmod 755 /data 2>/dev/null || echo "Note: chmod /data mount root skipped (not permitted on EBS)"
+              for f in /data/dump.rdb /data/appendonly.aof /data/appendonlydir; do
+                if [ -e "$f" ]; then
+                  chown -R 999:999 "$f"
+                fi
+              done
+              for f in /data/temp-*.rdb; do
+                [ -e "$f" ] || continue
+                chown 999:999 "$f"
+              done
+              if [ -d /data/backups ]; then
+                chown 999:999 /data/backups
+                find /data/backups -maxdepth 1 -type f -name 'dump-*.rdb' -exec chown 999:999 {} +
+              fi
+              echo "Data dir ownership:"
+              ls -la /data
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: false
+            runAsUser: 0
+            capabilities:
+              add:
+                - CHOWN
+              drop:
+                - ALL
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      {{- end }}
       containers:
         - name: falkordb
           image: "{{ .Values.falkordb.image.repository }}:{{ .Values.falkordb.image.tag }}"
@@ -56,6 +116,12 @@ spec:
                 --tls-cert-file /tls/tls.crt --tls-key-file /tls/tls.key --tls-ca-cert-file /tls/ca.crt \
                 --tls-auth-clients {{ if .Values.falkordb.tls.requireClientAuth }}yes{{ else }}no{{ end }}{{ end }}
           env:
+            {{- if $fixPerms.enabled }}
+            # Init container already chowns /data; skip entrypoint logic that aborts
+            # when unknown files (e.g. /data/bin) are present.
+            - name: SKIP_FIX_PERMS
+              value: "1"
+            {{- end }}
             - name: FALKORDB_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -97,6 +163,15 @@ spec:
             failureThreshold: {{ $lp.failureThreshold | default 5 }}
           resources:
             {{- toYaml .Values.falkordb.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            capabilities:
+              drop:
+                - ALL
           volumeMounts:
             - name: data
               mountPath: /data
@@ -118,3 +193,4 @@ spec:
           secret:
             secretName: {{ include "sbom-graph.tls.secretName" . }}
         {{- end }}
+{{- end }}

@@ -5,10 +5,15 @@ In Kubernetes, these will be populated from ConfigMaps and Secrets.
 """
 
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 
 from sbom_graph_model.k8s_service_host import resolve_k8s_service_link_host
+
+# A FalkorDB/Cypher label is interpolated (not parameterised) into queries, so it
+# must be a safe identifier — letters/digits/underscore, not starting with a digit.
+_SAFE_LABEL_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def secret_from_env_or_file(env_var: str, default: str | None = None) -> str | None:
@@ -42,6 +47,15 @@ class FalkorDBConfig:
     ssl_ca_certs: str | None
     ssl_certfile: str | None = None
     ssl_keyfile: str | None = None
+
+    def __post_init__(self) -> None:
+        # internal_label is f-string-interpolated into Cypher labels/filters
+        # throughout the service; reject unsafe values fail-closed (CWE-943).
+        if not _SAFE_LABEL_RE.match(self.internal_label):
+            raise ValueError(
+                "FALKORDB_INTERNAL_LABEL must be a safe Cypher identifier "
+                f"(matching {_SAFE_LABEL_RE.pattern!r}); got {self.internal_label!r}."
+            )
 
     @classmethod
     def from_env(cls) -> "FalkorDBConfig":
