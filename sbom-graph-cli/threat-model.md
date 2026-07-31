@@ -12,7 +12,7 @@ sbom-graph-cli is a thin HTTP client that provides a command-line interface for 
 
 | Asset | Location | Sensitivity |
 |-------|----------|-------------|
-| API token | Environment variable, CLI arg, or config | High — grants API access |
+| API token | Environment variable (`SBOM_GRAPH_TOKEN`) or `--token` CLI arg -- no config file or persistent local storage exists in the current implementation | High — grants API access |
 | SBOM files | Local filesystem (user-specified path) | Medium — may contain proprietary dependency data |
 | API responses | In-memory during execution | Medium — vulnerability and policy data |
 | Export output | Local filesystem or stdout | Medium — report content |
@@ -63,7 +63,7 @@ flowchart TB
 |---|--------|--------|-------|------------|--------|------|--------|------------|
 | C1 | Token exposure in process listing | I | Token | Medium | Medium | Medium | MITIGATED | Use `SBOM_GRAPH_TOKEN` env var instead of `--token`; env vars are not visible in `ps` output. Document in README. |
 | C2 | Token in shell history | I | Token | High | Medium | Medium | MITIGATED | Env var avoids history; if `--token` is used, it is stored in `.bash_history` etc. Recommend env var in docs. |
-| C3 | Token in config/env files with weak permissions | I | Token | Medium | Medium | Medium | ACCEPTED | User responsibility; recommend `chmod 600` on config files. Document in README. |
+| C3 | Token in shell profile/env files with weak permissions | I | Token | Medium | Medium | Medium | ACCEPTED | No config file mechanism exists in the current implementation (verified against `cli.py`) -- the only persistence a user could introduce is exporting `SBOM_GRAPH_TOKEN` in their own shell profile (`.bashrc`, `.env`, etc.). User responsibility; recommend `chmod 600` on any such file. |
 | C4 | Path traversal on ingest file path | T | Local FS | Low | Medium | Low | MITIGATED | `click.Path(exists=True)` validates path exists; user controls path. For internal CLI, operator is trusted. Reject symlinks if needed. |
 | C5 | Path traversal on export output path | T | Local FS | Low | Medium | Low | ACCEPTED | `-o` accepts any path; user can overwrite files. Internal tool; operator controls destination. No `exists=True` so new files can be created. |
 | C6 | Malicious/tampered API response causing crash or injection | T | CLI | Low | Medium | Low | MITIGATED | `response.json()` may raise on malformed JSON; APIError extracts `error` key. API is trusted; if compromised, broader impact. Defensive: validate response structure. |
@@ -130,4 +130,5 @@ flowchart TB
 
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
+| 1.1 | 2026-07-28 | AI-assisted audit | Re-verified against current `src/`. Corrected the Assets table and C3: no config-file token storage exists in the implementation (only `SBOM_GRAPH_TOKEN` env var / `--token` flag) -- the prior text implied a config file mechanism that was never built. No other drift found in this document. |
 | 1.0 | 2025-03-12 | — | Initial comprehensive STRIDE threat model; expands Phase F with C1–C13. |

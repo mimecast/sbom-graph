@@ -53,16 +53,17 @@ graph LR
     end
 
     ST -- "Webhook POST<br/>/webhook" --> RL
-    RL -- "CycloneDX fetch" --> ST
-    RL -- "uses" --> ASM
-    ASM -- "Cypher<br/>port 6379" --> FDB
+    RL -- "CycloneDX/VEX fetch" --> ST
+    RL -- "enqueue only<br/>ingest queue, Redis DB 1" --> FDB
     ADV -- "Cypher<br/>port 6379" --> FDB
     ADV -- "uses" --> ASM
+    ADV -- "enqueue (async ingest)<br/>ingest queue, Redis DB 1" --> FDB
+    ASM -- "Cypher<br/>port 6379" --> FDB
     U -- "HTTP<br/>Reports & Visualizations" --> ADV
     CI -- "REST API<br/>Ingest & Gates" --> ADV
     CLI -- "REST API<br/>Ingest, Query, Export" --> ADV
     CW -- "Cypher<br/>port 6379" --> FDB
-    CW -- "task queue<br/>Redis DB 1" --> FDB
+    CW -- "consumes ingest + enrichment queues<br/>Redis DB 1" --> FDB
     CB -- "beat schedule<br/>Redis DB 1" --> FDB
     CW -- "HTTPS" --> OSV
     CW -- "HTTPS" --> CD
@@ -70,6 +71,8 @@ graph LR
     CW -- "HTTPS" --> OI
     CW -- "HTTPS" --> DD
 ```
+
+Note: `sonatype-lifecycle-release-listener` (`RL`) no longer depends on `sbom-graph-model` (`ASM`) and holds no direct FalkorDB graph-write capability -- it only enqueues onto the `ingest` Celery queue (Redis DB 1, the same instance FalkorDB runs on). The actual graph write happens in the `sbom-graph-enrichment` worker pool (`CW`), which consumes both the `ingest` and `enrichment` queues.
 
 ### 2.2 Data Flow Diagram
 
@@ -86,23 +89,29 @@ sequenceDiagram
     participant User
 
     rect rgb(230, 245, 255)
-    Note over ST,FDB: SBOM Ingestion (webhook)
+    Note over ST,FDB: SBOM Ingestion (webhook, async)
     ST->>RL: POST /webhook (applicationEvaluation)
-    RL->>RL: Validate stage == "release"
+    RL->>RL: Verify HMAC signature; validate stage == "release"
     RL->>ST: GET /api/v2/cycloneDx/{version}/{appId}/stages/release/
     ST-->>RL: CycloneDX JSON
-    RL->>ASM: CycloneDXProcessor.process_cyclone_dx_json()
+    RL->>CW: send_task ingest_cyclonedx (queue="ingest")
+    RL-->>ST: 202 Accepted (job enqueued)
+    CW->>ASM: CycloneDXProcessor.process_cyclone_dx_json()
     ASM->>FDB: MERGE Version, Defect, License, SourceRepository nodes
     ASM->>FDB: MERGE DEPENDENCY_VERSION, VERSION_DEFECT, HAS_LICENSE edges
-    RL-->>ST: 200 OK
+    Note over RL,CW: RL also fetches and enqueues a VEX document (ingest_vex), best-effort/non-fatal
     end
 
     rect rgb(255, 245, 230)
-    Note over User,FDB: SBOM Ingestion (direct upload)
+    Note over User,FDB: SBOM Ingestion (direct upload, async by default)
     User->>ADV: POST /ingest/cyclonedx or /ingest/spdx
-    ADV->>ASM: CycloneDXProcessor or SPDXProcessor
+    ADV->>CW: send_task ingest_cyclonedx/ingest_spdx (queue="ingest")
+    ADV-->>User: 202 Accepted (job_id + status_url)
+    CW->>ASM: CycloneDXProcessor or SPDXProcessor
     ASM->>FDB: MERGE all nodes and edges
-    ADV-->>User: 200 OK (summary)
+    User->>ADV: GET /ingest/jobs/{job_id} (poll)
+    ADV-->>User: state + result summary once terminal
+    Note over User,ADV: ?sync=true still available for the legacy inline 201-response path
     end
 
     rect rgb(230, 255, 230)
@@ -299,13 +308,19 @@ A Flask microservice that receives SonaType webhook events and triggers SBOM ing
 
 #### 3.2.2 Webhook Processing Flow
 
-1. Parse JSON payload; reject if missing or malformed.
-2. Extract `applicationEvaluation`; ignore messages without it.
-3. Verify `stage == "release"` (case-insensitive); ignore non-release stages.
-4. Extract `application.id` and `application.publicId`.
-5. Instantiate `CycloneHelper` which creates a `Persistence` instance with parsed `INTERNAL_PREFIXES`.
-6. Fetch CycloneDX SBOM from SonaType API via `SonaTypeClient`.
-7. Process SBOM through `CycloneDXProcessor.process_cyclone_dx_json()`.
+The listener never writes to FalkorDB directly -- it verifies, fetches, and
+enqueues; the actual graph write happens in the `ingest` Celery worker pool
+(shared with `sbom-graph-api`'s async ingest path, see §3.3.x below).
+
+1. Verify the `X-Nexus-Webhook-Signature` HMAC-SHA1 header against `WEBHOOK_SECRET`; reject unauthenticated requests (fail-closed).
+2. Parse JSON payload; reject if missing or malformed.
+3. Extract `applicationEvaluation`; ignore messages without it.
+4. Verify `stage == "release"` (case-insensitive); ignore non-release stages.
+5. Extract and validate `application.id` and `application.publicId` against their expected formats.
+6. Fetch the CycloneDX SBOM from the SonaType API via `SonaTypeClient`.
+7. Compute a deterministic `record_id` (`uuid5` over `public_app_id` + a SHA-256 content hash) and enqueue `sbom_graph_enrichment.ingest_tasks.ingest_cyclonedx` on the `ingest` queue via `celery_client.get_celery_client().send_task(...)`.
+8. Best-effort, non-fatal: fetch a VEX document for the same application and enqueue `sbom_graph_enrichment.ingest_tasks.ingest_vex` on the `ingest` queue if one is available.
+9. Return `202 Accepted` once enqueued (not `200`/`processed` -- the response only confirms the job was queued, not that it has landed in the graph).
 
 #### 3.2.3 Configuration
 
@@ -315,12 +330,13 @@ A Flask microservice that receives SonaType webhook events and triggers SBOM ing
 | `SONATYPE_USERNAME` | Yes | -- | SonaType API username |
 | `SONATYPE_PASSWORD` | Yes | -- | SonaType API password |
 | `SONATYPE_CACERTS` | No | `certs/ca_bundle.pem` | CA certificate path |
-| `FALKORDB_HOST` | No | (empty) | FalkorDB hostname |
-| `FALKORDB_PORT` | No | `6379` | FalkorDB port |
-| `FALKORDB_GRAPH_NAME` | No | `acme-corp` | Graph name |
-| `FALKORDB_PASSWORD` | No | (empty) | FalkorDB password |
-| `FALKORDB_CACERTS` | No | `certs/ca_bundle.pem` | FalkorDB CA path |
-| `INTERNAL_PREFIXES` | No | (empty) | `field:prefix,...` format |
+| `WEBHOOK_SECRET` | Yes | -- | HMAC-SHA1 shared secret for `/webhook`; unset rejects all requests (fail-closed) |
+| `FALKORDB_HOST` | No | (empty) | Redis host backing the `ingest` Celery broker/result backend (same instance FalkorDB runs on) |
+| `FALKORDB_PORT` | No | `6379` | Broker/result backend port |
+| `FALKORDB_PASSWORD` | No | (empty) | Broker/result backend auth |
+| `FALKORDB_SSL` | No | `false` | Enable TLS to the broker/result backend |
+| `FALKORDB_CACERTS` / `FALKORDB_CLIENT_CERT` / `FALKORDB_CLIENT_KEY` | No | (empty) | mTLS material when `FALKORDB_SSL=true` |
+| `CELERY_BROKER_DB` / `CELERY_RESULT_DB` | No | `1` / `2` | Redis DB indexes for the broker/result backend, shared with `sbom-graph-enrichment` |
 
 ### 3.3 sbom-graph-api
 

@@ -1,6 +1,6 @@
 [project]
 name = "sbom-graph-cli"
-version = "1.0.0"
+version = "1.0.1"
 description = "CLI for sbom-graph API"
 readme = "README.md"
 requires-python = ">=3.11"

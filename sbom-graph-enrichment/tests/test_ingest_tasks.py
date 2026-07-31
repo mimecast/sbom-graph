@@ -333,6 +333,41 @@ class TestIngestTaskWrappers:
         assert "unexpected" in result["error"].lower()
         assert "/etc/secrets" not in json.dumps(result)
 
+    @patch("sbom_graph_enrichment.ingest_tasks.ingest_cyclonedx.retry")
+    def test_ingest_cyclonedx_transient_failure_retries_when_dispatched(
+        self, mock_retry: MagicMock
+    ) -> None:
+        """Dispatched via the broker (not a direct call): a transient failure
+        must actually retry rather than degrade to a sanitised error -- the
+        whole point of adding retry is that a MERGE-based re-run can heal a
+        partially-persisted SBOM from a transient Redis/FalkorDB failure."""
+        mock_retry.side_effect = RuntimeError("retry")
+
+        with (
+            patch(
+                "sbom_graph_enrichment.ingest_tasks.get_persistence",
+                return_value=_stub_persistence(),
+            ),
+            patch(
+                "sbom_graph_enrichment.ingest_tasks.process_cyclonedx",
+                side_effect=RuntimeError("/etc/secrets/db.pem read failed"),
+            ),
+        ):
+            task = ingest_cyclonedx.apply(
+                kwargs={
+                    "record_id": "r1",
+                    "sbom": _cdx_sbom(),
+                    "app_id": "a",
+                    "public_app_id": "s",
+                },
+            )
+            try:
+                task.get()
+            except RuntimeError as e:
+                if "retry" not in str(e):
+                    raise
+        mock_retry.assert_called_once()
+
     def test_ingest_spdx_validation_error_is_sanitised(self) -> None:
         with (
             patch(

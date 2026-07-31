@@ -16,10 +16,12 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import redis
 from celery import shared_task
 
 from sbom_graph_model import Defect, VersionDefect, Version, Project
 
+from .celery_app import BROKER_URL
 from .certifiers.base import Finding, FindingKind
 from .certifiers.osv import OSVCertifier
 from .certifiers.license import LicenseCertifier
@@ -134,23 +136,81 @@ _DISPATCH_BATCH_SIZE = 500
 _ENRICHMENT_INTERVAL_SECONDS = int(os.environ.get("ENRICHMENT_INTERVAL", "3600"))
 _FRESHNESS_CUTOFF_SECONDS = max(int(_ENRICHMENT_INTERVAL_SECONDS * 0.9), 1)
 
+# ``last_enriched_at`` only advances when a dispatched task actually
+# *completes*.  If the worker pool falls behind (or stalls entirely -- e.g.
+# an OOM-restart loop), purls dispatched on one beat tick are still sitting
+# in the queue, unprocessed, on the next tick.  The freshness filter alone
+# can't see that: it re-queries the same "not yet enriched" purls and
+# re-dispatches a full duplicate batch on top of the one still stuck,
+# compounding every cycle.  ``enrichment_queued_at`` closes that gap: a
+# purl dispatched within the last ``_QUEUED_STALE_SECONDS`` is skipped on
+# the next tick even though it hasn't completed yet.  Set generously above
+# a single interval so a task that's merely slow (not lost) isn't
+# re-dispatched out from under itself; a task whose worker genuinely lost
+# the message becomes eligible again once this window elapses.
+_QUEUED_STALE_SECONDS = max(int(_ENRICHMENT_INTERVAL_SECONDS * 2), 1)
+
+# Hard backpressure ceiling on the `enrichment` broker queue depth. Even with
+# the dispatch-time guard above, a sustained worker outage should stop this
+# task from adding more work rather than trusting the guard alone -- this is
+# the belt to the guard's suspenders. Checked via a direct LLEN against the
+# broker (the same Redis instance FalkorDB and the graph share), not via
+# Celery's inspect API, which talks to live workers rather than the broker
+# and would report nothing useful when the worker pool is down -- exactly
+# the scenario this exists to catch.
+_QUEUE_BACKPRESSURE_THRESHOLD = int(
+    os.environ.get("ENRICHMENT_QUEUE_BACKPRESSURE_THRESHOLD", "5000")
+)
+
+
+def _enrichment_queue_depth() -> int | None:
+    """Return the current length of the ``enrichment`` broker queue.
+
+    Returns ``None`` if the depth can't be determined (broker unreachable,
+    etc.) -- callers should treat that as "unknown" and proceed rather than
+    blocking dispatch on a diagnostic that itself just failed.
+    """
+    try:
+        client = redis.Redis.from_url(BROKER_URL)
+        try:
+            # redis-py's stubs type `llen` to cover both the sync and async
+            # client via a shared generic base, so it reports a union
+            # including Awaitable[int] even though `redis.Redis` (as
+            # opposed to `redis.asyncio.Redis`) always returns plain int.
+            return int(client.llen("enrichment"))  # type: ignore[arg-type]
+        finally:
+            client.close()
+    except Exception:  # pylint: disable=broad-exception-caught
+        logger.warning("Unable to determine enrichment queue depth", exc_info=True)
+        return None
+
 
 @shared_task
 def enrich_all_packages(
     sources: list[str] | None = None,
     force: bool = False,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """Fan-out enrichment for every package in the graph.
 
     Only dispatches :func:`enrich_package` tasks for purls whose
     ``last_enriched_at`` is older than ``_FRESHNESS_CUTOFF_SECONDS``
-    (or has never been enriched).  In steady state this means each
-    beat tick dispatches a small number of tasks (newly-ingested
-    packages, or packages whose certifier set changed) rather than
-    the entire graph -- without this filter a single missed beat
-    tick caused the queue to grow by tens of thousands of tasks
-    that could not be drained fast enough, eventually OOM-killing
-    FalkorDB.
+    (or has never been enriched) *and* whose ``enrichment_queued_at``
+    (if any) is older than ``_QUEUED_STALE_SECONDS``. In steady state
+    this means each beat tick dispatches a small number of tasks
+    (newly-ingested packages, or packages whose certifier set changed)
+    rather than the entire graph -- without the freshness filter a
+    single missed beat tick caused the queue to grow by tens of
+    thousands of tasks that could not be drained fast enough, eventually
+    OOM-killing FalkorDB; without the queued-at guard, a worker pool that
+    stalls entirely (rather than merely falling behind) causes the same
+    purls to be re-dispatched on every subsequent tick since none of them
+    ever reach ``last_enriched_at``, growing the backlog without bound.
+
+    A queue-depth backpressure check runs before dispatch: if the
+    ``enrichment`` broker queue is already past
+    ``ENRICHMENT_QUEUE_BACKPRESSURE_THRESHOLD`` (default 5000), this task
+    skips dispatching entirely rather than adding to a backlog the worker
+    pool has already demonstrably fallen behind on.
 
     Args:
         sources: Optional list of certifier names to run for each
@@ -174,19 +234,39 @@ def enrich_all_packages(
         )
         params: dict[str, Any] = {}
     else:
-        cutoff_iso = (
-            datetime.now(timezone.utc) - timedelta(seconds=_FRESHNESS_CUTOFF_SECONDS)
+        now = datetime.now(timezone.utc)
+        cutoff_iso = (now - timedelta(seconds=_FRESHNESS_CUTOFF_SECONDS)).isoformat()
+        queued_cutoff_iso = (
+            now - timedelta(seconds=_QUEUED_STALE_SECONDS)
         ).isoformat()
         query = (
             "MATCH (v:Version) "
             "WHERE v.package_url IS NOT NULL "
             "AND (v.last_enriched_at IS NULL OR v.last_enriched_at < $cutoff) "
+            "AND (v.enrichment_queued_at IS NULL OR v.enrichment_queued_at < $queued_cutoff) "
             "RETURN DISTINCT v.package_url AS purl"
-    )
-        params = {"cutoff": cutoff_iso}
+        )
+        params = {"cutoff": cutoff_iso, "queued_cutoff": queued_cutoff_iso}
 
     result = persistence.run_query(query=query, params=params)
     purls: list[str] = [row["purl"] for row in result.result_set if row.get("purl")]
+
+    if not force and purls:
+        queue_depth = _enrichment_queue_depth()
+        if queue_depth is not None and queue_depth > _QUEUE_BACKPRESSURE_THRESHOLD:
+            logger.warning(
+                "Skipping enrichment dispatch: enrichment queue depth %d exceeds "
+                "backpressure threshold %d (%d packages were eligible)",
+                queue_depth,
+                _QUEUE_BACKPRESSURE_THRESHOLD,
+                len(purls),
+            )
+            return {
+                "dispatched": 0,
+                "force": force,
+                "skipped_backpressure": True,
+                "queue_depth": queue_depth,
+            }
 
     logger.info(
         "Dispatching enrichment for %d packages (force=%s) in batches of %d",
@@ -194,8 +274,18 @@ def enrich_all_packages(
         force,
         _DISPATCH_BATCH_SIZE,
     )
+    now_iso = datetime.now(timezone.utc).isoformat()
     for i in range(0, len(purls), _DISPATCH_BATCH_SIZE):
         batch = purls[i : i + _DISPATCH_BATCH_SIZE]
+        if not force:
+            persistence.run_query(
+                query=(
+                    "UNWIND $purls AS purl "
+                    "MATCH (v:Version {package_url: purl}) "
+                    "SET v.enrichment_queued_at = $ts"
+                ),
+                params={"purls": batch, "ts": now_iso},
+            )
         for purl in batch:
             enrich_package.delay(purl, sources)
         logger.debug("Dispatched batch %d-%d of %d", i, i + len(batch), len(purls))

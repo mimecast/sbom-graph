@@ -342,8 +342,35 @@ def _safe_error(message: str) -> dict[str, Any]:
     return {"status": "error", "error": message}
 
 
-@shared_task(name="sbom_graph_enrichment.ingest_tasks.ingest_cyclonedx")
+def _retry_or_sanitised_error(
+    task: Any, exc: Exception, message: str
+) -> dict[str, Any]:
+    """Retry a transient failure, or degrade to a sanitised error result.
+
+    ``self.retry()`` only works when the task is genuinely running under
+    the broker/worker (or Celery's eager tracer via ``.apply()``) --
+    ``task.request.called_directly`` is ``True`` when a bound task is
+    invoked as a plain function call instead (e.g. ``ingest_sbom``'s
+    format-detection wrapper calling ``ingest_cyclonedx(...)`` directly
+    rather than via ``.delay()``). In that mode ``self.retry()`` cannot
+    actually reschedule anything and just re-raises *exc* verbatim, which
+    would leak exception detail to the caller (CWE-209). Detect that case
+    and fall back to the same sanitised result the non-retrying path
+    always returned.
+    """
+    if task.request.called_directly:
+        return _safe_error(message)
+    raise task.retry(exc=exc) from exc
+
+
+@shared_task(
+    name="sbom_graph_enrichment.ingest_tasks.ingest_cyclonedx",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=30,
+)
 def ingest_cyclonedx(
+    self: Any,
     record_id: str,
     sbom: dict,
     app_id: str,
@@ -357,6 +384,15 @@ def ingest_cyclonedx(
     ``ingest_cyclonedx.apply_async(args=[...], queue="ingest")`` from the
     API.  Returns the same summary dict the legacy synchronous handler
     produced, so existing test fixtures and clients see no schema change.
+
+    ``process_cyclonedx`` issues many separate graph writes rather than one
+    atomic transaction, so a transient failure partway through (e.g. a
+    Redis/FalkorDB hiccup) can leave a partially-persisted SBOM. Retrying
+    is safe here because every write is MERGE-based on deterministic keys
+    (purl, ``record_id``, ...) -- a retry converges the same document to a
+    complete graph rather than duplicating what already landed. Only
+    genuinely non-retryable failures (structural validation) skip the
+    retry and return a terminal error immediately.
     """
     persistence = get_persistence()
     try:
@@ -372,13 +408,23 @@ def ingest_cyclonedx(
     except CycloneDXValidationError:
         logger.warning("CycloneDX validation failed for record_id=%s", record_id)
         return _safe_error("CycloneDX validation failed")
-    except Exception:  # pylint: disable=broad-exception-caught
-        logger.exception("CycloneDX ingest task failed for record_id=%s", record_id)
-        return _safe_error("An unexpected error occurred while processing the SBOM")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.exception(
+            "CycloneDX ingest task failed for record_id=%s; retrying", record_id
+        )
+        return _retry_or_sanitised_error(
+            self, exc, "An unexpected error occurred while processing the SBOM"
+        )
 
 
-@shared_task(name="sbom_graph_enrichment.ingest_tasks.ingest_spdx")
+@shared_task(
+    name="sbom_graph_enrichment.ingest_tasks.ingest_spdx",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=30,
+)
 def ingest_spdx(
+    self: Any,
     record_id: str,
     sbom: dict,
     app_id: str,
@@ -386,7 +432,11 @@ def ingest_spdx(
     project_url: str | None = None,
     source: str = "api_upload",
 ) -> dict[str, Any]:
-    """Worker entry point for an SPDX 2.3 ingest job."""
+    """Worker entry point for an SPDX 2.3 ingest job.
+
+    See :func:`ingest_cyclonedx` for the retry rationale -- the same
+    MERGE-based idempotency applies to :func:`process_spdx`.
+    """
     persistence = get_persistence()
     try:
         return process_spdx(
@@ -401,9 +451,13 @@ def ingest_spdx(
     except SPDXValidationError:
         logger.warning("SPDX validation failed for record_id=%s", record_id)
         return _safe_error("SPDX validation failed")
-    except Exception:  # pylint: disable=broad-exception-caught
-        logger.exception("SPDX ingest task failed for record_id=%s", record_id)
-        return _safe_error("An unexpected error occurred while processing the SBOM")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.exception(
+            "SPDX ingest task failed for record_id=%s; retrying", record_id
+        )
+        return _retry_or_sanitised_error(
+            self, exc, "An unexpected error occurred while processing the SBOM"
+        )
 
 
 @shared_task(name="sbom_graph_enrichment.ingest_tasks.ingest_sbom")
@@ -419,7 +473,11 @@ def ingest_sbom(
 
     Mirrors the legacy ``POST /ingest/sbom`` handler.  Format detection
     is intentionally identical to the synchronous path so callers can
-    flip between sync and async without behaviour drift.
+    flip between sync and async without behaviour drift.  Calling
+    ``ingest_cyclonedx``/``ingest_spdx`` directly (not via ``.delay()``)
+    means a transient-failure retry from either one retries this task as
+    a whole -- functionally equivalent, since both re-run the same
+    idempotent, MERGE-based processing for the same document.
     """
     detected_format = detect_sbom_format(sbom)
     if detected_format is None:
@@ -449,12 +507,19 @@ def ingest_sbom(
     )
 
 
-@shared_task(name="sbom_graph_enrichment.ingest_tasks.ingest_vex")
-def ingest_vex(document: dict) -> dict[str, Any]:
+@shared_task(
+    name="sbom_graph_enrichment.ingest_tasks.ingest_vex",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=30,
+)
+def ingest_vex(self: Any, document: dict) -> dict[str, Any]:
     """Worker entry point for an OpenVEX document.
 
     Returns the legacy summary shape:
     ``{status, statements_count, linked_vulnerabilities}``.
+
+    See :func:`ingest_cyclonedx` for the retry rationale.
     """
     try:
         from sbom_graph_model.vex import VexProcessingError, VexProcessor
@@ -470,9 +535,11 @@ def ingest_vex(document: dict) -> dict[str, Any]:
         logger.warning("VEX document validation failed")
         return {"status": "error", "error": "VEX document validation failed",
                 "error_code": "VEX_VALIDATION_ERROR"}
-    except Exception:  # pylint: disable=broad-exception-caught
-        logger.exception("VEX ingest task failed")
-        return _safe_error("Internal error processing VEX document")
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.exception("VEX ingest task failed; retrying")
+        return _retry_or_sanitised_error(
+            self, exc, "Internal error processing VEX document"
+        )
 
     return {
         "status": "ok",

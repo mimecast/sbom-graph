@@ -1,6 +1,6 @@
 [project]
 name = "sbom-graph-enrichment"
-version = "1.0.0"
+version = "1.0.1"
 description = "Celery-based enrichment pipeline for sbom-graph"
 authors = [
     {name = "Brett Crawley"}

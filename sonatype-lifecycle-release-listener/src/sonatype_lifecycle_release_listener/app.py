@@ -10,18 +10,14 @@ import logging.config
 import os
 import re
 import uuid
-from datetime import datetime, UTC
-from typing import Any, Optional
+from typing import Optional
 from urllib.parse import quote as urlquote
 from flask import Flask, request, jsonify
 from werkzeug.exceptions import BadRequest, NotFound
 import requests
 from requests.auth import HTTPBasicAuth
-from sbom_graph_model.cyclonedx.processor import CycloneDXProcessor
-from sbom_graph_model.k8s_service_host import resolve_k8s_service_link_host
-from sbom_graph_model.persistence import Persistence
-from sbom_graph_model.vex import VexProcessor
-from redis.exceptions import RedisError
+
+from sonatype_lifecycle_release_listener.celery_client import get_celery_client
 
 _SONATYPE_ID_RE = re.compile(r"^[a-fA-F0-9]{32}$")
 _PUBLIC_ID_RE = re.compile(r"^[a-zA-Z0-9._-]{1,256}$")
@@ -56,42 +52,6 @@ _configure_logging()
 logger = logging.getLogger(__name__)
 
 
-def _listener_ingestion_persistence(config: dict[str, Any]) -> Persistence:
-    """Connect to FalkorDB with Helm INTERNAL_PREFIXES plus optional graph overlay."""
-    env_csv = str(config.get("INTERNAL_PREFIXES") or "")
-    base = Persistence.parse_internal_prefixes(env_csv.strip())
-
-    ssl_enabled = config.get("FALKORDB_SSL", "false")
-    if isinstance(ssl_enabled, str):
-        ssl_enabled = ssl_enabled.lower() == "true"
-
-    persistence = Persistence(
-        host=config.get("FALKORDB_HOST", ""),
-        port=int(config.get("FALKORDB_PORT", 6379)),
-        graph_name=config.get("FALKORDB_GRAPH_NAME", "acme-corp"),
-        password=config.get("FALKORDB_PASSWORD", ""),
-        ssl=ssl_enabled,
-        ssl_ca_certs=config.get("FALKORDB_CACERTS"),
-        ssl_certfile=config.get("FALKORDB_CLIENT_CERT"),
-        ssl_keyfile=config.get("FALKORDB_CLIENT_KEY"),
-        internal_prefixes=base,
-    )
-    try:
-        persistence.reload_internal_prefixes_from_env_and_overlay(env_csv)
-    except ValueError as exc:
-        logger.warning(
-            "Invalid Falkor internal-prefix overlay; using INTERNAL_PREFIXES env only: %s",
-            exc,
-        )
-        persistence.internal_prefixes = list(base)
-    except Exception:
-        logger.exception(
-            "Unable to merge Falkor internal-prefix overlay; INTERNAL_PREFIXES only",
-        )
-        persistence.internal_prefixes = list(base)
-    return persistence
-
-
 def create_app(config: Optional[dict] = None) -> Flask:
     """
     Application factory for creating the Flask app.
@@ -112,29 +72,10 @@ def create_app(config: Optional[dict] = None) -> Flask:
     app.config.setdefault(
         "SONATYPE_CACERTS", os.environ.get("SONATYPE_CACERTS", "certs/ca_bundle.pem")
     )
-    _falkordb_host_raw = os.environ.get("FALKORDB_HOST", "")
-    _falkordb_host_resolved = (
-        resolve_k8s_service_link_host(_falkordb_host_raw)
-        if _falkordb_host_raw.strip()
-        else ""
-    )
-    app.config.setdefault("FALKORDB_HOST", _falkordb_host_resolved)
-    app.config.setdefault("FALKORDB_PORT", int(os.environ.get("FALKORDB_PORT", "6379")))
-    app.config.setdefault(
-        "FALKORDB_GRAPH_NAME", os.environ.get("FALKORDB_GRAPH_NAME", "acme-corp")
-    )
-    app.config.setdefault("FALKORDB_PASSWORD", os.environ.get("FALKORDB_PASSWORD", ""))
-    app.config.setdefault(
-        "FALKORDB_CACERTS", os.environ.get("FALKORDB_CACERTS")
-    )
-    app.config.setdefault("FALKORDB_SSL", os.environ.get("FALKORDB_SSL", "false"))
-    app.config.setdefault(
-        "FALKORDB_CLIENT_CERT", os.environ.get("FALKORDB_CLIENT_CERT")
-    )
-    app.config.setdefault(
-        "FALKORDB_CLIENT_KEY", os.environ.get("FALKORDB_CLIENT_KEY")
-    )
-    app.config.setdefault("INTERNAL_PREFIXES", os.environ.get("INTERNAL_PREFIXES", ""))
+    # FalkorDB connection details are no longer read here -- SBOM/VEX
+    # ingestion is enqueued onto the ``ingest`` Celery queue (see
+    # ``celery_client.py``), which reads its own broker connection
+    # material directly from the environment rather than Flask config.
     app.config.setdefault("WEBHOOK_SECRET", os.environ.get("WEBHOOK_SECRET", ""))
     app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024  # 1 MB
 
@@ -154,7 +95,8 @@ def create_app(config: Optional[dict] = None) -> Flask:
         """
         Handle incoming webhook messages from SonaType.
 
-        Processes release scan events and ingests dependency trees into FalkorDB.
+        Processes release scan events and enqueues dependency trees for
+        asynchronous ingestion into FalkorDB via the ``ingest`` Celery queue.
         When WEBHOOK_SECRET is configured, the request must include Sonatype's
         ``X-Nexus-Webhook-Signature`` header containing the plain hex digest
         of HMAC-SHA1 over the raw request body (see Lifecycle Webhooks docs).
@@ -250,10 +192,10 @@ def create_app(config: Optional[dict] = None) -> Flask:
 
             if result["success"]:
                 logger.info(
-                    "Successfully processed release scan",
+                    "Release scan enqueued for ingestion",
                     extra={"request_id": request_id, "public_id": public_id},
                 )
-                return jsonify({"status": "processed", "application": public_id}), 200
+                return jsonify({"status": "accepted", "application": public_id}), 202
             else:
                 logger.error(
                     "Failed to process release scan",
@@ -271,7 +213,7 @@ def create_app(config: Optional[dict] = None) -> Flask:
                     }
                 ), 500
 
-        except (NotFound, RedisError):
+        except (NotFound, RuntimeError):
             logger.exception(
                 "Error processing webhook", extra={"request_id": request_id}
             )
@@ -297,82 +239,20 @@ def _verify_hmac(secret: str, body: bytes, signature_header: str) -> bool:
     return hmac.compare_digest(expected_sig, received_sig)
 
 
-def _extract_cyclonedx_tool_info(sbom: dict) -> tuple[Optional[str], Optional[str]]:
-    """Extract tool name and version from CycloneDX metadata.tools.
-
-    Handles both CycloneDX 1.4+ (tools as array) and 1.5+ (tools.components).
-
-    Args:
-        sbom: The CycloneDX SBOM dict.
-
-    Returns:
-        Tuple of (tool_name, tool_version). Either may be None.
-    """
-    metadata = sbom.get("metadata") or {}
-    if not isinstance(metadata, dict):
-        return None, None
-
-    tools = metadata.get("tools")
-    if tools is None:
-        return None, None
-
-    # CycloneDX 1.5+: tools.components
-    if isinstance(tools, dict):
-        components = tools.get("components")
-        if isinstance(components, list) and components:
-            first = components[0]
-            if isinstance(first, dict):
-                return (
-                    first.get("name") if isinstance(first.get("name"), str) else None,
-                    first.get("version")
-                    if isinstance(first.get("version"), str)
-                    else None,
-                )
-        return None, None
-
-    # CycloneDX 1.4+: tools as array
-    if isinstance(tools, list) and tools:
-        first = tools[0]
-        if isinstance(first, dict):
-            name = first.get("name")
-            version = first.get("version")
-            return (
-                name if isinstance(name, str) else None,
-                version if isinstance(version, str) else None,
-            )
-    return None, None
-
-
-def _link_versions_to_sbom_record(
-    persistence: Persistence,
-    projects: dict,
-    record_id: str,
-) -> None:
-    """Link all project versions to an SBOM record."""
-    for _bom_ref, (project, version) in projects.items():
-        if project.purl:
-            persistence.link_version_to_sbom_record(project.purl, record_id)
-        elif project.name and version.version:
-            persistence.link_version_to_sbom_record_by_name(
-                project.name,
-                project.group,
-                version.version,
-                record_id,
-            )
-
-
 class CycloneDXHelper:
-    """Helper class to process CycloneDX SBOMs."""
+    """Helper class to fetch a CycloneDX SBOM from Sonatype and enqueue it for ingest.
+
+    The actual parse-and-persist work (including tool-info extraction and
+    SBOM-record/version linking) happens in the ``ingest`` worker pool --
+    see ``sbom_graph_enrichment.ingest_tasks.ingest_cyclonedx``.
+    """
 
     def __init__(self, config: dict):
-        self.persistence = _listener_ingestion_persistence(config)
         self.sonatype_client = SonaTypeClient(config)
-        self.cyclonedx_processor = CycloneDXProcessor(persistence=self.persistence)
 
     def close(self) -> None:
-        """Release the Sonatype HTTP session and FalkorDB connection."""
+        """Release the Sonatype HTTP session."""
         self.sonatype_client.close()
-        self.persistence.close()
 
     def process_cyclonedx_sbom(
         self,
@@ -380,11 +260,11 @@ class CycloneDXHelper:
         public_app_id: str,
         version: str = "1.5",
         stage_id: str = "release",
-    ) -> str:
-        """Process the CycloneDX SBOM and store provenance.
+    ) -> dict[str, str]:
+        """Fetch the CycloneDX SBOM and enqueue it on the ``ingest`` queue.
 
         Returns:
-            The record_id of the created SBOM record.
+            Dict with ``record_id`` and ``job_id``.
         """
         try:
             sbom = self.sonatype_client.get_cyclonedx_sbom(app_id, version, stage_id)
@@ -399,49 +279,42 @@ class CycloneDXHelper:
             logger.exception("Error processing CycloneDX SBOM")
             raise
 
-        try:
-            projects, _, _ = self.cyclonedx_processor.process_cyclone_dx_json(
-                app_id=app_id,
-                public_app_id=public_app_id,
-                gitlab_project_url="",
-                json_data=sbom,
-            )
-        except RedisError:
-            logger.exception("Error processing CycloneDX SBOM")
-            raise
-
-        # Store SBOM provenance. Derive a *deterministic* record id from the SBOM
-        # content (and the app it belongs to) so a re-delivered webhook converges to
-        # the same SBOMRecord node + PRODUCED_BY_SBOM edges instead of accumulating a
-        # fresh duplicate on every replay (idempotent ingest — SAST L2). Identical
-        # content for the same app => identical record_id => the MERGE is a no-op.
-        ingested_at = datetime.now(UTC).isoformat()
+        # Derive a *deterministic* record id from the SBOM content (and the
+        # app it belongs to) so a re-delivered webhook converges to the same
+        # SBOMRecord node + PRODUCED_BY_SBOM edges instead of accumulating a
+        # fresh duplicate on every replay (idempotent ingest — SAST L2).
+        # Identical content for the same app => identical record_id => the
+        # worker's MERGE is a no-op.
         document_hash = hashlib.sha256(
             json.dumps(sbom, sort_keys=True).encode("utf-8")
         ).hexdigest()
         record_id = str(
             uuid.uuid5(uuid.NAMESPACE_URL, f"sbom:{public_app_id}:{document_hash}")
         )
-        tool_name, tool_version = _extract_cyclonedx_tool_info(sbom)
-        serial_number = (
-            sbom.get("serialNumber")
-            if isinstance(sbom.get("serialNumber"), str)
-            else None
-        )
 
-        self.persistence.create_sbom_record(
-            record_id=record_id,
-            sbom_format="cyclonedx",
-            ingested_at=ingested_at,
-            source="webhook",
-            tool_name=tool_name,
-            tool_version=tool_version,
-            serial_number=serial_number,
-            document_hash=document_hash,
-        )
-        _link_versions_to_sbom_record(self.persistence, projects, record_id)
+        try:
+            celery_app = get_celery_client()
+            async_result = celery_app.send_task(
+                "sbom_graph_enrichment.ingest_tasks.ingest_cyclonedx",
+                args=[record_id, sbom, app_id, public_app_id, None, "webhook"],
+                queue="ingest",
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # CWE-209: never propagate the underlying broker/celery exception.
+            logger.error(
+                "Failed to enqueue CycloneDX ingest for record_id=%s: %s",
+                record_id,
+                exc.__class__.__name__,
+            )
+            raise RuntimeError("Ingest pipeline not available") from exc
 
-        return record_id
+        logger.info(
+            "CycloneDX SBOM ingest enqueued: record_id=%s job_id=%s app_id=%s",
+            record_id,
+            async_result.id,
+            app_id,
+        )
+        return {"record_id": record_id, "job_id": async_result.id}
 
     def process_cyclone_sbom(
         self,
@@ -462,33 +335,33 @@ class CycloneDXHelper:
 
 
 class VexHelper:
-    """Helper class to fetch and process VEX documents from Sonatype."""
+    """Helper class to fetch a VEX document from Sonatype and enqueue it for ingest.
+
+    The actual parsing/persistence happens in the ``ingest`` worker pool --
+    see ``sbom_graph_enrichment.ingest_tasks.ingest_vex``.
+    """
 
     def __init__(self, config: dict):
-        """Initialize with shared persistence and Sonatype client."""
-        self.persistence = _listener_ingestion_persistence(config)
+        """Initialize with a Sonatype client."""
         self.sonatype_client = SonaTypeClient(config)
-        self.vex_processor = VexProcessor(persistence=self.persistence)
 
     def close(self) -> None:
-        """Release the Sonatype HTTP session and FalkorDB connection."""
+        """Release the Sonatype HTTP session."""
         self.sonatype_client.close()
-        self.persistence.close()
 
     def process_vex_for_application(
         self,
         app_id: str,
         stage_id: str = "release",
-    ) -> Optional[dict[str, int]]:
-        """Fetch and process VEX data for an application.
+    ) -> Optional[dict[str, str]]:
+        """Fetch VEX data for an application and enqueue it on the ``ingest`` queue.
 
         Args:
             app_id: The Sonatype application ID.
             stage_id: The stage to fetch VEX for.
 
         Returns:
-            Summary dict with statements_processed and linked_vulnerabilities,
-            or None if no VEX data available.
+            Dict with ``job_id``, or None if no VEX data available.
         """
         document = self.sonatype_client.get_vex_document(
             app_id=app_id,
@@ -496,7 +369,24 @@ class VexHelper:
         )
         if document is None:
             return None
-        return self.vex_processor.process_vex_document(document)
+
+        try:
+            celery_app = get_celery_client()
+            async_result = celery_app.send_task(
+                "sbom_graph_enrichment.ingest_tasks.ingest_vex",
+                args=[document],
+                queue="ingest",
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # CWE-209: never propagate the underlying broker/celery exception.
+            logger.error(
+                "Failed to enqueue VEX ingest for app_id=%s: %s",
+                app_id,
+                exc.__class__.__name__,
+            )
+            raise RuntimeError("Ingest pipeline not available") from exc
+
+        return {"job_id": async_result.id}
 
 
 class SonaTypeClient:
@@ -610,9 +500,11 @@ def process_release_scan(
     config: dict,
 ) -> dict:
     """
-    Process a release scan by fetching and ingesting the CycloneDX SBOM.
+    Process a release scan by fetching the CycloneDX SBOM and enqueueing it
+    for ingestion on the ``ingest`` Celery queue (see
+    ``sbom_graph_enrichment.ingest_tasks``).
 
-    Optionally fetches and processes VEX data (best-effort; failures are
+    Optionally fetches and enqueues VEX data (best-effort; failures are
     non-fatal).
 
     :param app_id: The SonaType application ID
@@ -632,20 +524,20 @@ def process_release_scan(
             vex_result = vex_helper.process_vex_for_application(app_id)
             if vex_result:
                 logger.info(
-                    "VEX processed: %d statements",
-                    vex_result.get("statements_processed", 0),
+                    "VEX ingest enqueued: job_id=%s",
+                    vex_result.get("job_id"),
                 )
         except Exception:  # pylint: disable=broad-exception-caught
             logger.warning("VEX processing failed for %s (non-fatal)", public_id)
         finally:
-            # Release the VEX helper's HTTP session + FalkorDB connection so a
-            # per-webhook instance does not leak them (these are created fresh
-            # per request, not process singletons).
+            # Release the VEX helper's HTTP session so a per-webhook instance
+            # does not leak it (these are created fresh per request, not
+            # process singletons).
             if vex_helper is not None:
                 vex_helper.close()
 
         return {"success": True}
-    except (NotFound, RedisError):
+    except (NotFound, RuntimeError):
         logger.exception("Error processing release scan for %s", public_id)
         return {"success": False, "error": "SBOM processing failed"}
     finally:

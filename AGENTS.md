@@ -19,23 +19,28 @@ This is the **authoritative, highest-bar governance document** for AI agents acr
 ### Cross-Project Dependencies
 
 ```
-sbom-graph-api ──────────────► sbom-graph-model ◄──── sonatype-lifecycle-release-listener
+sbom-graph-api ──────────────► sbom-graph-model
        │                              ▲
        │ (optional)                   │
        ▼                              │
 sbom-graph-enrichment ────────────────┘
+       ▲
+       │ (enqueue onto `ingest` queue only -- no direct model/graph dependency)
+       │
+sonatype-lifecycle-release-listener
 
 sbom-graph-cli ──────────────► sbom-graph-api (HTTP client)
 
-All sub-projects (except cli) ──► FalkorDB (shared graph database)
+sbom-graph-api, sbom-graph-enrichment ──► FalkorDB (shared graph database)
+sonatype-lifecycle-release-listener ──► FalkorDB's Redis instance (Celery broker/result DBs only, no graph access)
 ```
 
 - `sbom-graph-api` depends on `sbom-graph-model` and optionally `sbom-graph-enrichment`
 - `sbom-graph-enrichment` depends on `sbom-graph-model`
-- `sonatype-lifecycle-release-listener` depends on `sbom-graph-model`
+- `sonatype-lifecycle-release-listener` does **not** depend on `sbom-graph-model` -- it fetches SBOM/VEX documents from SonaType and enqueues them onto the `ingest` Celery queue for `sbom-graph-enrichment`'s worker pool to parse and persist; it holds no direct FalkorDB graph-write capability
 - `sbom-graph-cli` communicates with `sbom-graph-api` via HTTP (no direct model dependency)
 - `sbom-graph-cli` is a standalone CLI that calls the sbom-graph API (no direct FalkorDB dependency)
-- All sub-projects except sbom-graph-cli share FalkorDB as the backing store
+- `sbom-graph-api` and `sbom-graph-enrichment` share FalkorDB as the backing store; `sonatype-lifecycle-release-listener` shares only the broker/result-backend Redis DBs on the same instance
 
 ---
 

@@ -598,7 +598,7 @@ Findings (none blocking):
 | Client | Action required |
 |---|---|
 | `sbom-graph-cli` | None for CLI users; `push-sbom <file>` still does what it always did. Library users of `SBOMGraphClient.ingest_sbom()` should review the new `wait` / `sync` / `poll_*` kwargs — defaults preserve the old behaviour. |
-| `sonatype-lifecycle-release-listener` | None **yet**. The listener still uses the synchronous path internally and is unaffected. Migration to the async path is tracked separately. |
+| `sonatype-lifecycle-release-listener` | **Migrated.** The listener no longer writes to FalkorDB directly; `POST /webhook` fetches the CycloneDX/VEX documents from Sonatype and enqueues `ingest_cyclonedx` / `ingest_vex` on the `ingest` queue, then returns `202 Accepted` immediately. See `sonatype_lifecycle_release_listener/celery_client.py`. |
 | Third-party HTTP clients | If you currently rely on a `201 Created` response code, either pass `?sync=true` (legacy behaviour preserved) or update the client to handle `202` + poll. See [§4.2](#42-http-direct-clients-sonatype-listener-ad-hoc-curl). |
 
 A grep for hard-coded status codes in your callers:

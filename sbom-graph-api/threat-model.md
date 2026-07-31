@@ -66,7 +66,7 @@ flowchart TB
 |---|--------|--------|-------|------------|--------|------|--------|------------|
 | 1 | Default secret keys used in production | S, T | SECRET_KEY, JWT_SECRET_KEY, TOKEN_DB_ENCRYPTION_KEY | Medium | High | **High** | **MITIGATED** | `app.py` raises `RuntimeError` at startup if any secret matches a known default when `FLASK_DEBUG=false`. See `_INSECURE_DEFAULT_SECRETS`. |
 | 2 | Brute force on `/auth/login` | S | User credentials | High | High | **Critical** | **MITIGATED** | In-memory per-IP rate limiting (10 attempts / 15 min per Gunicorn worker) provides defense-in-depth. Network-level rate limiting at ingress controller / WAF is a documented deployment requirement and must be verified before production. Distributed rate limiting via Redis deferred to future sprint for multi-worker consistency. |
-| 3 | FalkorDB connection unencrypted | I | Graph data, credentials | Medium | Medium | **Medium** | **ACCEPTED** | Both pods deployed on same private network. Kubernetes NetworkPolicy restricts FalkorDB port access. Documented as deployment requirement. |
+| 3 | FalkorDB connection unencrypted | I | Graph data, credentials | Low | Medium | **Low** | **MITIGATED** | `FalkorDBConfig.from_env()` (`config.py`) reads `FALKORDB_SSL`/`FALKORDB_CA_FILE`/`FALKORDB_CLIENT_CERT`/`FALKORDB_CLIENT_KEY`, and `FalkorDBService.__init__` (`services/falkordb_service.py`) passes `ssl`/`ssl_cert_reqs`/`ssl_ca_certs`/`ssl_certfile`/`ssl_keyfile` to the connection when enabled. The umbrella chart's `sbom-graph-api-deployment.yaml` sets all four env vars (mTLS certs mounted from the shared TLS secret) whenever `falkordb.tls.enabled` (default `true`). *(This entry was stale -- previously described the connection as accepted-unencrypted, which does not match the current code/chart.)* |
 | 4 | LDAP connection without SSL | I | LDAP credentials, user info | Medium | High | **High** | **MITIGATED** | `app.py` logs a WARNING at startup when `LDAP_ENABLED=true` and `LDAP_USE_SSL=false`. Operators are alerted to misconfiguration. `LDAP_USE_SSL` config option available for enabling TLS. |
 | 5 | Session fixation after login | S | Session cookie | Low | High | **Medium** | **MITIGATED** | Flask regenerates session ID on `session.permanent = True` and session data changes. `SESSION_COOKIE_HTTPONLY=True`, `SESSION_COOKIE_SAMESITE=Lax`, `SESSION_COOKIE_SECURE` tied to TLS config. |
 | 6 | Cypher injection via user input | T | FalkorDB graph data | Low | High | **Medium** | **MITIGATED** | All user inputs validated with `[A-Za-z0-9._+-]` regex before use in queries. Parameterized queries via `$param` syntax. Route-level validation returns 400 on invalid input. See `utils/validation.py`. |
@@ -143,7 +143,7 @@ All dependencies are actively maintained with established user bases and compati
 | Risk | Severity | Justification |
 |------|----------|---------------|
 | Per-worker (not distributed) login rate limiting | Medium | In-memory per-IP rate limiting (10 attempts / 15 min) is implemented in each Gunicorn worker. This provides defense-in-depth but is not shared across workers. Distributed rate limiting via Redis is deferred. Network-level rate limiting at ingress/WAF remains the primary control. |
-| FalkorDB unencrypted in-cluster traffic | Medium | Accepted if both pods share a private network with Kubernetes NetworkPolicy restricting access to the FalkorDB port. |
+| FalkorDB TLS cert verification failure modes | Low | mTLS is configured by default (`falkordb.tls.enabled`), reducing the prior "unencrypted" residual risk. Remaining risk is operational: a missing/mismatched CA mount would cause connection failures, not silent plaintext fallback. |
 | TOKEN_DB_ENCRYPTION_KEY compromise exposes tokens | Medium | Fernet provides defense-in-depth. Token expiration (default 90 days) limits exposure window. Key rotation would require re-encrypting all tokens. |
 | Transitive dependency vulnerabilities | Medium | Mitigated by lockfile pinning, Snyk/SonaType scanning, and automated security patch PRs. |
 
@@ -151,6 +151,7 @@ All dependencies are actively maintained with established user bases and compati
 
 | Date | Author | Changes |
 |------|--------|---------|
+| 2026-07-28 | AI-assisted threat model | Re-verified findings against current implementation. Corrected #3 "FalkorDB connection unencrypted" to **MITIGATED** -- `FalkorDBConfig`/`FalkorDBService` already implement TLS/mTLS, and the umbrella chart already wires up `FALKORDB_SSL`/`FALKORDB_CA_FILE`/`FALKORDB_CLIENT_CERT`/`FALKORDB_CLIENT_KEY` by default. Updated the corresponding Residual Risk row. This finding was stale independent of any other change in the repo. |
 | 2026-02-28 | AI-assisted threat model | Initial threat model with STRIDE analysis |
 | 2026-02-28 | Implementation | Mitigated findings #1, #4, #12, #19 via code changes |
 | 2026-03-10 | Parameter validation hardening | Added threats #20 (Content-Disposition header injection), #21 (unvalidated query params); expanded Input Validation controls with new validators and sanitizers |
