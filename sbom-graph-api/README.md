@@ -311,11 +311,13 @@ All ingestion endpoints validate request bodies against JSON Schema (Draft-07) b
 
 #### POST /ingest/cyclonedx
 
-Accepts a CycloneDX SBOM as a JSON body and persists the parsed projects,
-dependencies, and defects to the graph database via the `sbom-graph-model`
-library. Requires JWT authentication. The request body is validated against the
-`sbom-upload` JSON Schema. SBOM provenance (document hash, tool info) is stored
-and linked to all ingested versions.
+Accepts a CycloneDX SBOM as a JSON body. **Defaults to asynchronous processing**:
+the handler validates the request, enqueues the parse-and-persist work onto the
+dedicated Celery `ingest` queue, and returns immediately -- it does not persist
+projects/dependencies/defects on the request thread. Requires JWT
+authentication. The request body is validated against the `sbom-upload` JSON
+Schema. See [`docs/ingest-pipeline.md`](../docs/ingest-pipeline.md) for the
+full async contract, job polling, and the `?sync=true` escape hatch.
 
 **Request** (`Content-Type: application/json`):
 
@@ -335,7 +337,22 @@ and linked to all ingested versions.
 | `public_app_id` | No | Public application identifier. Defaults to `metadata.component.name` |
 | `project_url` | No | URL of the source repository |
 
-**Response** (`201 Created`):
+**Response** (`202 Accepted`, default async path):
+
+```json
+{
+  "status": "accepted",
+  "record_id": "550e8400-e29b-41d4-a716-446655440000",
+  "job_id": "9f8e7d6c-...",
+  "status_url": "/ingest/jobs/9f8e7d6c-...",
+  "format": "cyclonedx"
+}
+```
+
+Poll `GET /ingest/jobs/<job_id>` until `terminal: true`; on `SUCCESS` the
+`result` field is the same summary shape shown below for the synchronous path.
+
+**Response** (`201 Created`, only with `?sync=true`):
 
 ```json
 {
@@ -353,7 +370,7 @@ The `record_id` uniquely identifies this ingestion for provenance tracking and c
 
 #### POST /ingest/spdx
 
-Accepts an SPDX 2.3 JSON SBOM and persists packages, relationships, licenses, source repositories, and defects to the graph database. Requires JWT authentication. The request body uses the same `sbom-upload` envelope schema as CycloneDX. SBOM provenance is stored and linked to all ingested versions.
+Accepts an SPDX 2.3 JSON SBOM. Same async-by-default / `?sync=true` contract as `/ingest/cyclonedx` above. Requires JWT authentication. The request body uses the same `sbom-upload` envelope schema as CycloneDX.
 
 **Request** (`Content-Type: application/json`): Same envelope as CycloneDX; the `sbom` field must contain a valid SPDX 2.3 JSON document (e.g., with `spdxVersion`, `packages`, `relationships`).
 

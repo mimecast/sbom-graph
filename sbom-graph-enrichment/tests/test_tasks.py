@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from sbom_graph_enrichment.certifiers.base import Finding, FindingKind
 from sbom_graph_enrichment.tasks import (
     _persist_vulnerability,
@@ -807,6 +809,19 @@ class TestEnrichPackage:
 class TestEnrichAllPackages:
     """Tests for the enrich_all_packages task."""
 
+    @pytest.fixture(autouse=True)
+    def _no_real_broker_lookup(self):
+        """Prevent tests from making a real connection attempt to Redis.
+
+        Individual tests override this via their own ``patch`` context to
+        exercise the backpressure path explicitly.
+        """
+        with patch(
+            "sbom_graph_enrichment.tasks._enrichment_queue_depth",
+            return_value=None,
+        ):
+            yield
+
     @patch("sbom_graph_enrichment.tasks.enrich_package")
     def test_enrich_all_dispatches_batches(self, mock_enrich: MagicMock) -> None:
         mock_pers = MagicMock()
@@ -842,12 +857,72 @@ class TestEnrichAllPackages:
         ):
             result = enrich_all_packages.apply(args=[]).get()
 
-        call = mock_pers.run_query.call_args
-        assert "last_enriched_at" in call.kwargs["query"]
-        assert "cutoff" in call.kwargs["params"]
+        # First call is the eligibility SELECT; second is the
+        # enrichment_queued_at stamp write for the dispatched batch.
+        select_call, stamp_call = mock_pers.run_query.call_args_list
+        assert "last_enriched_at" in select_call.kwargs["query"]
+        assert "enrichment_queued_at" in select_call.kwargs["query"]
+        assert "cutoff" in select_call.kwargs["params"]
+        assert "queued_cutoff" in select_call.kwargs["params"]
         # Cutoff should be a parseable ISO-8601 timestamp in the past.
-        cutoff = datetime.fromisoformat(call.kwargs["params"]["cutoff"])
+        cutoff = datetime.fromisoformat(select_call.kwargs["params"]["cutoff"])
         assert cutoff < datetime.now(timezone.utc)
+        queued_cutoff = datetime.fromisoformat(
+            select_call.kwargs["params"]["queued_cutoff"]
+        )
+        assert queued_cutoff < datetime.now(timezone.utc)
+
+        assert "enrichment_queued_at" in stamp_call.kwargs["query"]
+        assert stamp_call.kwargs["params"]["purls"] == ["pkg:npm/stale@1"]
+
+        assert result == {"dispatched": 1, "force": False}
+        mock_enrich.delay.assert_called_once_with("pkg:npm/stale@1", None)
+
+    @patch("sbom_graph_enrichment.tasks.enrich_package")
+    def test_enrich_all_skips_dispatch_under_backpressure(
+        self, mock_enrich: MagicMock
+    ) -> None:
+        """A deep enrichment queue must block dispatch rather than add to it."""
+        mock_pers = MagicMock()
+        mock_pers.run_query.return_value = MagicMock(
+            result_set=[{"purl": "pkg:npm/stale@1"}],
+        )
+
+        with patch(
+            "sbom_graph_enrichment.tasks.get_persistence",
+            return_value=mock_pers,
+        ), patch(
+            "sbom_graph_enrichment.tasks._enrichment_queue_depth",
+            return_value=10_000,
+        ):
+            result = enrich_all_packages.apply(args=[]).get()
+
+        assert result["dispatched"] == 0
+        assert result["skipped_backpressure"] is True
+        assert result["queue_depth"] == 10_000
+        mock_enrich.delay.assert_not_called()
+        # Only the eligibility SELECT ran; no stamp write for work that was
+        # never actually dispatched.
+        assert mock_pers.run_query.call_count == 1
+
+    @patch("sbom_graph_enrichment.tasks.enrich_package")
+    def test_enrich_all_dispatches_when_queue_depth_unknown(
+        self, mock_enrich: MagicMock
+    ) -> None:
+        """An undeterminable queue depth (broker unreachable) must not block dispatch."""
+        mock_pers = MagicMock()
+        mock_pers.run_query.return_value = MagicMock(
+            result_set=[{"purl": "pkg:npm/stale@1"}],
+        )
+
+        with patch(
+            "sbom_graph_enrichment.tasks.get_persistence",
+            return_value=mock_pers,
+        ), patch(
+            "sbom_graph_enrichment.tasks._enrichment_queue_depth",
+            return_value=None,
+        ):
+            result = enrich_all_packages.apply(args=[]).get()
 
         assert result == {"dispatched": 1, "force": False}
         mock_enrich.delay.assert_called_once_with("pkg:npm/stale@1", None)

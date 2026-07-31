@@ -9,6 +9,14 @@ trust score information.
 The worker reuses FalkorDB's Redis instance as the Celery broker (database 1)
 and result backend (database 2), avoiding additional infrastructure.
 
+Besides the scheduled certifier/trust-score tasks in `tasks.py` (this
+section), `ingest_tasks.py` provides `ingest_cyclonedx`/`ingest_spdx`/
+`ingest_sbom`/`ingest_vex` -- asynchronous SBOM/VEX ingest tasks consumed
+from a dedicated `ingest` queue by a separate worker pool (`-Q ingest`),
+so a large SBOM upload or webhook never queues behind an in-flight
+`enrich_all_packages` run. See `docs/ingest-pipeline.md` at the repo root
+for the full design.
+
 ### Certifiers
 
 | Certifier | Source | Finding Kind |
@@ -184,6 +192,7 @@ talking to the server over TLS (see `persistence_helpers.py`).
 | `TRUST_SCORE_WEIGHT_MAINTENANCE_HEALTH` | `0.2` | Category weight |
 | `TRUST_SCORE_WEIGHT_SUPPLY_CHAIN_HYGIENE` | `0.15` | Category weight |
 | `OSSINDEX_USER` / `OSSINDEX_TOKEN` | _(empty)_ | Optional Sonatype OSS Index credentials |
+| `ENRICHMENT_QUEUE_BACKPRESSURE_THRESHOLD` | `5000` | `enrich_all_packages` skips dispatch entirely if the `enrichment` broker queue depth exceeds this |
 
 ## Kubernetes
 

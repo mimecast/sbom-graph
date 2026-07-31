@@ -74,7 +74,7 @@ falkordb:
     # raise further (8Gi+) for larger graphs.
     limits:
       cpu: "2"
-      memory: 8Gi
+      memory: 16Gi
     # Request matches steady-state usage so kubelet reserves the memory and
     # the pod is not first to be evicted under node pressure. Set == the limit
     # (and >= maxmemory) so FalkorDB's usage never exceeds its reservation —
@@ -82,7 +82,7 @@ falkordb:
     # eviction; it holds the graph).
     requests:
       cpu: 500m
-      memory: 8Gi
+      memory: 16Gi
   # FalkorDB / Redis runtime tuning.  Consumed by the falkordb-deployment template.
   # Defaults are tuned for sustained SBOM ingest workloads.
   server:
@@ -113,7 +113,7 @@ falkordb:
     # "OOM command not allowed when used memory > 'maxmemory'" to clients
     # (clean, retriable) instead of being SIGKILL'd by the kernel.
     # Keep this ~75% of resources.limits.memory.
-    maxmemory: "6gb"
+    maxmemory: "14gb"
     # noeviction prevents graph data from being silently dropped; combined
     # with maxmemory above, writes start failing cleanly when full instead
     # of the entire process being killed.
@@ -162,7 +162,7 @@ sbomGraphApi:
   enabled: true
   image:
     repository: localhost/sbom-graph-api
-    tag: 1.0.0
+    tag: 1.0.1
     pullPolicy: Never
   replicas: 1
   # gthread concurrency: workers * threads is the max number of in-flight
@@ -238,17 +238,17 @@ sbomGraphApi:
   resources:
     limits:
       cpu: 1500m
-      memory: 4Gi
+      memory: 8Gi
     requests:
       cpu: 250m
-      memory: 1Gi
+      memory: 2Gi
 releaseListener:
   # Deploy the Sonatype release listener (Deployment/Service/webhook+sonatype
   # Secrets). Set false to deploy only other components (e.g. the API alone).
   enabled: true
   image:
     repository: localhost/sonatype-lifecycle-release-listener
-    tag: 1.0.0
+    tag: 1.0.1
     pullPolicy: Never
   replicas: 1
   # HMAC shared secret for Lifecycle webhooks. Leave empty to auto-generate on first
@@ -260,7 +260,7 @@ releaseListener:
     targetPort: 8000
   # Outbound Lifecycle API (listener fetches CycloneDX SBOM + VEX after webhook).
   sonatype:
-    host: your.lifecycle.host
+    host: lifecycle.acme.com
     # Corporate CA bundle is already in the container image; path only, no Helm mount.
     caCerts: /etc/ssl/certs/ca-certificates.crt
     username: ""
@@ -273,15 +273,15 @@ releaseListener:
   resources:
     limits:
       cpu: 500m
-      memory: 512Mi
+      memory: 1Gi
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
 enrichment:
   enabled: true
   image:
     repository: localhost/sbom-graph-enrichment
-    tag: 1.0.0
+    tag: 1.0.1
     pullPolicy: Never
   replicas: 1
   interval: "3600"
@@ -310,10 +310,10 @@ enrichment:
   resources:
     limits:
       cpu: 500m
-      memory: 2Gi
+      memory: 4Gi
     requests:
       cpu: 100m
-      memory: 128Mi
+      memory: 256Mi
   # ---------------------------------------------------------------------------
   # Dedicated ingest worker pool (docs/sbom-graph-api-troubleshooting.md §10.6).
   #
@@ -333,26 +333,16 @@ enrichment:
   #   enrichment pool will not pick up the ``ingest`` queue automatically.
   ingest:
     enabled: true
-    # 4 single-slot pods: concurrency 1 means one SBOM parse per pod at a time
-    # (peak memory = one SBOM, not two), and throughput scales via replicas.
-    # NOTE: with task_acks_late=True an OOM'd task is redelivered, so a single
-    # SBOM whose parse exceeds one pod's 2Gi limit will crash-loop across all
-    # replicas in turn — that case needs a bigger limit or a streaming parser,
-    # not more pods.
     replicas: 1
     concurrency: 2
     queueName: "ingest"
     resources:
       limits:
         cpu: 1000m
-        memory: 2Gi
-      # Request reserves close to real parse footprint: 4 replicas that can each
-      # burst 256Mi->2Gi over-commit the node and trigger node-pressure evictions
-      # (incl. of FalkorDB). Reserve 1Gi each so the scheduler places them on
-      # nodes with real capacity.
+        memory: 8Gi
       requests:
         cpu: 200m
-        memory: 1Gi
+        memory: 4Gi
   networkPolicy:
     # Enable to restrict enrichment pod egress to FalkorDB, DNS, and
     # external HTTPS (port 443) only.  Requires a CNI that supports

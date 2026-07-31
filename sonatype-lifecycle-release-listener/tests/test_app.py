@@ -13,7 +13,6 @@ from pathlib import Path
 
 from flask.testing import FlaskClient
 from werkzeug.exceptions import NotFound
-from redis.exceptions import RedisError
 
 from sonatype_lifecycle_release_listener.app import (
     create_app,
@@ -22,7 +21,6 @@ from sonatype_lifecycle_release_listener.app import (
     SonaTypeClient,
     VexHelper,
     _verify_hmac,
-    _extract_cyclonedx_tool_info,
 )
 
 
@@ -69,13 +67,6 @@ class _SigningClient(FlaskClient):
 def example_message():
     """Load the example message from test resources."""
     with open(RESOURCES_DIR / "example-message.json", "r") as f:
-        return json.load(f)
-
-
-@pytest.fixture
-def example_cyclonedx():
-    """Load the example CycloneDX SBOM from test resources (acme_corp demo data)."""
-    with open(RESOURCES_DIR / "acme_notification_service_sbom.json", "r") as f:
         return json.load(f)
 
 
@@ -232,11 +223,11 @@ class TestWebhookEndpoint:
         assert data["status"] == "error"
 
     @patch("sonatype_lifecycle_release_listener.app.process_release_scan")
-    def test_unhandled_redis_error_returns_500(
+    def test_unhandled_runtime_error_returns_500(
         self, mock_process, client, example_message
     ):
-        """Test that an unhandled RedisError from processing returns 500."""
-        mock_process.side_effect = RedisError("Connection lost")
+        """Test that an unhandled RuntimeError (enqueue failure) from processing returns 500."""
+        mock_process.side_effect = RuntimeError("Ingest pipeline not available")
 
         response = client.post(
             "/webhook",
@@ -249,7 +240,7 @@ class TestWebhookEndpoint:
 
     @patch("sonatype_lifecycle_release_listener.app.process_release_scan")
     def test_release_scan_is_processed(self, mock_process, client, example_message):
-        """Test that release scans are processed correctly."""
+        """Test that release scans are enqueued and accepted correctly."""
         mock_process.return_value = {"success": True}
 
         response = client.post(
@@ -258,9 +249,9 @@ class TestWebhookEndpoint:
             content_type="application/json",
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 202
         data = json.loads(response.data)
-        assert data["status"] == "processed"
+        assert data["status"] == "accepted"
         assert data["application"] == "My-Application-ID"
 
         mock_process.assert_called_once_with(
@@ -403,9 +394,9 @@ class TestProcessReleaseScan:
         assert result["error"] == "SBOM processing failed"
 
     @patch("sonatype_lifecycle_release_listener.app.CycloneDXHelper")
-    def test_returns_failure_on_redis_error(self, mock_helper_class):
-        """Test that function returns failure on FalkorDB connection error."""
-        mock_helper_class.side_effect = RedisError("Connection refused")
+    def test_returns_failure_on_runtime_error(self, mock_helper_class):
+        """Test that function returns failure when the ingest queue is unavailable."""
+        mock_helper_class.side_effect = RuntimeError("Ingest pipeline not available")
 
         result = process_release_scan(
             app_id="test_app_id",
@@ -485,9 +476,9 @@ class TestIntegrationWithMockedSonatype:
             content_type="application/json",
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 202
         data = json.loads(response.data)
-        assert data["status"] == "processed"
+        assert data["status"] == "accepted"
 
         mock_helper.process_cyclonedx_sbom.assert_called_once_with(
             app_id="0f256982c80b4e13abef4917b93ac343",
@@ -507,7 +498,7 @@ class TestIntegrationWithMockedSonatype:
             data=json.dumps(example_message),
             content_type="application/json",
         )
-        assert response1.status_code == 200
+        assert response1.status_code == 202
 
         example_message["applicationEvaluation"]["application"]["id"] = (
             "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
@@ -521,111 +512,19 @@ class TestIntegrationWithMockedSonatype:
             data=json.dumps(example_message),
             content_type="application/json",
         )
-        assert response2.status_code == 200
+        assert response2.status_code == 202
 
         assert mock_helper.process_cyclonedx_sbom.call_count == 2
-
-
-@pytest.mark.integration
-class TestFalkorDBIntegration:
-    """
-    Integration tests that verify FalkorDB content.
-
-    These tests require FalkorDB to be running at localhost:6379.
-    They test the actual database insertion behavior by mocking the SonaType
-    API call and using the real FalkorDB instance.
-
-    Skipped by default in CI/CD. Run locally with:
-        uv run pytest -m integration
-    """
-
-    FALKORDB_CONFIG = {
-        "SONATYPE_HOST": "sonatype.example.com",
-        "SONATYPE_USERNAME": "test_user",
-        "SONATYPE_PASSWORD": "test_pass",
-        "SONATYPE_CACERTS": "certs/ca_bundle.pem",
-        "FALKORDB_HOST": "localhost",
-        "FALKORDB_PORT": 6379,
-        "FALKORDB_GRAPH_NAME": "acme_corp",
-        "FALKORDB_PASSWORD": "",
-        "FALKORDB_CACERTS": "",
-    }
-
-    @pytest.fixture
-    def falkordb_connection(self):
-        """Create a FalkorDB connection for verification."""
-        try:
-            from falkordb import FalkorDB
-
-            db = FalkorDB(host="localhost", port=6379)
-            graph = db.select_graph("acme_corp")
-            yield graph
-        except (OSError, ConnectionError, TimeoutError) as e:
-            pytest.skip(f"FalkorDB not available: {e}")
-
-    @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient.get_cyclonedx_sbom")
-    def test_dependency_tree_inserted_into_falkordb(
-        self, mock_get_sbom, example_cyclonedx, falkordb_connection
-    ):
-        """
-        Test that dependency tree is correctly inserted into FalkorDB.
-
-        This test mocks the SonaType API but uses the real FalkorDB.
-        """
-        mock_get_sbom.return_value = example_cyclonedx
-
-        try:
-            helper = CycloneDXHelper(self.FALKORDB_CONFIG)
-        except (OSError, ConnectionError, RedisError) as e:
-            pytest.skip(f"FalkorDB not available: {e}")
-
-        helper.process_cyclonedx_sbom(
-            app_id="test_app_id",
-            public_app_id="test_public_id",
-        )
-
-        mock_get_sbom.assert_called_once()
-
-        result = falkordb_connection.query(
-            "MATCH (v:Version {project_name: 'notification-service'}) "
-            "RETURN count(v) as count"
-        )
-        count = result.result_set[0][0] if result.result_set else 0
-        assert count > 0, "Expected the application Version node to exist in FalkorDB"
-
-    @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient.get_cyclonedx_sbom")
-    def test_defects_inserted_into_falkordb(
-        self, mock_get_sbom, example_cyclonedx, falkordb_connection
-    ):
-        """
-        Test that defects are correctly inserted into FalkorDB.
-        """
-        mock_get_sbom.return_value = example_cyclonedx
-
-        try:
-            helper = CycloneDXHelper(self.FALKORDB_CONFIG)
-        except (OSError, ConnectionError, RedisError) as e:
-            pytest.skip(f"FalkorDB not available: {e}")
-
-        helper.process_cyclonedx_sbom(
-            app_id="test_app_id",
-            public_app_id="test_public_id",
-        )
-
-        mock_get_sbom.assert_called_once()
-
-        result = falkordb_connection.query("MATCH (d:Defect) RETURN count(d) as count")
-        defect_count = result.result_set[0][0] if result.result_set else 0
-        assert defect_count > 0, "Expected Defect nodes to exist in FalkorDB"
 
 
 class TestSbomRecordIdempotency:
     """SAST L2: a re-delivered webhook must converge to the same SBOMRecord
     instead of accumulating duplicates. record_id is derived deterministically
     from the SBOM content + public app id (uuid5), so re-ingesting identical
-    content is an idempotent MERGE rather than a fresh node per replay."""
+    content enqueues the same record_id -- an idempotent MERGE downstream in
+    the ``ingest`` worker -- rather than a fresh node per replay."""
 
-    CONFIG = {"FALKORDB_HOST": "localhost"}
+    CONFIG = {"SONATYPE_HOST": "sonatype.example.com"}
 
     SBOM = {
         "bomFormat": "CycloneDX",
@@ -638,18 +537,9 @@ class TestSbomRecordIdempotency:
 
     def _make_helper(self, sbom):
         with patch(
-            "sonatype_lifecycle_release_listener.app._listener_ingestion_persistence"
-        ), patch(
             "sonatype_lifecycle_release_listener.app.SonaTypeClient"
-        ) as mock_client_cls, patch(
-            "sonatype_lifecycle_release_listener.app.CycloneDXProcessor"
-        ) as mock_proc_cls:
+        ) as mock_client_cls:
             mock_client_cls.return_value.get_cyclonedx_sbom.return_value = sbom
-            mock_proc_cls.return_value.process_cyclone_dx_json.return_value = (
-                {},
-                {},
-                [],
-            )
             return CycloneDXHelper(self.CONFIG)
 
     @staticmethod
@@ -661,48 +551,54 @@ class TestSbomRecordIdempotency:
             uuid.uuid5(uuid.NAMESPACE_URL, f"sbom:{public_app_id}:{doc_hash}")
         )
 
-    def test_same_content_yields_same_record_id(self):
+    @patch("sonatype_lifecycle_release_listener.app.get_celery_client")
+    def test_same_content_yields_same_record_id(self, mock_get_celery):
+        mock_get_celery.return_value.send_task.return_value = MagicMock(id="job-1")
         helper = self._make_helper(self.SBOM)
-        rid1 = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pub")
-        rid2 = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pub")
-        assert rid1 == rid2 == self._expected_id("pub", self.SBOM)
-        # Both ingests MERGE the same SBOMRecord identity (no duplicate node).
-        ids = [
-            c.kwargs["record_id"]
-            for c in helper.persistence.create_sbom_record.call_args_list
+        result1 = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pub")
+        result2 = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pub")
+
+        expected = self._expected_id("pub", self.SBOM)
+        assert result1["record_id"] == result2["record_id"] == expected
+        # Both ingests enqueue the same record_id (worker-side MERGE is a
+        # no-op for the second one, no duplicate SBOMRecord node).
+        enqueued_ids = [
+            c.kwargs["args"][0]
+            for c in mock_get_celery.return_value.send_task.call_args_list
         ]
-        assert ids == [rid1, rid1]
+        assert enqueued_ids == [expected, expected]
 
-    def test_different_app_yields_different_record_id(self):
+    @patch("sonatype_lifecycle_release_listener.app.get_celery_client")
+    def test_different_app_yields_different_record_id(self, mock_get_celery):
+        mock_get_celery.return_value.send_task.return_value = MagicMock(id="job-1")
         helper = self._make_helper(self.SBOM)
-        rid_a = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pubA")
-        rid_b = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pubB")
-        assert rid_a != rid_b
+        result_a = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pubA")
+        result_b = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pubB")
+        assert result_a["record_id"] != result_b["record_id"]
 
-    def test_changed_content_yields_different_record_id(self):
+    @patch("sonatype_lifecycle_release_listener.app.get_celery_client")
+    def test_changed_content_yields_different_record_id(self, mock_get_celery):
+        mock_get_celery.return_value.send_task.return_value = MagicMock(id="job-1")
         helper = self._make_helper(self.SBOM)
-        rid1 = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pub")
+        result1 = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pub")
         helper.sonatype_client.get_cyclonedx_sbom.return_value = {
             **self.SBOM,
             "components": [{"name": "lib", "version": "2.0"}],
         }
-        rid2 = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pub")
-        assert rid1 != rid2
+        result2 = helper.process_cyclonedx_sbom(app_id="a1", public_app_id="pub")
+        assert result1["record_id"] != result2["record_id"]
 
 
 class TestResourceCleanup:
-    """Leak fix: a per-webhook helper must release its FalkorDB connection and
-    Sonatype HTTP session on every path (success and error)."""
+    """Leak fix: a per-webhook helper must release its Sonatype HTTP session
+    on every path (success and error)."""
 
     _APP = "sonatype_lifecycle_release_listener.app"
 
     def test_helper_close_releases_resources(self):
-        with patch(f"{self._APP}._listener_ingestion_persistence"), patch(
-            f"{self._APP}.SonaTypeClient"
-        ), patch(f"{self._APP}.CycloneDXProcessor"):
-            helper = CycloneDXHelper({"FALKORDB_HOST": "localhost"})
+        with patch(f"{self._APP}.SonaTypeClient"):
+            helper = CycloneDXHelper({"SONATYPE_HOST": "sonatype.example.com"})
         helper.close()
-        helper.persistence.close.assert_called_once()
         helper.sonatype_client.close.assert_called_once()
 
     def test_process_release_scan_closes_helpers_on_success(self):
@@ -862,66 +758,47 @@ class TestVexHelper:
         "SONATYPE_USERNAME": "test_user",
         "SONATYPE_PASSWORD": "test_pass",
         "SONATYPE_CACERTS": "certs/ca_bundle.pem",
-        "FALKORDB_HOST": "localhost",
-        "FALKORDB_PORT": 6379,
-        "FALKORDB_GRAPH_NAME": "test-graph",
-        "FALKORDB_PASSWORD": "",
-        "FALKORDB_CACERTS": "certs/ca_bundle.pem",
     }
 
-    @patch("sonatype_lifecycle_release_listener.app.VexProcessor")
     @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient")
-    @patch("sonatype_lifecycle_release_listener.app.Persistence")
-    def test_init_creates_dependencies(
-        self, mock_persistence, mock_client, mock_processor
-    ):
-        """Test VexHelper wires Persistence, SonaTypeClient, VexProcessor."""
+    def test_init_creates_dependencies(self, mock_client):
+        """Test VexHelper wires SonaTypeClient."""
         helper = VexHelper(self.TEST_CONFIG)
 
-        mock_persistence.assert_called_once()
         mock_client.assert_called_once_with(self.TEST_CONFIG)
-        mock_processor.assert_called_once_with(
-            persistence=mock_persistence.return_value
-        )
-        assert helper.persistence is mock_persistence.return_value
         assert helper.sonatype_client is mock_client.return_value
-        assert helper.vex_processor is mock_processor.return_value
 
-    @patch("sonatype_lifecycle_release_listener.app.VexProcessor")
+    @patch("sonatype_lifecycle_release_listener.app.get_celery_client")
     @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient")
-    @patch("sonatype_lifecycle_release_listener.app.Persistence")
     def test_process_vex_for_application_success(
-        self, mock_persistence, mock_client_cls, mock_proc_cls, example_vex
+        self, mock_client_cls, mock_get_celery, example_vex
     ):
-        """Test successful VEX processing with valid document."""
+        """Test successful VEX processing enqueues onto the ingest queue."""
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
         mock_client.get_vex_document.return_value = example_vex
 
-        mock_proc = MagicMock()
-        mock_proc.process_vex_document.return_value = {
-            "statements_processed": 1,
-            "linked_vulnerabilities": 1,
-        }
-        mock_proc_cls.return_value = mock_proc
+        mock_send_task = mock_get_celery.return_value.send_task
+        mock_send_task.return_value = MagicMock(id="vex-job-1")
 
         helper = VexHelper(self.TEST_CONFIG)
         result = helper.process_vex_for_application(app_id="app123")
 
-        assert result is not None
-        assert result["statements_processed"] == 1
-        assert result["linked_vulnerabilities"] == 1
+        assert result == {"job_id": "vex-job-1"}
         mock_client.get_vex_document.assert_called_once_with(
             app_id="app123",
             stage_id="release",
         )
-        mock_proc.process_vex_document.assert_called_once_with(example_vex)
+        mock_send_task.assert_called_once_with(
+            "sbom_graph_enrichment.ingest_tasks.ingest_vex",
+            args=[example_vex],
+            queue="ingest",
+        )
 
-    @patch("sonatype_lifecycle_release_listener.app.VexProcessor")
+    @patch("sonatype_lifecycle_release_listener.app.get_celery_client")
     @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient")
-    @patch("sonatype_lifecycle_release_listener.app.Persistence")
     def test_process_vex_for_application_returns_none_when_no_vex(
-        self, mock_persistence, mock_client_cls, mock_proc_cls
+        self, mock_client_cls, mock_get_celery
     ):
         """Test that None is returned when no VEX document is available."""
         mock_client = MagicMock()
@@ -936,25 +813,18 @@ class TestVexHelper:
             app_id="app123",
             stage_id="release",
         )
-        mock_proc_cls.return_value.process_vex_document.assert_not_called()
+        mock_get_celery.return_value.send_task.assert_not_called()
 
-    @patch("sonatype_lifecycle_release_listener.app.VexProcessor")
+    @patch("sonatype_lifecycle_release_listener.app.get_celery_client")
     @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient")
-    @patch("sonatype_lifecycle_release_listener.app.Persistence")
     def test_process_vex_for_application_with_custom_stage(
-        self, mock_persistence, mock_client_cls, mock_proc_cls, example_vex
+        self, mock_client_cls, mock_get_celery, example_vex
     ):
         """Test VEX processing with custom stage_id."""
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
         mock_client.get_vex_document.return_value = example_vex
-
-        mock_proc = MagicMock()
-        mock_proc.process_vex_document.return_value = {
-            "statements_processed": 1,
-            "linked_vulnerabilities": 1,
-        }
-        mock_proc_cls.return_value = mock_proc
+        mock_get_celery.return_value.send_task.return_value = MagicMock(id="vex-job-1")
 
         helper = VexHelper(self.TEST_CONFIG)
         helper.process_vex_for_application(app_id="app123", stage_id="build")
@@ -963,6 +833,22 @@ class TestVexHelper:
             app_id="app123",
             stage_id="build",
         )
+
+    @patch("sonatype_lifecycle_release_listener.app.get_celery_client")
+    @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient")
+    def test_process_vex_for_application_raises_runtime_error_on_enqueue_failure(
+        self, mock_client_cls, mock_get_celery, example_vex
+    ):
+        """Test that a broker/enqueue failure is wrapped in RuntimeError (CWE-209)."""
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.get_vex_document.return_value = example_vex
+        mock_get_celery.return_value.send_task.side_effect = ConnectionError("refused")
+
+        helper = VexHelper(self.TEST_CONFIG)
+
+        with pytest.raises(RuntimeError):
+            helper.process_vex_for_application(app_id="app123")
 
 
 class TestCycloneDXHelper:
@@ -973,88 +859,26 @@ class TestCycloneDXHelper:
         "SONATYPE_USERNAME": "test_user",
         "SONATYPE_PASSWORD": "test_pass",
         "SONATYPE_CACERTS": "certs/ca_bundle.pem",
-        "FALKORDB_HOST": "localhost",
-        "FALKORDB_PORT": 6379,
-        "FALKORDB_GRAPH_NAME": "test-graph",
-        "FALKORDB_PASSWORD": "",
-        "FALKORDB_CACERTS": "certs/ca_bundle.pem",
     }
 
-    @patch("sonatype_lifecycle_release_listener.app.CycloneDXProcessor")
     @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient")
-    @patch("sonatype_lifecycle_release_listener.app.Persistence")
-    def test_init_creates_dependencies(
-        self, mock_persistence, mock_client, mock_processor
-    ):
-        """Test CycloneDXHelper wires Persistence, SonaTypeClient, Processor."""
+    def test_init_creates_dependencies(self, mock_client):
+        """Test CycloneDXHelper wires SonaTypeClient."""
         helper = CycloneDXHelper(self.TEST_CONFIG)
 
-        mock_persistence.assert_called_once_with(
-            host="localhost",
-            port=6379,
-            graph_name="test-graph",
-            password="",
-            ssl=False,
-            ssl_ca_certs="certs/ca_bundle.pem",
-            ssl_certfile=None,
-            ssl_keyfile=None,
-            internal_prefixes=mock_persistence.parse_internal_prefixes.return_value,
-        )
         mock_client.assert_called_once_with(self.TEST_CONFIG)
-        mock_processor.assert_called_once_with(
-            persistence=mock_persistence.return_value
-        )
-        assert helper.persistence is mock_persistence.return_value
         assert helper.sonatype_client is mock_client.return_value
-        assert helper.cyclonedx_processor is mock_processor.return_value
 
-    @patch("sonatype_lifecycle_release_listener.app.CycloneDXProcessor")
+    @patch("sonatype_lifecycle_release_listener.app.get_celery_client")
     @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient")
-    @patch("sonatype_lifecycle_release_listener.app.Persistence")
-    def test_init_creates_persistence_with_tls_and_mtls(
-        self, mock_persistence, mock_client, mock_processor
-    ) -> None:
-        """FALKORDB_SSL and optional client cert paths are passed to Persistence."""
-        config = {
-            **self.TEST_CONFIG,
-            "FALKORDB_SSL": "true",
-            "FALKORDB_CLIENT_CERT": "/tls/client.crt",
-            "FALKORDB_CLIENT_KEY": "/tls/client.key",
-        }
-        CycloneDXHelper(config)
-
-        mock_persistence.assert_called_once_with(
-            host="localhost",
-            port=6379,
-            graph_name="test-graph",
-            password="",
-            ssl=True,
-            ssl_ca_certs="certs/ca_bundle.pem",
-            ssl_certfile="/tls/client.crt",
-            ssl_keyfile="/tls/client.key",
-            internal_prefixes=mock_persistence.parse_internal_prefixes.return_value,
-        )
-
-    @patch("sonatype_lifecycle_release_listener.app.CycloneDXProcessor")
-    @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient")
-    @patch("sonatype_lifecycle_release_listener.app.Persistence")
-    def test_process_cyclonedx_sbom_success(
-        self, mock_persistence, mock_client_cls, mock_proc_cls
-    ):
-        """Test successful end-to-end SBOM processing."""
+    def test_process_cyclonedx_sbom_success(self, mock_client_cls, mock_get_celery):
+        """Test successful SBOM fetch + enqueue onto the ingest queue."""
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
         mock_client.get_cyclonedx_sbom.return_value = {"bomFormat": "CycloneDX"}
 
-        proj, ver = MagicMock(), MagicMock()
-        proj.purl = "pkg:maven/com.example/app@1.0.0"
-        proj.name = "app"
-        proj.group = "com.example"
-        ver.version = "1.0.0"
-        projects = {"app-ref": (proj, ver)}
-        mock_proc = MagicMock()
-        mock_proc.process_cyclone_dx_json.return_value = (projects, {}, {})
-        mock_proc_cls.return_value = mock_proc
+        mock_send_task = mock_get_celery.return_value.send_task
+        mock_send_task.return_value = MagicMock(id="cdx-job-1")
 
         helper = CycloneDXHelper(self.TEST_CONFIG)
         result = helper.process_cyclonedx_sbom(app_id="app123", public_app_id="MyApp")
@@ -1062,31 +886,27 @@ class TestCycloneDXHelper:
         mock_client.get_cyclonedx_sbom.assert_called_once_with(
             "app123", "1.5", "release"
         )
-        mock_proc.process_cyclone_dx_json.assert_called_once_with(
-            app_id="app123",
-            public_app_id="MyApp",
-            gitlab_project_url="",
-            json_data={"bomFormat": "CycloneDX"},
-        )
-        assert isinstance(result, str)
-        assert len(result) == 36  # UUID format
+        assert isinstance(result["record_id"], str)
+        assert len(result["record_id"]) == 36  # UUID format
+        assert result["job_id"] == "cdx-job-1"
 
-        # Provenance stored
-        mock_persistence.return_value.create_sbom_record.assert_called_once()
-        call_kwargs = mock_persistence.return_value.create_sbom_record.call_args.kwargs
-        assert call_kwargs["sbom_format"] == "cyclonedx"
-        assert call_kwargs["source"] == "webhook"
-        assert call_kwargs["record_id"] == result
-        mock_persistence.return_value.link_version_to_sbom_record.assert_called_once_with(
-            "pkg:maven/com.example/app@1.0.0",
-            result,
+        mock_send_task.assert_called_once_with(
+            "sbom_graph_enrichment.ingest_tasks.ingest_cyclonedx",
+            args=[
+                result["record_id"],
+                {"bomFormat": "CycloneDX"},
+                "app123",
+                "MyApp",
+                None,
+                "webhook",
+            ],
+            queue="ingest",
         )
 
-    @patch("sonatype_lifecycle_release_listener.app.CycloneDXProcessor")
+    @patch("sonatype_lifecycle_release_listener.app.get_celery_client")
     @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient")
-    @patch("sonatype_lifecycle_release_listener.app.Persistence")
     def test_process_cyclonedx_sbom_raises_not_found_when_sbom_is_none(
-        self, mock_persistence, mock_client_cls, mock_proc_cls
+        self, mock_client_cls, mock_get_celery
     ):
         """Test that a None SBOM response raises NotFound."""
         mock_client = MagicMock()
@@ -1097,12 +917,12 @@ class TestCycloneDXHelper:
 
         with pytest.raises(NotFound):
             helper.process_cyclonedx_sbom(app_id="app123", public_app_id="MyApp")
+        mock_get_celery.return_value.send_task.assert_not_called()
 
-    @patch("sonatype_lifecycle_release_listener.app.CycloneDXProcessor")
+    @patch("sonatype_lifecycle_release_listener.app.get_celery_client")
     @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient")
-    @patch("sonatype_lifecycle_release_listener.app.Persistence")
     def test_process_cyclonedx_sbom_propagates_not_found_from_client(
-        self, mock_persistence, mock_client_cls, mock_proc_cls
+        self, mock_client_cls, mock_get_celery
     ):
         """Test that NotFound from the SonaType client is re-raised."""
         mock_client = MagicMock()
@@ -1114,24 +934,20 @@ class TestCycloneDXHelper:
         with pytest.raises(NotFound):
             helper.process_cyclonedx_sbom(app_id="app123", public_app_id="MyApp")
 
-    @patch("sonatype_lifecycle_release_listener.app.CycloneDXProcessor")
+    @patch("sonatype_lifecycle_release_listener.app.get_celery_client")
     @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient")
-    @patch("sonatype_lifecycle_release_listener.app.Persistence")
-    def test_process_cyclonedx_sbom_propagates_redis_error(
-        self, mock_persistence, mock_client_cls, mock_proc_cls
+    def test_process_cyclonedx_sbom_raises_runtime_error_on_enqueue_failure(
+        self, mock_client_cls, mock_get_celery
     ):
-        """Test that RedisError from the processor is re-raised."""
+        """Test that a broker/enqueue failure is wrapped in RuntimeError (CWE-209)."""
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
         mock_client.get_cyclonedx_sbom.return_value = {"bomFormat": "CycloneDX"}
-
-        mock_proc = MagicMock()
-        mock_proc_cls.return_value = mock_proc
-        mock_proc.process_cyclone_dx_json.side_effect = RedisError("Connection lost")
+        mock_get_celery.return_value.send_task.side_effect = ConnectionError("refused")
 
         helper = CycloneDXHelper(self.TEST_CONFIG)
 
-        with pytest.raises(RedisError):
+        with pytest.raises(RuntimeError):
             helper.process_cyclonedx_sbom(app_id="app123", public_app_id="MyApp")
 
 
@@ -1151,9 +967,9 @@ class TestEdgeCases:
                 data=json.dumps(example_message),
                 content_type="application/json",
             )
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = json.loads(response.data)
-            assert data["status"] == "processed"
+            assert data["status"] == "accepted"
 
     def test_stage_with_different_values(self, client, example_message):
         """Test that various non-release stages are properly ignored."""
@@ -1252,55 +1068,6 @@ class TestVerifyHmac:
         assert _verify_hmac("secret", b"body", sig) is True
 
 
-class TestExtractCycloneDXToolInfo:
-    """Tests for _extract_cyclonedx_tool_info helper."""
-
-    def test_returns_none_when_no_metadata(self):
-        """No metadata returns None, None."""
-        assert _extract_cyclonedx_tool_info({}) == (None, None)
-
-    def test_returns_none_when_metadata_not_dict(self):
-        """Metadata that is not a dict returns None, None."""
-        assert _extract_cyclonedx_tool_info({"metadata": "x"}) == (None, None)
-
-    def test_returns_none_when_no_tools(self):
-        """No tools key returns None, None."""
-        assert _extract_cyclonedx_tool_info({"metadata": {}}) == (None, None)
-
-    def test_extracts_from_tools_array_cyclonedx_14(self):
-        """Extract from tools array (CycloneDX 1.4+)."""
-        sbom = {
-            "metadata": {
-                "tools": [
-                    {"name": "Sonatype", "version": "1.2.3"},
-                ],
-            },
-        }
-        assert _extract_cyclonedx_tool_info(sbom) == ("Sonatype", "1.2.3")
-
-    def test_extracts_from_tools_components_cyclonedx_15(self):
-        """Extract from tools.components (CycloneDX 1.5+)."""
-        sbom = {
-            "metadata": {
-                "tools": {
-                    "components": [
-                        {"name": "IQ", "version": "4.0"},
-                    ],
-                },
-            },
-        }
-        assert _extract_cyclonedx_tool_info(sbom) == ("IQ", "4.0")
-
-    def test_returns_none_for_non_string_name_version(self):
-        """Non-string name/version returns None."""
-        sbom = {
-            "metadata": {
-                "tools": [{"name": 123, "version": 4.5}],
-            },
-        }
-        assert _extract_cyclonedx_tool_info(sbom) == (None, None)
-
-
 class TestProcessCycloneSbom:
     """Tests for process_cyclone_sbom backwards-compat wrapper."""
 
@@ -1309,41 +1076,26 @@ class TestProcessCycloneSbom:
         "SONATYPE_USERNAME": "test_user",
         "SONATYPE_PASSWORD": "test_pass",
         "SONATYPE_CACERTS": "certs/ca_bundle.pem",
-        "FALKORDB_HOST": "localhost",
-        "FALKORDB_PORT": 6379,
-        "FALKORDB_GRAPH_NAME": "test-graph",
-        "FALKORDB_PASSWORD": "",
-        "FALKORDB_CACERTS": "certs/ca_bundle.pem",
     }
 
-    @patch("sonatype_lifecycle_release_listener.app.CycloneDXProcessor")
+    @patch("sonatype_lifecycle_release_listener.app.get_celery_client")
     @patch("sonatype_lifecycle_release_listener.app.SonaTypeClient")
-    @patch("sonatype_lifecycle_release_listener.app.Persistence")
     def test_process_cyclone_sbom_calls_cyclonedx(
-        self, mock_persistence, mock_client_cls, mock_proc_cls
+        self, mock_client_cls, mock_get_celery
     ):
         """process_cyclone_sbom delegates to process_cyclonedx_sbom."""
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
         mock_client.get_cyclonedx_sbom.return_value = {"bomFormat": "CycloneDX"}
-
-        proj, ver = MagicMock(), MagicMock()
-        proj.purl = "pkg:maven/com.example/app@1.0"
-        proj.name = "app"
-        proj.group = "com.example"
-        ver.version = "1.0.0"
-        mock_proc = MagicMock()
-        mock_proc.process_cyclone_dx_json.return_value = (
-            {"ref": (proj, ver)}, {}, {}
-        )
-        mock_proc_cls.return_value = mock_proc
+        mock_get_celery.return_value.send_task.return_value = MagicMock(id="job-1")
 
         helper = CycloneDXHelper(self.TEST_CONFIG)
         result = helper.process_cyclone_sbom(
             app_id="app123", public_app_id="MyApp"
         )
 
-        assert isinstance(result, str)
+        assert isinstance(result["record_id"], str)
+        assert result["job_id"] == "job-1"
         mock_client.get_cyclonedx_sbom.assert_called_once_with(
             "app123", "1.5", "release"
         )

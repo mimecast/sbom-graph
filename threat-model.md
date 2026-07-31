@@ -4,7 +4,7 @@
 
 SBOM Graph is a multi-component system for ingesting CycloneDX and SPDX SBOMs, storing dependency relationships and source repository provenance in a graph database (FalkorDB), enriching packages with vulnerability and license data from external sources, and providing interactive visualizations and reports. The system consists of:
 
-- **sonatype-lifecycle-release-listener**: Webhook receiver that fetches SBOMs from SonaType and writes to FalkorDB
+- **sonatype-lifecycle-release-listener**: Webhook receiver that fetches SBOMs/VEX documents from SonaType and enqueues them onto the `ingest` Celery queue (no direct FalkorDB write access -- the actual graph write happens in the `sbom-graph-enrichment` worker pool)
 - **sbom-graph-api**: Web application for viewing reports and visualizations (read path) and authenticated CycloneDX/SPDX SBOM ingestion (write paths via `POST /ingest/cyclonedx`, `POST /ingest/spdx`, `POST /ingest/sbom`)
 - **sbom-graph-enrichment**: Celery-based asynchronous pipeline that queries OSV.dev and ClearlyDefined APIs to enrich packages with vulnerability and license metadata, and also queries OpenSSF Scorecard, Sonatype OSS Index, and deps.dev APIs for trust score computation; uses a per-worker-process `httpx.Client` for connection-pooled HTTPS and a cached `Persistence` instance for FalkorDB access
 - **FalkorDB**: Graph database storing dependency data (Redis protocol); Redis instance also serves as Celery broker and result backend for the enrichment pipeline
@@ -15,7 +15,7 @@ This document covers **cross-component and infrastructure-level threats**. Compo
 - [`sonatype-lifecycle-release-listener/threat-model.md`](sonatype-lifecycle-release-listener/threat-model.md)
 - [`sbom-graph-model/threat-model.md`](sbom-graph-model/threat-model.md)
 
-The most critical system-level risks are: the **unauthenticated write path** (sonatype-lifecycle-release-listener webhook), **TLS inconsistencies** across the deployment, and **missing secrets** in the umbrella Helm chart that leave components misconfigured by default.
+The most critical system-level risks are: **TLS inconsistencies** across the deployment and **missing secrets** in the umbrella Helm chart that leave components misconfigured by default. *(The sonatype-lifecycle-release-listener webhook was previously listed here as unauthenticated -- it has HMAC signature verification and is no longer the top system risk; see S1 and its own threat model.)*
 
 ## System Architecture
 
@@ -26,8 +26,9 @@ flowchart TB
 
   subgraph cluster["Kubernetes Cluster"]
     ingress["Ingress / LB (TLS termination)"]
-    listener["Release Listener (SLC) - Flask :8000 (no auth on /webhook)"]
+    listener["Release Listener (SLC) - Flask :8000 (HMAC-verified /webhook)"]
     api["SBOM Graph API - Flask :8000 (JWT/LDAP auth)"]
+    ingestworker["ingest worker pool (sbom-graph-enrichment)"]
     falkordb["FalkorDB - Redis protocol :6379 (optional TLS/password)"]
     initjob["Init Data Job (Helm hook)"]
   end
@@ -38,7 +39,8 @@ flowchart TB
   ingress --> listener
   ingress --> api
 
-  listener --> falkordb
+  listener -->|"enqueue only (ingest queue)"| falkordb
+  ingestworker -->|"consumes ingest queue, writes graph"| falkordb
   api --> falkordb
   initjob --> falkordb
 ```
@@ -84,14 +86,14 @@ flowchart TB
 
 | # | Threat | STRIPED | Components | Likelihood | Impact | Risk | Status | Detail |
 |---|--------|---------|------------|------------|--------|------|--------|--------|
-| S1 | Graph data poisoning via unauthenticated webhook | S, T | sonatype-lifecycle-release-listener -> FalkorDB -> sbom-graph-api | **High** | **Critical** | **Critical** | **OPEN** | An attacker can POST crafted webhook payloads to the sonatype-lifecycle-release-listener, triggering SBOM ingestion of arbitrary data. Poisoned graph data propagates to all reports and visualizations shown to users, potentially hiding real vulnerabilities or creating false ones. This is the highest-priority system risk. |
+| S1 | Graph data poisoning via unauthenticated webhook | S, T | sonatype-lifecycle-release-listener -> `ingest` queue -> sbom-graph-enrichment -> FalkorDB -> sbom-graph-api | **Low** | **Critical** | **Medium** | **MITIGATED** | `/webhook` verifies an HMAC-SHA1 signature (`X-Nexus-Webhook-Signature`) against `WEBHOOK_SECRET` and fails closed if unconfigured, so an unauthenticated caller cannot trigger ingestion. Residual: an attacker who obtains a valid SonaType webhook secret (or compromises SonaType IQ itself) can still trigger ingestion of whatever `app_id` they specify; the listener also no longer writes to FalkorDB itself -- it enqueues onto the `ingest` Celery queue, and the actual write happens in the `sbom-graph-enrichment` worker pool (see that component's threat model for write-path controls). *(This finding predates the async-ingest migration -- HMAC verification was already implemented in the code; this entry had simply never been updated to match.)* |
 | S2 | FalkorDB password not set by default | S, E | All components -> FalkorDB | **High** | **High** | **Critical** | **MITIGATED** | The umbrella chart defaults `falkordb.password` to `""` but the `falkordb-secret.yaml` template auto-generates a 32-character random password when no explicit value or existing Secret is found. All deployments (FalkorDB, sbom-graph-api, release-listener, enrichment worker/beat) inject `FALKORDB_PASSWORD` from this Secret via `secretKeyRef`. The enrichment `persistence_helpers.py` logs a warning if the env var is empty (local development without Helm). Residual: operators who deploy outside Helm must set the password manually. |
-| S3 | TLS configuration mismatch between components | I | sbom-graph-api <-> FalkorDB | **High** | **Medium** | **High** | **OPEN** | FalkorDB is deployed with TLS by default (`tls.enabled: true`, non-TLS port disabled). However, `FalkorDBService` in sbom-graph-api does not pass `ssl` or `ssl_ca_certs` when connecting. The umbrella chart sets `TLS_ENABLED` but this controls the sbom-graph-api HTTP server TLS, not the FalkorDB client connection. sbom-graph-api will fail to connect to a TLS-only FalkorDB, or if TLS is disabled to work around this, traffic is unencrypted. |
-| S4 | Umbrella chart missing critical sbom-graph-api secrets | I, E | sbom-graph-api | **High** | **Critical** | **Critical** | **OPEN** | The umbrella chart does not set `FLASK_SECRET_KEY`, `JWT_SECRET_KEY`, `TOKEN_DB_ENCRYPTION_KEY`, or `AUTH_ENABLED`. sbom-graph-api has a guard that rejects insecure defaults when `FLASK_DEBUG=false`, but the chart also does not set `FLASK_DEBUG`. The resulting behavior depends on image defaults and is non-deterministic. If auth is disabled (the default), all reports and visualizations are publicly accessible within the cluster. |
+| S3 | TLS configuration mismatch between components | I | sbom-graph-api <-> FalkorDB | **Low** | **Medium** | **Low** | **MITIGATED** | `FalkorDBConfig.from_env()` reads `FALKORDB_SSL`/`FALKORDB_CA_FILE`/`FALKORDB_CLIENT_CERT`/`FALKORDB_CLIENT_KEY`, and `FalkorDBService.__init__` passes `ssl`/`ssl_ca_certs`/`ssl_certfile`/`ssl_keyfile` to the connection when enabled. `sbom-graph-api-deployment.yaml` sets all four whenever `falkordb.tls.enabled` (default `true`), mounting the same shared TLS secret as the other components. *(This entry was stale -- verified against the current code and chart on 2026-07-28; see `sbom-graph-api/threat-model.md` #3.)* |
+| S4 | Umbrella chart missing critical sbom-graph-api secrets | I, E | sbom-graph-api | **Low** | **Critical** | **Low** | **MITIGATED** | `sbom-graph-api-deployment.yaml` sets `FLASK_SECRET_KEY`/`JWT_SECRET_KEY`/`TOKEN_DB_ENCRYPTION_KEY` via `secretKeyRef` and `AUTH_ENABLED` (default `true`). `sbom-graph-api-secret.yaml` auto-generates random values for the three keys on first install (same `lookup`-and-persist pattern as `falkordb-secret.yaml`'s auto-generated password, which S2 already credits). *(This entry was stale -- verified against the current chart on 2026-07-28.)* |
 | S5 | No NetworkPolicy restricting FalkorDB access | E | FalkorDB | **Medium** | **High** | **High** | **PARTIALLY MITIGATED** | The umbrella chart now includes an opt-in NetworkPolicy for the enrichment worker and beat pods (`enrichment.networkPolicy.enabled`). When enabled, enrichment egress is restricted to: DNS (port 53), FalkorDB/Redis (port 6379, by pod selector), and external HTTPS (port 443, excluding RFC 1918 ranges). Residual: FalkorDB ingress is not yet restricted — any pod in the namespace can still connect on 6379. A FalkorDB-specific NetworkPolicy should be added to complete the control. |
-| S6 | Self-signed TLS CA not distributed to clients | I | FalkorDB -> sonatype-lifecycle-release-listener, sbom-graph-api | **High** | **Medium** | **High** | **OPEN** | When TLS is auto-generated via the init container, the self-signed CA certificate is stored in an emptyDir volume on the FalkorDB pod. Neither the sonatype-lifecycle-release-listener nor sbom-graph-api deployments mount this volume or receive the CA cert. Clients cannot verify the FalkorDB server certificate, resulting in connection failures or requiring TLS verification to be disabled. |
-| S7 | SonaType credentials not provisioned by umbrella chart | I | sonatype-lifecycle-release-listener -> SonaType | **High** | **Medium** | **Medium** | **OPEN** | The umbrella chart does not set `SONATYPE_HOST`, `SONATYPE_USERNAME`, or `SONATYPE_PASSWORD` for the sonatype-lifecycle-release-listener. Webhook processing will fail at runtime when attempting to fetch SBOMs. This is a deployment correctness issue that may lead operators to pass credentials via insecure means (e.g., plain env vars in overrides). |
-| S8 | Init data job bypasses TLS and auth | T, E | init-data-job -> FalkorDB | **Medium** | **Medium** | **Medium** | **PARTIALLY MITIGATED** | The `init-data-job.yaml` does not set `FALKORDB_CACERTS` or pass TLS parameters to `populate_acme_corp.py`. The readiness check uses a Python TCP connect (reusing the application image, no BusyBox dependency), which will succeed on the TLS port but does not verify the certificate. The job also does not receive the FalkorDB password if `falkordb.password` is set after the initial deployment. |
+| S6 | Self-signed TLS CA not distributed to clients | I | FalkorDB -> sonatype-lifecycle-release-listener, sbom-graph-api | **Low** | **Medium** | **Low** | **MITIGATED for sonatype-lifecycle-release-listener; sbom-graph-api unverified in this pass** | `sonatype-lifecycle-release-listener-deployment.yaml` mounts the shared CA Secret as a `tls-ca` volume and sets `FALKORDB_CACERTS`/`FALKORDB_CLIENT_CERT`/`FALKORDB_CLIENT_KEY` whenever `falkordb.tls.enabled` -- confirmed against the current template. *(This finding predates the async-ingest migration; the chart already had this wired up.)* sbom-graph-api's equivalent wiring was not re-verified as part of this pass -- see `sbom-graph-api/threat-model.md` for its current status. |
+| S7 | SonaType credentials not provisioned by umbrella chart | I | sonatype-lifecycle-release-listener -> SonaType | **Low** | **Medium** | **Low** | **MITIGATED** | `sonatype-lifecycle-release-listener-deployment.yaml` sets `SONATYPE_HOST` (when `releaseListener.sonatype.host` is configured), `SONATYPE_CACERTS`, and injects `SONATYPE_USERNAME`/`SONATYPE_PASSWORD` from `sonatype-secret.yaml` via `secretKeyRef`. Residual: `SONATYPE_HOST` is only rendered when explicitly set in values -- an operator who forgets it gets a runtime failure, not a template error, so this is a "must configure" item rather than a chart bug. |
+| S8 | Init data job bypasses TLS and auth | T, E | init-data-job -> FalkorDB | **Low** | **Low** | **Low** | **MITIGATED** | `init-data-job.yaml` sets `FALKORDB_SSL`/`FALKORDB_CA_FILE`/`FALKORDB_CLIENT_CERT`/`FALKORDB_CLIENT_KEY` whenever `falkordb.tls.enabled`, mounts the same shared `tls-ca` secret as the other components, and injects `FALKORDB_PASSWORD` via `secretKeyRef` (not a snapshot value, so a password rotated via the Secret after initial install is picked up on the job's next run). *(This entry was stale -- verified against the current `init-data-job.yaml` on 2026-07-28.)* |
 | S9 | No ingress defined in umbrella chart | I, D | sbom-graph-api, sonatype-lifecycle-release-listener | **Low** | **Medium** | **Low** | **ACCEPTED** | Services are ClusterIP-only. External access requires operators to configure ingress separately. This is by design (separation of concerns) but means there is no default TLS termination, rate limiting, or WAF protection documented in the chart. |
 | S10 | Demo data loaded in production | I | init-data-job -> FalkorDB | **Low** | **Low** | **Low** | **OPEN** | `initData.enabled` defaults to `true`. The demo data (Acme Corp) will be loaded into production deployments unless explicitly disabled, cluttering the graph with synthetic data. |
 | S11 | Graph poisoning via SBOM ingest API | S, T | sbom-graph-api -> FalkorDB | **Low** | **High** | **Medium** | **MITIGATED** | `POST /ingest/cyclonedx` accepts CycloneDX SBOMs and writes to FalkorDB. Mitigated by: JWT authentication (`@auth_required`), JSON Schema envelope validation (Draft-07, `additionalProperties: false`) before processing, CycloneDX structural validation (`CycloneDXValidationError`), parameterized Cypher queries and label allowlists in `sbom-graph-model`, and `MAX_CONTENT_LENGTH` (50 MB) to prevent oversized payloads. Residual risk: an authenticated user can still inject misleading (but structurally valid) SBOM data. |
@@ -129,11 +131,11 @@ flowchart TB
 
 | # | Threat | STRIPED | Layer | Likelihood | Impact | Risk | Status | Detail |
 |---|--------|---------|-------|------------|--------|------|--------|--------|
-| I1 | Init container runs as root | E | FalkorDB pod | **Low** | **Medium** | **Low** | **ACCEPTED** | The TLS generation init container (`generate-tls`) runs as `runAsUser: 0` because `openssl` and `chmod` require root for key file permissions. It runs only once during pod startup and has `allowPrivilegeEscalation: false` and all capabilities dropped. The blast radius is limited to the emptyDir volume. |
-| I2 | Alpine init image not pinned by digest | T | Init containers | **Medium** | **Medium** | **Medium** | **OPEN** | `alpine:3.20` is referenced by tag, not SHA digest. A compromised registry or tag mutation could inject malicious code into the TLS init container, which has access to the TLS volume. The BusyBox dependency was removed; the init-data job now reuses the application image for the readiness check. |
-| I3 | FalkorDB image uses `latest` tag | T | FalkorDB | **Medium** | **High** | **Medium** | **OPEN** | `falkordb.image.tag: latest` in the umbrella chart values means deployments are non-reproducible and could pull a compromised or breaking version. |
-| I4 | No PodDisruptionBudget | D | All components | **Low** | **Medium** | **Low** | **OPEN** | The umbrella chart does not define PDBs. Node drains can take down all replicas simultaneously. |
-| I5 | Token database on emptyDir | I | sbom-graph-api | **Medium** | **Medium** | **Medium** | **OPEN** | The umbrella chart's sbom-graph-api deployment mounts only `/tmp` as emptyDir. `TOKEN_DB_PATH` defaults to `/data/tokens.db` but no `/data` volume is mounted. User accounts and API tokens will be lost on every pod restart. |
+| I1 | Init container runs as root | E | FalkorDB pod | **Low** | **Low** | **Low** | **OBSOLETE** | TLS generation no longer happens in a runtime init container at all -- `tls-secret.yaml` generates the CA/cert via Helm's native `genCA`/`genSelfSignedCert` functions at template-render time (client-side, in the Helm binary), producing a Secret directly. There is no `generate-tls` init container running as root in the cluster to assess. The remaining `runAsUser: 0` in `_helpers.tpl` (`sbom-graph.falkordb.waitContainer`) is a *different*, unrelated init container that only waits for FalkorDB readiness; it needs root because it reuses the FalkorDB image's Redis-owned filesystem, not for cert generation. *(Verified against the current chart on 2026-07-28 -- this finding described a mechanism that has since been replaced.)* |
+| I2 | Alpine init image not pinned by digest | T | Init containers | **Low** | **Low** | **Low** | **OBSOLETE** | No `alpine` image reference exists anywhere in the umbrella chart -- confirmed by search. This finding described the old runtime TLS-generation init container (see I1), which has been replaced by Helm-native `genCA`/`genSelfSignedCert` cert generation with no runtime container involved. *(Verified against the current chart on 2026-07-28.)* |
+| I3 | FalkorDB image uses `latest` tag | T | FalkorDB | **Low** | **Low** | **Low** | **MITIGATED** | `falkordb.image.tag` is pinned to `v4.18.11` in `values.yaml`, not `latest`. *(This entry was stale -- verified against the current chart on 2026-07-28.)* |
+| I4 | No PodDisruptionBudget | D | All components | **Low** | **Medium** | **Low** | **OPEN** | No PodDisruptionBudget templates exist anywhere in the chart -- confirmed by search. Node drains can take down all replicas simultaneously. Still accurate as of 2026-07-28. |
+| I5 | Token database on emptyDir | I | sbom-graph-api | **Low** | **Low** | **Low** | **MITIGATED** | `sbom-graph-api-deployment.yaml`'s `data` volume is a real PVC (`sbomGraphApi.tokenDb.persistence.enabled`, default `true`, 1Gi) mounted at `/data`, not an emptyDir -- `TOKEN_DB_PATH=/data/tokens.db` now persists across pod restarts. Falls back to `emptyDir` only if persistence is explicitly disabled. *(This entry was stale -- verified against the current chart on 2026-07-28.)* |
 
 ## Security Controls Summary
 
@@ -161,7 +163,9 @@ flowchart TB
 | Generic error messages (ingest) | sbom-graph-api | **Moderate** -- 500 responses hide internal details |
 | Insecure default rejection | sbom-graph-api | **Strong** -- fails fast on weak secrets |
 | TLS to SonaType API | sonatype-lifecycle-release-listener | **Strong** -- CA-verified HTTPS |
-| TLS to FalkorDB | sonatype-lifecycle-release-listener | **Moderate** -- ssl=True but CA path issues |
+| TLS to Celery broker (`ingest` queue) | sonatype-lifecycle-release-listener | **Strong** -- `celery_client.py` honours `FALKORDB_SSL` and the chart-mounted CA/client cert; no direct FalkorDB graph connection exists in this service anymore |
+| Webhook HMAC verification | sonatype-lifecycle-release-listener | **Strong** -- `X-Nexus-Webhook-Signature` checked with `hmac.compare_digest`, fails closed if `WEBHOOK_SECRET` unset |
+| Deterministic/idempotent ingest record IDs | sonatype-lifecycle-release-listener | **Moderate** -- `uuid5` over app + content hash prevents duplicate graph state on webhook redelivery |
 | Distroless containers | All apps | **Strong** -- minimal attack surface |
 | Non-root execution | All components | **Strong** -- UID 65532 |
 | Read-only root filesystem | All containers | **Strong** -- prevents runtime modification |
@@ -193,14 +197,12 @@ flowchart TB
 
 | Missing Control | Impact | Components |
 |----------------|--------|------------|
-| Webhook authentication | Critical | sonatype-lifecycle-release-listener |
 | FalkorDB ingress NetworkPolicy | High | Umbrella chart |
-| TLS CA distribution | High | Umbrella chart |
-| Application secrets provisioning | Critical | Umbrella chart -> sbom-graph-api |
 | Rate limiting | Medium | sonatype-lifecycle-release-listener, sbom-graph-api (login endpoint has per-IP rate limiting; other endpoints do not) |
 | Structured audit logging | Medium | sonatype-lifecycle-release-listener |
-| Request size limits | Medium | sonatype-lifecycle-release-listener |
 | Image digest pinning | Medium | Umbrella chart |
+
+*(Removed from this table during the 2026-07-28 re-verification: "Webhook authentication" and "Request size limits" for sonatype-lifecycle-release-listener, "TLS CA distribution", and "Application secrets provisioning" for sbom-graph-api -- all four are already implemented; see S1, S3, S4, S6 above and each component's own threat model.)*
 
 ## Recommendations
 
@@ -208,30 +210,29 @@ flowchart TB
 
 | # | Finding | Recommendation | Effort |
 |---|---------|----------------|--------|
-| S1 | Unauthenticated webhook | Add HMAC signature verification or API key authentication to `/webhook`. Create a Kubernetes Secret for the shared secret and inject it via the Helm chart. | Medium |
+*(S2's own row was already fine; S4 "sbom-graph-api secrets not set" removed 2026-07-28 -- the chart already sets `FLASK_SECRET_KEY`/`JWT_SECRET_KEY`/`TOKEN_DB_ENCRYPTION_KEY`/`AUTH_ENABLED` with auto-generated values, same pattern as S2. S1 "Unauthenticated webhook" also removed -- HMAC verification is already implemented; see S1/S4 above.)*
+
+| # | Finding | Recommendation | Effort |
+|---|---------|----------------|--------|
 | S2 | FalkorDB runs without password | Change the umbrella chart to **require** `falkordb.password` (fail template rendering if empty) or auto-generate a random password stored in a Secret. | Low |
-| S4 | sbom-graph-api secrets not set | Add required env vars to the umbrella chart's sbom-graph-api deployment: `FLASK_SECRET_KEY`, `JWT_SECRET_KEY`, `TOKEN_DB_ENCRYPTION_KEY`, `AUTH_ENABLED`. Use a Kubernetes Secret with generated values or require them in `values.yaml`. | Medium |
 
 ### High Priority (Implement Before First Users)
 
 | # | Finding | Recommendation | Effort |
 |---|---------|----------------|--------|
-| S3 | TLS mismatch sbom-graph-api <-> FalkorDB | Either: (a) add `ssl`/`ssl_ca_certs` parameters to `FalkorDBService` and pass the CA cert, or (b) disable FalkorDB TLS and rely on NetworkPolicy for in-cluster traffic isolation. Document the chosen approach. | Medium |
 | S5 | No NetworkPolicy | Add a NetworkPolicy to the umbrella chart that restricts FalkorDB ingress to only the sbom-graph-api and sonatype-lifecycle-release-listener pods (by label selector). | Low |
-| S6 | Self-signed CA not distributed | When using self-signed TLS, store the generated CA cert in a Kubernetes Secret (via an init Job) and mount it in both the sonatype-lifecycle-release-listener and sbom-graph-api deployments. Alternatively, use cert-manager for automated certificate lifecycle. | Medium |
-| I5 | Token DB on emptyDir | Add a PVC mount for `/data` in the sbom-graph-api deployment so that user accounts and API tokens persist across restarts. | Low |
+
+*(S3 "TLS mismatch sbom-graph-api <-> FalkorDB" and S6 "Self-signed CA not distributed" both removed 2026-07-28 -- confirmed against current code/chart that TLS is already wired up correctly for both sbom-graph-api and sonatype-lifecycle-release-listener; see S3/S6 above. I5 "Token DB on emptyDir" also removed 2026-07-28 -- `sbom-graph-api-deployment.yaml`'s `data` volume is already a PVC by default; see I5 above.)*
 
 ### Medium Priority (Next Sprint)
 
 | # | Finding | Recommendation | Effort |
 |---|---------|----------------|--------|
-| S7 | SonaType creds not provisioned | Add SonaType configuration to the umbrella chart's `values.yaml` with `existingSecret` support, and document the required setup. | Low |
-| S8 | Init job bypasses TLS/auth | Pass `FALKORDB_CACERTS` and `FALKORDB_PASSWORD` to the init job. The readiness check now uses a Python TCP connect (BusyBox removed), but still needs CA cert for full TLS verification. | Low |
 | D2 | Graph data readable without auth | Set `AUTH_ENABLED=true` by default in the umbrella chart, or at minimum document that auth is disabled by default and the implications. | Low |
 | D4 | Credentials in Helm values | Document that production deployments should use `existingSecret` references rather than inline passwords. Add `.gitignore` patterns for custom values files. | Low |
-| I2 | Alpine image not pinned by digest | Pin `alpine` init container image by SHA256 digest. BusyBox dependency has been removed. | Low |
-| I3 | FalkorDB `latest` tag | Pin FalkorDB to a specific version tag (e.g., `v4.2.1`). | Low |
 | S10 | Demo data in production | Change `initData.enabled` to default `false`, or gate it on a `global.demoMode` flag. | Low |
+
+*(S7 "SonaType creds not provisioned" removed 2026-07-28 -- the umbrella chart already provisions `SONATYPE_USERNAME`/`SONATYPE_PASSWORD` via `sonatype-secret.yaml` and `SONATYPE_CACERTS` directly; see S7 above. S8 "Init job bypasses TLS/auth" also removed -- `init-data-job.yaml` already sets the full TLS env var set and gets the password via `secretKeyRef`; see S8 above. I2 "Alpine image not pinned" and I3 "FalkorDB latest tag" both removed -- I2 describes a runtime TLS-generation init container that no longer exists (cert generation is now Helm-native `genCA`/`genSelfSignedCert`, not a running container), and I3's `latest` tag claim is false against the current chart, which pins `v4.18.11`; see I1/I2/I3 above.)*
 
 ### Low Priority (Hardening)
 
@@ -411,6 +412,7 @@ The following matrix confirms compatibility between the project licence (MIT) an
 
 | Date | Author | Changes |
 |------|--------|---------|
+| 2026-07-28 | AI-assisted threat model | Re-verified sonatype-lifecycle-release-listener-related findings against current implementation: documented the async-ingest migration (no direct FalkorDB write access; enqueues onto the `ingest` Celery queue for `sbom-graph-enrichment` to process) in the Summary, architecture diagram, S1, and Controls Present/Missing. Separately corrected S1, S6 (listener side only), and S7 to **MITIGATED** -- webhook HMAC auth, TLS CA mounting, and SonaType credential provisioning were already implemented in the code/chart and had simply never been marked resolved; this predates and is independent of the migration. sbom-graph-api's side of S3/S6 was **not** re-verified in this pass. |
 | 2026-03-12 | AI-assisted threat model | Added Full License Assessment section: comprehensive licence analysis of all runtime and development dependencies across all sub-projects, licence compatibility matrix, compliance actions (L1-L7), production dependency licence summary per sub-project, and risk recommendations. Covers SSPLv1, LGPL-3, LGPL-2.1, GPL-2.0+, MPL-2.0, MIT, BSD, Apache-2.0, ISC, and PSF-2.0 licences. |
 | 2026-03-12 | AI-assisted threat model | Added EOL certifier (endoflife.date API) and Source Repository certifier (deps.dev API). Added S31 (endoflife.date API integrity/availability). Documented source_repo SSRF mitigation (host allowlist) in S15 and Controls Present. Added login rate limiting (10 attempts / 15 min per IP on /auth/login) to Controls Present. Updated Trust Boundaries and Third-Party Component Assessment. |
 | 2026-02-28 | AI-assisted threat model | Added trust score threats S27-S30 (data poisoning, rate exhaustion, dependency graph manipulation, OSS Index credential leakage). Updated Summary, Assets, Trust Boundaries, Security Controls, Risk Heat Map, Residual Risk, Deployment Checklist, Third-Party Assessment. |

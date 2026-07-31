@@ -7,7 +7,8 @@ Celery-based asynchronous enrichment pipeline that queries external APIs to enri
 ```
 src/sbom_graph_enrichment/
 ├── celery_app.py          # Celery configuration, beat schedule, log redaction
-├── tasks.py               # Celery shared tasks (enrich_package, compute_trust_score, propagate_effective_scores, refresh_internal_centrality)
+├── tasks.py               # Celery shared tasks (enrich_package, enrich_all_packages, compute_trust_score, propagate_effective_scores, refresh_internal_centrality)
+├── ingest_tasks.py        # Async SBOM/VEX ingest tasks (ingest_cyclonedx, ingest_spdx, ingest_sbom, ingest_vex) -- consumed via the dedicated `ingest` queue/worker pool, see docs/ingest-pipeline.md
 ├── persistence_helpers.py # Per-worker Persistence and httpx.Client caching
 └── certifiers/
     ├── base.py            # Abstract Certifier base, Finding dataclass, FindingKind enum
@@ -25,10 +26,14 @@ tests/
 ├── test_scorecard_certifier.py
 ├── test_ossindex_certifier.py
 ├── test_depsdev_certifier.py
+├── test_eol_certifier.py
+├── test_source_repo_certifier.py
+├── test_ingest_tasks.py
 ├── test_trust_score_calculator.py
 ├── test_trust_score_tasks.py
 ├── test_tasks.py
 ├── test_celery_app.py
+├── test_security.py
 └── test_persistence_helpers.py
 ```
 
@@ -64,6 +69,12 @@ A shared `httpx.Client` is passed in for connection pooling. Rate limiting is in
 - Use `_mock_response(status_code, json_data)` helper for building responses
 - Propagation algorithm tests use pure-function `_propagate()` directly
 
+## Enrichment Dispatch (`enrich_all_packages`)
+- Freshness filter: only dispatches purls where `last_enriched_at` is null/older than 90% of `ENRICHMENT_INTERVAL`
+- Dispatch-time guard: also skips purls whose `enrichment_queued_at` is within `2x ENRICHMENT_INTERVAL` (already queued, not yet completed) -- prevents beat from re-dispatching the same backlog every cycle when the worker pool falls behind
+- Backpressure: checks the `enrichment` broker queue depth (direct Redis `LLEN`) before dispatching; skips the whole cycle if it exceeds `ENRICHMENT_QUEUE_BACKPRESSURE_THRESHOLD`
+- Both guards exist because the freshness filter alone only excludes *completed* work -- a stalled worker pool previously caused unbounded backlog growth (filled Redis to `maxmemory`, OOM-looped the worker)
+
 ## Trust Score Architecture
 - `TrustScoreCalculator.compute()` is a compositor that consumes findings from all certifiers
 - 4 categories with configurable weights sum to direct_score (0-10 scale)
@@ -97,3 +108,4 @@ A shared `httpx.Client` is passed in for connection pooling. Rate limiting is in
 | OSSINDEX_TOKEN | "" | Optional OSS Index API token |
 | ENRICHMENT_SOURCES | null | JSON list of certifier names to run (empty = all) |
 | TRUST_SCORE_ALERT_THRESHOLD | 4.0 | Score below which packages trigger WARNING alerts |
+| **ENRICHMENT_QUEUE_BACKPRESSURE_THRESHOLD** | 5000 | `enrich_all_packages` skips dispatch entirely if the `enrichment` broker queue depth exceeds this |

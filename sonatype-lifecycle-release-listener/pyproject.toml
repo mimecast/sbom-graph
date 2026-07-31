@@ -1,6 +1,6 @@
 [project]
 name = "sonatype-lifecycle-release-listener"
-version = "1.0.0"
+version = "1.0.1"
 description = "Flask microservice to listen for SonaType release scan webhooks"
 authors = [
     {name = "Brett Crawley"}
@@ -8,7 +8,8 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.14,<4"
 dependencies = [
-    "sbom-graph-model>=0.2.0-beta.4,<2.0.0",
+    "celery>=5.4.0",
+    "redis>=5.0.0",
     "flask>=3.1.2,<4.0.0",
     "flask-jwt-extended>=4.7.1,<5.0.0",
     "gunicorn>=23.0.0,<24.0.0",
@@ -19,6 +20,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "bandit>=1.7.9",
+    "celery-types>=0.22.0",
     "mypy>=1.19.1",
     "pylint>=4.0.5",
     "pytest>=8.2.2,<9.0.0",

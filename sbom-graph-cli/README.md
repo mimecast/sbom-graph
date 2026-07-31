@@ -37,11 +37,15 @@ sbom-graph [--api-url URL] [--token TOKEN] [--output table|json] <command> [args
 #### Ingest
 
 ```bash
-sbom-graph ingest <file>
+sbom-graph ingest <file> [--wait/--no-wait] [--sync] [--poll-interval SECS] [--poll-timeout SECS]
 ```
 
-Upload a CycloneDX or SPDX SBOM file. Auto-detects format and prints a summary
-(projects, dependencies, defects, record_id).
+Upload a CycloneDX or SPDX SBOM file. Auto-detects format. The server ingests
+asynchronously by default (`202` + `job_id`); the CLI defaults to `--wait` and
+polls the job status until it finishes, then prints the same summary
+(projects, dependencies, defects, record_id) the legacy synchronous API
+returned. Use `--no-wait` to submit and exit immediately with the job id, or
+`--sync` to force the legacy inline `?sync=true` server path.
 
 #### Query
 
@@ -68,7 +72,7 @@ Create a policy annotation (banned, approved, or deprecated) on a package.
 #### Export
 
 ```bash
-sbom-graph export <report_name> --format json|excel [--output FILE]
+sbom-graph export <report_name> --format json|excel|csv [--output FILE]
 ```
 
 Export a report. Examples: `vulnerabilities`, `snapshots`, `projects`,
@@ -76,7 +80,9 @@ Export a report. Examples: `vulnerabilities`, `snapshots`, `projects`,
 
 ## CI/CD Integration
 
-- **Exit codes**: 0 = success, 1 = policy violations, 2 = error.
+- **Exit codes**: 0 = success, 2 = error (e.g. bad PURL, API error). Exit code
+  1 is reserved for policy violations but is not yet raised by any command
+  (`EXIT_POLICY_VIOLATIONS` in `utils.py` is currently unused).
 - **`--output json`**: Machine-parseable output for pipelines.
 
 Example:

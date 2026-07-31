@@ -787,7 +787,7 @@ this deployment four very different things share that file:
 | 0 | FalkorDB module | The `acme-corp` graph (`falkordb.server` keys + GraphBLAS matrices) |
 | 1 | Celery broker | Pending task messages (queues like `celery`, `enrichment`, …)       |
 | 2 | Celery result backend | Per-task result records with their JSON payloads (often with a TTL) |
-| 0 | Other | Trust-score caches, beat schedules, etc.                            |
+| 0 | Other | Trust-score caches, beat schedules, etc. |
 
 The `celeryBrokerDb: "1"` / `celeryResultDb: "2"` values in
 `helm/charts/sbom-graph/values.yaml` confirm this. The total snapshot size
@@ -830,7 +830,7 @@ kubectl -n "$NS" exec "$FDB_POD" -- sh -c '
 
   echo
   echo "=== Celery broker (DB 1) queue depths ==="
-  for q in celery enrichment centrality trust_score; do
+  for q in celery enrichment ingest centrality trust_score; do
     n=$($RCLI -n 1 LLEN "$q" 2>/dev/null || echo "n/a")
     printf "  %-20s LLEN=%s\n" "$q" "$n"
   done
@@ -1077,19 +1077,19 @@ need to confirm the exact names in your cluster.)
 
 Source of truth for the schedule and persistence behaviour:
 
-| Setting | File | Default                                    |
-|---|---|--------------------------------------------|
-| `falkordb.server.save` | `helm/charts/sbom-graph/values.yaml` | `"900 1 300 100 60 10000"`                 |
-| `falkordb.server.stopWritesOnBgsaveError` | same | `"no"`                                     |
-| `falkordb.server.appendonly` | same | `"no"`                                     |
-| `falkordb.server.maxmemory` | same | `"3gb"`                                    |
+| Setting | File | Default |
+|---|---|---|
+| `falkordb.server.save` | `helm/charts/sbom-graph/values.yaml` | `"900 1 300 100 60 10000"` |
+| `falkordb.server.stopWritesOnBgsaveError` | same | `"no"` |
+| `falkordb.server.appendonly` | same | `"no"` |
+| `falkordb.server.maxmemory` | same | `"3gb"` |
 | `falkordb.server.module.threadCount` | same | `"1"` (fork-deadlock mitigation; see §5.5) |
 | `falkordb.server.module.ompThreadCount` | same | `"1"` (fork-deadlock mitigation; see §5.5) |
-| `falkordb.persistence.size` | same | `5Gi`                                      |
-| `falkordb.tls.requireClientAuth` | same | `true`                                     |
-| `enrichment.celeryBrokerDb` | same | `"1"`                                      |
-| `enrichment.celeryResultDb` | same | `"2"`                                      |
-| `graphName` | same | `"acme-corp"`                              |
+| `falkordb.persistence.size` | same | `5Gi` |
+| `falkordb.tls.requireClientAuth` | same | `true` |
+| `enrichment.celeryBrokerDb` | same | `"1"` |
+| `enrichment.celeryResultDb` | same | `"2"` |
+| `graphName` | same | `"acme-corp"` |
 
 Rendered into the running container by:
 
